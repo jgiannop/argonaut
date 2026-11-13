@@ -25,7 +25,9 @@ public:
 
     // Returns the thumbnail if ready; otherwise starts loading it (once)
     // and returns a null pixmap. thumbnailReady() fires when it arrives.
-    QPixmap thumbnail(const QFileInfo &info);
+    // `path` must be a regular file; `mtime` its modification time (the
+    // model already knows both, so this never touches the disk itself).
+    QPixmap thumbnail(const QString &path, const QDateTime &mtime);
 
 signals:
     void thumbnailReady(const QString &path);

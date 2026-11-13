@@ -84,18 +84,16 @@ Thumbnailer::~Thumbnailer()
     m_pool.waitForDone();
 }
 
-QPixmap Thumbnailer::thumbnail(const QFileInfo &info)
+QPixmap Thumbnailer::thumbnail(const QString &path, const QDateTime &mtime)
 {
-    if (!info.isFile())
-        return {};
     // Cheap check first: most files (text, logs, code…) never have one.
-    const QString suffix = info.suffix().toLower();
+    const int dot = int(path.lastIndexOf(QLatin1Char('.')));
+    if (dot < 0 || dot < path.lastIndexOf(QLatin1Char('/')))
+        return {};
+    const QString suffix = path.mid(dot + 1).toLower();
     const bool decodable = m_imageSuffixes.contains(suffix);
     if (!decodable && !m_cachedSuffixes.contains(suffix))
         return {};
-
-    const QString path = info.absoluteFilePath();
-    const QDateTime mtime = info.lastModified();
 
     if (const Entry *e = m_cache.object(path); e && e->mtime == mtime)
         return e->pixmap;

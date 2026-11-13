@@ -2,11 +2,13 @@
 
 #include "Theme.h"
 
+#include <QAbstractItemModel>
 #include <QElapsedTimer>
 #include <QMainWindow>
 #include <QStack>
 #include <QString>
 
+class DirectoryModel;
 class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
@@ -16,10 +18,11 @@ class Toast;
 class PathBar;
 class Thumbnailer;
 class QAction;
-class QFileSystemModel;
 class QLabel;
 class QLineEdit;
+class QAbstractItemView;
 class QListView;
+class QTreeView;
 class QListWidget;
 class QMenu;
 class QMenuBar;
@@ -67,7 +70,13 @@ private:
     void updateFilter();
     void updateActions();
 
-    // View (proxy) <-> QFileSystemModel indexes.
+    void setupFileView(QAbstractItemView *view);
+    QModelIndexList selectedViewIndexes() const; // one index (column 0) per selected item
+    bool isFileViewport(const QObject *object) const;
+    void sortBy(int column, Qt::SortOrder order);
+    void updateSortActions();
+
+    // View (proxy) <-> DirectoryModel indexes.
     QModelIndex toSource(const QModelIndex &viewIndex) const;
     QModelIndex toView(const QModelIndex &sourceIndex) const;
 
@@ -112,11 +121,15 @@ private:
     FileOperations *m_ops = nullptr;
     OperationsPanel *m_opsPanel = nullptr;
     Toast *m_toast = nullptr;
-    QFileSystemModel *m_model = nullptr;
+    DirectoryModel *m_model = nullptr;
     FileFilterProxy *m_proxy = nullptr; // search filter between model and view
     Thumbnailer *m_thumbnailer = nullptr;
-    FileItemDelegate *m_delegate = nullptr;
-    QListView *m_view = nullptr;
+    FileItemDelegate *m_gridDelegate = nullptr; // one per view: each caches its
+    FileItemDelegate *m_listDelegate = nullptr; // own sizes and layout
+    QAbstractItemView *m_view = nullptr; // the visible one of the two below
+    QListView *m_iconView = nullptr;      // grid
+    QTreeView *m_detailView = nullptr;    // list with columns
+    QStackedWidget *m_viewStack = nullptr;
     QListWidget *m_sidebar = nullptr;
     QWidget *m_root = nullptr;
     QSplitter *m_splitter = nullptr;
@@ -162,6 +175,9 @@ private:
     QAction *m_closeAct = nullptr;
     QAction *m_quitAct = nullptr;
     QAction *m_sidebarAct = nullptr;
+    QList<QAction *> m_sortColumnActs; // by DirectoryModel::Column
+    QAction *m_sortAscAct = nullptr;
+    QAction *m_sortDescAct = nullptr;
 
     QMenuBar *m_menuBar = nullptr;
     QPoint m_menuPressPos; // dragging the window by empty menu bar space
