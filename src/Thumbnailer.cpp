@@ -114,7 +114,8 @@ bool saveToCache(QImage img, const QString &target, const QString &path, const Q
 }
 
 // Runs one thumbnailer for `path` and returns its image (null on failure).
-QImage runProgram(const Thumbnailer::Program &program, const QString &path, const QString &mimeType)
+QImage runProgram(const Thumbnailer::Program &program, const QString &path, const QString &mimeType,
+                  int size = Thumbnailer::GenerateSize)
 {
     QTemporaryDir work(QDir::tempPath() + "/kaftilous-thumb-XXXXXX");
     if (!work.isValid())
@@ -140,7 +141,7 @@ QImage runProgram(const Thumbnailer::Program &program, const QString &path, cons
                 continue;
             }
             switch (token.at(++i).toLatin1()) {
-            case 's': arg += QString::number(Thumbnailer::GenerateSize); break;
+            case 's': arg += QString::number(size); break;
             case 'u': arg += QString::fromUtf8(QUrl::fromLocalFile(input).toEncoded()); break;
             case 'i': arg += input; break;
             case 'o': arg += output; break;
@@ -330,6 +331,14 @@ void Thumbnailer::loadPrograms()
             }
         }
     }
+}
+
+QImage Thumbnailer::render(const QString &path, const QString &mimeType, int size) const
+{
+    const auto it = m_programs.constFind(mimeType);
+    if (it == m_programs.constEnd())
+        return {};
+    return runProgram(*it, path, mimeType, size); // sandboxed like any other run
 }
 
 bool Thumbnailer::canGenerate(const QString &mimeType) const

@@ -52,6 +52,10 @@ public:
 
     // For tests and Properties.
     bool canGenerate(const QString &mimeType) const;
+    // A large preview (Quick Look) made by the system thumbnailer for
+    // `mimeType`, at up to `size` px, sandboxed, not cached. Blocks: call it
+    // from a worker thread. Safe from any thread (the program list is fixed).
+    QImage render(const QString &path, const QString &mimeType, int size) const;
     static bool sandboxAvailable();
     static QString cachePathFor(const QString &path, const char *sizeDir = "large");
     int generatedCount() const { return m_generated.loadRelaxed(); }

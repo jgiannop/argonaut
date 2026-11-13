@@ -20,6 +20,8 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/DiskUsageModel.cpp
+    src/Preview.h
+    src/Preview.cpp
     src/DefaultFileManager.h
     src/DefaultFileManager.cpp
     src/RecentFiles.h
@@ -94,6 +96,8 @@ qt_add_executable(kaftilous
     src/OpenWithDialog.cpp
     src/PropertiesDialog.h
     src/CompressDialog.cpp
+    src/QuickLook.cpp
+    src/QuickLook.h
     src/UsageDelegate.cpp
     src/UsageDelegate.h
     src/CompressDialog.h

@@ -439,6 +439,10 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
               {1.75, 12.75}, {1.75, 6}});
         line(1.75, 7.25, 14.25, 7.25);
         break;
+    case Glyph::Split: // two panes side by side
+        p->drawRoundedRect(QRectF(2.25, 3.25, 11.5, 9.5), 1.5, 1.5);
+        line(8, 3.5, 8, 12.5);
+        break;
     case Glyph::Recent: // a clock
         p->drawEllipse(QPointF(8, 8), 5.75, 5.75);
         poly({{8, 4.75}, {8, 8.25}, {10.5, 9.75}});

@@ -69,3 +69,8 @@ if(TARGET Qt6::DBus AND DBUS_RUN_SESSION)
     add_test(NAME fmservice COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_fmservice>)
     set_tests_properties(fmservice PROPERTIES ENVIRONMENT "KAFTILOUS_PRIVATE_BUS=1" TIMEOUT 60)
 endif()
+
+qt_add_executable(tst_preview tst_preview.cpp)
+target_link_libraries(tst_preview PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME preview COMMAND tst_preview)
+set_tests_properties(preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)

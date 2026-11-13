@@ -15,6 +15,8 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - **Starred**: star files and folders (right-click → Star); they get a ★ and their own place in the sidebar. Stars follow items you rename or move
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
 - Show hidden files (Ctrl+H)
+- **Quick Look** (Space): a preview of the selected file without opening an app: photos (animated GIFs play), PDFs, videos, fonts, text and code, the contents of archives (nothing is extracted), folders. Arrow keys go to the next file, Enter opens it, Space or Esc closes. Programs disguised as documents are never previewed. Previews are made in the same sandbox as thumbnails
+- **Split view** (F3): two folders side by side, each with its own history and view. F5 copies the selection to the other side, F6 moves it, or drag between them. Delete, rename and every other shortcut act on the side you're in
 - Zoom (Ctrl+plus / Ctrl+minus / Ctrl+0, or Ctrl+mouse wheel): grid icons from 32 to 256 px, list icons from 16 to 48 px, remembered separately for each
 - **Analyze view** (Ctrl+3, or the pie button): how much disk space every folder and sub-folder uses, as a tree with usage bars, biggest first. Sizes match `du` exactly (space on disk, hard links counted once; symlinks and other drives aren't followed). Folders appear while it measures; opening a folder inside what's been measured is instant. **Show Files When Analyzing** (View menu or right-click) also lists each folder's biggest files. Copying, moving, trashing, extracting and Undo update the sizes at once, without measuring everything again. Right-click to open, trash or scan again
 - Live updates when files change on disk
@@ -66,6 +68,8 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 | Type a path | Ctrl+L |
 | Search (this folder and sub-folders) | Ctrl+F |
 | Grid / list / analyze disk usage | Ctrl+1 / Ctrl+2 / Ctrl+3 |
+| Quick Look (preview) | Space |
+| Split view / copy to other side / move to other side | F3 / F5 / F6 |
 | Show hidden files | Ctrl+H |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |
 | Move to Trash / Delete permanently | Delete / Shift+Delete |
