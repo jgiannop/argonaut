@@ -337,7 +337,11 @@ void MainWindow::setupUi()
     connect(m_model, &QFileSystemModel::directoryLoaded, this, [this](const QString &path) {
         if (QDir::cleanPath(path) == m_current)
             updateFloatingBar();
+        applyPendingSelection();
     });
+    // New files may reach the model a little after a paste finishes.
+    connect(m_model, &QAbstractItemModel::rowsInserted, this,
+            &MainWindow::applyPendingSelection);
 
     m_thumbnailer = new Thumbnailer(this);
 
@@ -496,6 +500,10 @@ QWidget *MainWindow::buildContentPane()
             &MainWindow::updateFloatingBar);
     connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
             &MainWindow::updateEditActions);
+    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
+        if (!m_applyingSelection)
+            m_pendingSelection.clear(); // the user picked something else
+    });
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
     connect(m_thumbnailer, &Thumbnailer::thumbnailReady, m_view->viewport(),
@@ -671,6 +679,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         return true;
 
     setSearchActive(false);
+    m_pendingSelection.clear();
     if (addToHistory && !m_current.isEmpty()) {
         m_backHistory.push(m_current);
         m_forwardHistory.clear();
@@ -1073,6 +1082,16 @@ void MainWindow::onJobFinished(FileJob *job)
             showMessage(copied ? tr("%1 items copied").arg(done) : tr("%1 items moved").arg(done));
     }
 
+    // Highlight what was pasted (or put back by an undo) in the open folder.
+    if (job->kind() != FileJob::Kind::Trash) {
+        QStringList here;
+        for (const TransferResult &r : results) {
+            if (QFileInfo(r.target).absolutePath() == m_current)
+                here.append(r.target);
+        }
+        selectPaths(here);
+    }
+
     if (!errors.isEmpty()) {
         QString text = errors.mid(0, 10).join('\n');
         if (errors.size() > 10)
@@ -1099,4 +1118,46 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_ops->cancelAll();
     }
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::selectPaths(const QStringList &paths)
+{
+    m_pendingSelection = paths;
+    m_pendingSince.start();
+    applyPendingSelection();
+}
+
+void MainWindow::applyPendingSelection()
+{
+    if (m_pendingSelection.isEmpty())
+        return;
+    if (m_pendingSince.elapsed() > 5000) { // give up quietly
+        m_pendingSelection.clear();
+        return;
+    }
+
+    QItemSelection selection;
+    QModelIndex first;
+    int found = 0;
+    for (const QString &path : std::as_const(m_pendingSelection)) {
+        const QModelIndex index = m_model->index(path);
+        if (!index.isValid() || index.parent() != m_view->rootIndex())
+            continue;
+        selection.select(index, index);
+        if (!first.isValid())
+            first = index;
+        ++found;
+    }
+    if (!first.isValid())
+        return;
+
+    m_applyingSelection = true;
+    QItemSelectionModel *model = m_view->selectionModel();
+    model->select(selection, QItemSelectionModel::ClearAndSelect);
+    model->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
+    m_view->scrollTo(first);
+    m_applyingSelection = false;
+
+    if (found == m_pendingSelection.size())
+        m_pendingSelection.clear();
 }
