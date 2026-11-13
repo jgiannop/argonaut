@@ -12,6 +12,7 @@
 
 class DirectoryModel;
 class DiskUsageModel;
+class QuickLook;
 class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
@@ -148,6 +149,12 @@ private:
     // File operations
     QStringList selectedPaths() const;
     void rememberOpened(const QStringList &files); // add to the shared Recent list
+    // Quick Look: Space shows the current item; it follows the current item
+    // while open.
+    void toggleQuickLook();
+    void updateQuickLook();
+    bool quickLookVisible() const;
+    QString effectiveMimeAt(const QModelIndex &sourceIndex) const;
     // Zoom the visible view (grid and list have their own size): +1, -1, or 0 = default.
     void zoom(int step);
     void applyZoom();
@@ -258,6 +265,8 @@ private:
     QAction *m_undoAct = nullptr;
     QAction *m_redoAct = nullptr;         // Ctrl+Shift+Z / Ctrl+Y
     QAction *m_starAct = nullptr;         // Star / Unstar the selection
+    QAction *m_previewAct = nullptr;      // Quick Look (Space, handled in eventFilter)
+    QuickLook *m_quickLook = nullptr;     // made on first use
     QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
     // Recent is shown newest first; the folder sort comes back when leaving.
     bool m_recentSort = false;
@@ -354,4 +363,67 @@ private:
     QStringList m_pendingSelection;
     QElapsedTimer m_pendingSince;
     bool m_applyingSelection = false;
+
+    // ----------------------------------------------------- split view ---
+    // Each file pane has its own folder, history, model, views and state.
+    // The members above (m_model, m_view, m_current…) always belong to the
+    // active pane: activatePane() switches them for good, PaneScope only
+    // while handling something that happened in the other pane.
+    struct Pane
+    {
+        // Widgets (made once by buildPane; never change).
+        DirectoryModel *model = nullptr;
+        FileFilterProxy *proxy = nullptr;
+        FileItemDelegate *gridDelegate = nullptr;
+        FileItemDelegate *listDelegate = nullptr;
+        QListView *iconView = nullptr;
+        QTreeView *detailView = nullptr;
+        QStackedWidget *viewStack = nullptr;
+        QLabel *floatingBar = nullptr;
+        QTimer *messageTimer = nullptr;
+        QWidget *container = nullptr; // caption + views, in m_paneSplitter
+        QLabel *caption = nullptr;    // split view: the pane's folder
+        // State.
+        QAbstractItemView *view = nullptr;
+        QString message;
+        QString current;
+        QStack<QString> back, forward;
+        bool grid = true;
+        int gridZoom = 1, listZoom = 1;
+        QStringList pendingSelection;
+        QElapsedTimer pendingSince;
+        int pendingScroll = -1;
+        QString pendingRename;
+        bool recentSort = false;
+        int sortColumnBefore = 0;
+        Qt::SortOrder sortOrderBefore = Qt::AscendingOrder;
+    };
+    class PaneScope; // switches to a pane temporarily (see MainWindow.cpp)
+    friend class PaneScope;
+    Pane m_panes[2];
+    int m_paneCount = 0;  // 1, or 2 once the split view was opened
+    int m_activePane = 0;
+    int m_background = 0; // > 0 while working on a pane that isn't the user's
+    bool m_split = false;
+    QSplitter *m_paneSplitter = nullptr;
+    QAction *m_splitAct = nullptr;        // F3
+    QAction *m_copyToOtherAct = nullptr;  // F5
+    QAction *m_moveToOtherAct = nullptr;  // F6
+    QToolButton *m_splitButton = nullptr;
+    QPointer<QAbstractItemView> m_dragScrollView;
+
+    QWidget *buildPane(QWidget *parent, int index);
+    void savePane(int index);
+    void loadPane(int index);
+    void activatePane(int index);
+    int paneOf(const QObject *object) const;
+    void refreshChrome();     // header, title, sidebar, actions: for the active pane
+    void updateViewChrome();  // grid/list button and zoom limits
+    void updatePaneCaptions();
+    void fitListColumns(); // narrow panes drop Type, then Modified, so names have room
+    QString titleFor(const QString &path) const;
+    void setSplitView(bool on);
+    void ensureSecondPane();
+    QString otherPaneFolder() const; // where F5/F6 copy and move to, or empty
+    void transferToOtherPane(bool move);
 };

@@ -129,6 +129,7 @@ bool needsSafeWrites(const QString &dir)
 // Built without libarchive: no archive support.
 bool FileJob::archivesSupported() { return false; }
 QString FileJob::archiveSuffix(ArchiveFormat) { return {}; }
+bool FileJob::listArchive(const QString &, int, QList<ArchiveEntry> *, int *, QString *) { return false; }
 void FileJob::runExtract() { addError(tr("Archives aren't supported in this build.")); }
 void FileJob::runCompress() { addError(tr("Archives aren't supported in this build.")); }
 #endif

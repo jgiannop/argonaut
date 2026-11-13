@@ -45,6 +45,16 @@ public:
     enum class ArchiveFormat { Zip, TarGz, TarXz, SevenZip };
     static bool archivesSupported();
     static QString archiveSuffix(ArchiveFormat format); // ".zip", ".tar.xz"…
+    // What's inside an archive, without extracting (Quick Look). At most
+    // `max` entries; `total` gets the full count. False if it can't be read.
+    struct ArchiveEntry
+    {
+        QString path;
+        qint64 size = 0;
+        bool isDir = false;
+    };
+    static bool listArchive(const QString &archive, int max, QList<ArchiveEntry> *entries, int *total,
+                            QString *error = nullptr);
 
     struct Progress
     {

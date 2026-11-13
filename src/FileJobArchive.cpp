@@ -68,6 +68,50 @@ bool FileJob::archivesSupported()
     return true;
 }
 
+bool FileJob::listArchive(const QString &archive, int max, QList<ArchiveEntry> *entries, int *total,
+                          QString *error)
+{
+    struct archive *in = archive_read_new();
+    archive_read_support_filter_all(in);
+    archive_read_support_format_all(in);
+    archive_read_support_format_raw(in);
+    if (archive_read_open_filename(in, QFile::encodeName(archive).constData(), Chunk) != ARCHIVE_OK) {
+        if (error)
+            *error = QString::fromLocal8Bit(archive_error_string(in));
+        archive_read_free(in);
+        return false;
+    }
+    int count = 0;
+    bool ok = true;
+    struct archive_entry *entry = nullptr;
+    while (true) {
+        const int r = archive_read_next_header(in, &entry);
+        if (r == ARCHIVE_EOF)
+            break;
+        if (r < ARCHIVE_WARN) {
+            if (error)
+                *error = QString::fromLocal8Bit(archive_error_string(in));
+            ok = count > 0; // a damaged tail still shows what came before
+            break;
+        }
+        ++count;
+        if (entries && entries->size() < max) {
+            QString path = archive_format(in) == ARCHIVE_FORMAT_RAW
+                               ? archiveBaseName(QFileInfo(archive).fileName())
+                               : entryPath(entry);
+            const bool dir = archive_entry_filetype(entry) == AE_IFDIR || path.endsWith(QLatin1Char('/'));
+            while (path.endsWith(QLatin1Char('/')))
+                path.chop(1);
+            entries->append({path, archive_entry_size_is_set(entry) ? qint64(archive_entry_size(entry)) : -1, dir});
+        }
+        archive_read_data_skip(in);
+    }
+    archive_read_free(in);
+    if (total)
+        *total = count;
+    return ok;
+}
+
 QString FileJob::archiveSuffix(ArchiveFormat format)
 {
     switch (format) {
