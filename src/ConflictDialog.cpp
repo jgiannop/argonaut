@@ -1,5 +1,7 @@
 #include "ConflictDialog.h"
 
+#include "Format.h"
+
 #include <QCheckBox>
 #include <QDateTime>
 #include <QDir>
@@ -52,7 +54,7 @@ QString describe(const QFileInfo &info)
                                   .size());
         return count == 1 ? ConflictDialog::tr("1 item") : ConflictDialog::tr("%1 items").arg(count);
     }
-    return locale.formattedDataSize(info.size());
+    return formatSize(info.size());
 }
 
 } // namespace

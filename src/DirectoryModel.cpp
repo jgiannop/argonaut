@@ -1,5 +1,7 @@
 #include "DirectoryModel.h"
 
+#include "Format.h"
+
 #include "Trash.h"
 
 #include <QCollator>
@@ -32,7 +34,12 @@ constexpr size_t BigChange = 500;   // more added/removed than this: reset inste
 
 QCollator naturalCollator()
 {
-    QCollator collator;
+    // The "C"/POSIX locale has no natural-number collation ("file10" would
+    // sort before "file2"); use English rules there instead.
+    QLocale locale;
+    if (locale.language() == QLocale::C)
+        locale = QLocale(QLocale::English);
+    QCollator collator(locale);
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     return collator;
@@ -649,7 +656,7 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
                     return QString();
                 return e.childCount == 1 ? tr("1 item") : tr("%1 items").arg(e.childCount);
             }
-            return QLocale().formattedDataSize(e.size);
+            return formatSize(e.size);
         case TypeColumn:
             if (m_trash) {
                 // Folder it came from, with ~ for home (like Nautilus).

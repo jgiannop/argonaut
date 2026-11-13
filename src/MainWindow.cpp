@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include "Format.h"
+
 #include "Bookmarks.h"
 #include "ConflictDialog.h"
 #include "DirectoryModel.h"
@@ -7,9 +9,12 @@
 #include "FileItemDelegate.h"
 #include "FileOperations.h"
 #include "HeaderBar.h"
+#include "OpenWith.h"
+#include "OpenWithDialog.h"
 #include "OperationsPanel.h"
 #include "PathBar.h"
 #include "PreferencesDialog.h"
+#include "PropertiesDialog.h"
 #include "Thumbnailer.h"
 #if defined(KAFTILOUS_TERMINAL)
 #include "TerminalWidget.h"
@@ -39,6 +44,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
+#include <QMimeDatabase>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QFileSystemWatcher>
@@ -243,6 +249,22 @@ QPushButton#conflictButton:hover { background: @buttonHover; }
 QPushButton#conflictPrimary { background: @accent; color: #ffffff; border: none;
     border-radius: 6px; padding: 7px 16px; font-weight: bold; }
 
+QDialog#propertiesDialog { background: @window; }
+QLabel#propLabel { color: @dim; }
+QLabel#propValue { color: @fg; }
+QLabel#propHeading { color: @fg; font-weight: bold; padding-top: 10px; }
+QComboBox#propCombo { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+    padding: 5px 10px; }
+QComboBox#propCombo:disabled { color: @dim; }
+QComboBox#propCombo::drop-down { border: none; width: 18px; }
+QComboBox#propCombo QAbstractItemView { background: @popup; color: @fg; border: 1px solid @border;
+    selection-background-color: @hover; selection-color: @fg; outline: 0; }
+QDialog#openWithDialog { background: @window; }
+QListWidget#appList { background: @pathBg; color: @fg; border-radius: 8px; padding: 4px; outline: 0; }
+QListWidget#appList::item { padding: 6px; border-radius: 6px; }
+QListWidget#appList::item:selected { background: @itemSel; color: @fg; }
+QListWidget#appList::item:hover:!selected { background: @hover; }
+
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
@@ -258,6 +280,7 @@ QToolButton#themeCard:checked { border-color: @accent; }
         {"@button", t.button},     {"@pathBg", t.pathBg},         {"@accent", t.accent},
         {"@popup", t.popup},       {"@border", t.border},         {"@scrollHover", t.scrollHover},
         {"@scroll", t.scroll},     {"@splitter", t.dark ? t.sidebar : t.border},
+        {"@itemSel", t.itemSelected},
     };
     // Longer tokens first where one is a prefix of another (@button/@buttonHover…).
     for (const auto &[token, color] : tokens)
@@ -329,11 +352,11 @@ MainWindow::MainWindow(QWidget *parent)
         poll->start(3000);
     }
 
-    if (m_csd) {
-        winId(); // create the native window so we can watch its mouse events
-        if (QWindow *handle = windowHandle())
-            handle->installEventFilter(this);
-    }
+    // Watch the native window's mouse events: back/forward mouse buttons
+    // anywhere in the window, plus edge resizing when frameless.
+    winId();
+    if (QWindow *handle = windowHandle())
+        handle->installEventFilter(this);
 }
 
 // ---------------------------------------------------------------- setup ---
@@ -543,6 +566,16 @@ void MainWindow::setupActions()
     m_trashAct->setShortcut(QKeySequence::Delete);
     connect(m_trashAct, &QAction::triggered, this, &MainWindow::trashSelection);
 
+    m_propertiesAct = new QAction(tr("Properties"), this);
+    m_propertiesAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_I),
+                                   QKeySequence(Qt::ALT | Qt::Key_Return)});
+    connect(m_propertiesAct, &QAction::triggered, this, [this] {
+        QStringList paths = selectedPaths();
+        if (paths.isEmpty())
+            paths << m_current; // nothing selected: the open folder
+        (new PropertiesDialog(paths, this))->show();
+    });
+
     m_bookmarkAct = new QAction(tr("Bookmark This Folder"), this);
     m_bookmarkAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(m_bookmarkAct, &QAction::triggered, this, &MainWindow::toggleBookmark);
@@ -573,7 +606,7 @@ void MainWindow::setupActions()
                 m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
-                m_newTabAct, m_closeWindowAct, m_reopenTabAct});
+                m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -1448,7 +1481,7 @@ void MainWindow::updateFloatingBar()
                        ? tr("“%1” selected").arg(m_model->fileName(idx))
                        : tr("“%1” selected (%2)")
                              .arg(m_model->fileName(idx),
-                                  QLocale().formattedDataSize(m_model->size(idx)));
+                                  formatSize(m_model->size(idx)));
         } else if (selected.size() > 1) {
             qint64 bytes = 0;
             for (const QModelIndex &viewIdx : selected) {
@@ -1458,7 +1491,7 @@ void MainWindow::updateFloatingBar()
             }
             text = tr("%n items selected", nullptr, int(selected.size()));
             if (bytes > 0)
-                text += QStringLiteral(" (%1)").arg(QLocale().formattedDataSize(bytes));
+                text += QStringLiteral(" (%1)").arg(formatSize(bytes));
         }
     }
 
@@ -1636,6 +1669,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
 
+    if (watched == windowHandle() && event->type() == QEvent::MouseButtonPress) {
+        const Qt::MouseButton button = static_cast<QMouseEvent *>(event)->button();
+        if (button == Qt::BackButton || button == Qt::ForwardButton) {
+            button == Qt::BackButton ? goBack() : goForward();
+            return true;
+        }
+    }
     if (m_csd && watched == windowHandle()) {
         switch (event->type()) {
         case QEvent::MouseMove: {
@@ -1692,6 +1732,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                        && event->type() == QEvent::KeyPress))) {
         m_pendingSelection.clear();
         m_pendingRename.clear();
+        if (event->type() == QEvent::KeyPress && typeAheadKey(static_cast<QKeyEvent *>(event)))
+            return true;
     }
     if (m_renameEdit && isFileViewport(watched) && event->type() == QEvent::Paint)
         updateRenameGeometry(); // item positions are final when the view paints
@@ -1890,6 +1932,15 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
     } else if (index.isValid()) {
         menu->addAction(m_openAct);
+        if (!m_model->isDir(toSource(index)) && OpenWith::isSupported()) {
+            QStringList files;
+            for (const QString &path : selectedPaths()) {
+                if (!QFileInfo(path).isDir())
+                    files << path;
+            }
+            if (!files.isEmpty())
+                menu->addMenu(openWithMenu(files));
+        }
         if (m_model->isDir(toSource(index)))
             menu->addAction(m_openInNewTabAct);
         if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
@@ -1902,6 +1953,8 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addSeparator();
         menu->addAction(m_trashAct);
         menu->addAction(m_deleteAct);
+        menu->addSeparator();
+        menu->addAction(m_propertiesAct);
     } else {
         menu->addAction(m_newFolderAct);
         menu->addAction(m_newFileAct);
@@ -1915,6 +1968,8 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addSeparator();
         menu->addAction(m_copyLocationAct);
         menu->addAction(m_hiddenAct);
+        menu->addSeparator();
+        menu->addAction(m_propertiesAct);
     }
     menu->popup(m_view->viewport()->mapToGlobal(pos));
 }
@@ -2062,6 +2117,7 @@ QWidget *MainWindow::buildMenuBar()
     file->addAction(m_newFileAct);
     file->addSeparator();
     file->addAction(m_openAct);
+    file->addAction(m_propertiesAct);
     file->addSeparator();
     if (Trash::isSupported()) {
         file->addAction(m_emptyTrashAct);
@@ -2806,4 +2862,119 @@ void MainWindow::switchToTab(int index)
         m_pendingScroll = tab.scroll;
     else
         m_view->verticalScrollBar()->setValue(tab.scroll);
+}
+
+// ------------------------------------------------------------ type-ahead ---
+
+// Letters typed in the file view build a search; a pause of a second
+// starts a new one. Returns true if the key was used.
+bool MainWindow::typeAheadKey(QKeyEvent *event)
+{
+    if (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+        return false;
+    const bool active = !m_typeAhead.isEmpty() && m_typeAheadTimer.isValid()
+                        && m_typeAheadTimer.elapsed() < 1000;
+    if (event->key() == Qt::Key_Backspace && active) {
+        m_typeAhead.chop(1);
+        m_typeAheadTimer.restart();
+        if (!m_typeAhead.isEmpty())
+            typeAheadFind();
+        return true;
+    }
+    if (event->key() == Qt::Key_Escape && active) {
+        m_typeAhead.clear();
+        showMessage(QString());
+        return true;
+    }
+    const QString text = event->text();
+    if (text.isEmpty() || !text.at(0).isPrint())
+        return false;
+    if (text == QLatin1String(" ") && !active)
+        return false; // a lone space keeps its usual meaning
+    if (!active)
+        m_typeAhead.clear();
+    m_typeAhead += text;
+    m_typeAheadTimer.restart();
+    typeAheadFind();
+    return true;
+}
+
+// Select the first item whose name starts with the typed text, or failing
+// that contains it (case-insensitive).
+void MainWindow::typeAheadFind()
+{
+    QModelIndex hit;
+    const int rows = m_proxy->rowCount();
+    for (const bool prefix : {true, false}) {
+        for (int row = 0; row < rows && !hit.isValid(); ++row) {
+            const QModelIndex index = m_proxy->index(row, 0);
+            const QString name = index.data().toString();
+            if (prefix ? name.startsWith(m_typeAhead, Qt::CaseInsensitive)
+                       : name.contains(m_typeAhead, Qt::CaseInsensitive))
+                hit = index;
+        }
+        if (hit.isValid())
+            break;
+    }
+    if (hit.isValid()) {
+        QItemSelectionModel *selection = m_view->selectionModel();
+        selection->select(QItemSelection(hit, hit.siblingAtColumn(DirectoryModel::ColumnCount - 1)),
+                          QItemSelectionModel::ClearAndSelect);
+        selection->setCurrentIndex(hit, QItemSelectionModel::NoUpdate);
+        m_view->scrollTo(hit);
+        showMessage(tr("Find: %1").arg(m_typeAhead));
+    } else {
+        showMessage(tr("Find: %1 — no match").arg(m_typeAhead));
+    }
+}
+
+// ----------------------------------------------------------- open with ---
+
+QMenu *MainWindow::openWithMenu(const QStringList &files)
+{
+    QMenu *menu = makeMenu();
+    menu->setTitle(tr("Open With"));
+    static const QMimeDatabase db;
+    QString mime = db.mimeTypeForFile(files.first()).name();
+    if (mime.isEmpty())
+        mime = QStringLiteral("application/octet-stream"); // never ask gio about ""
+    QString defaultId;
+    const QList<OpenWith::App> apps = OpenWith::appsFor(mime, &defaultId);
+    int shown = 0;
+    for (const OpenWith::App &app : apps) {
+        if (shown++ == 8)
+            break; // the rest are in "Other Application…"
+        QAction *act = menu->addAction(appIcon(app), app.id == defaultId
+                                                         ? tr("%1 (default)").arg(app.name)
+                                                         : app.name);
+        connect(act, &QAction::triggered, this, [this, app, files] {
+            if (OpenWith::launch(app, files))
+                showMessage(tr("Opening with %1").arg(app.name));
+            else
+                showMessage(tr("Couldn't start %1").arg(app.name));
+        });
+    }
+    if (!apps.isEmpty())
+        menu->addSeparator();
+    menu->addAction(tr("Other Application…"), this, [this, files] { openWithOther(files); });
+    return menu;
+}
+
+void MainWindow::openWithOther(const QStringList &files)
+{
+    static const QMimeDatabase db;
+    const QMimeType type = db.mimeTypeForFile(files.first());
+    const QString mime = type.isValid() ? type.name() : QStringLiteral("application/octet-stream");
+    OpenWithDialog dialog(files, mime, type.isValid() ? type.comment() : mime, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const OpenWith::App app = dialog.chosen();
+    if (app.desktopFile.isEmpty())
+        return;
+    if (dialog.makeDefault())
+        OpenWith::setDefault(mime, app);
+    if (OpenWith::launch(app, files))
+        showMessage(tr("Opening with %1").arg(app.name));
+    else
+        showMessage(tr("Couldn't start %1").arg(app.name));
 }
