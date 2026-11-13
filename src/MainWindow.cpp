@@ -56,6 +56,7 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QStyledItemDelegate>
+#include <QTabBar>
 #include <QTimer>
 #include <QTreeView>
 #include <QToolButton>
@@ -75,6 +76,8 @@ constexpr int SeparatorRole = Qt::UserRole + 1;
 constexpr int KindRole = Qt::UserRole + 2;  // SidebarKind
 constexpr int EjectRole = Qt::UserRole + 3; // bool: show an eject button
 enum SidebarKind { PlaceItem, BookmarkItem, DriveItem };
+
+QStringList localPaths(const QMimeData *mime);
 
 // The eject button's area inside a sidebar row.
 QRect ejectRect(const QRect &row)
@@ -207,6 +210,11 @@ QLineEdit#renameEdit { background: @window; color: @fg; border: 2px solid @accen
     border-radius: 6px; padding: 1px 4px; selection-background-color: @accent;
     selection-color: #ffffff; }
 
+QTabBar#tabs { background: @window; border: none; }
+QTabBar#tabs::tab { background: transparent; color: @dim; border: none; border-radius: 6px;
+    padding: 5px 8px 5px 14px; margin: 3px 2px; min-width: 120px; }
+QTabBar#tabs::tab:selected { background: @pathBg; color: @fg; }
+QTabBar#tabs::tab:hover:!selected { background: @hover; }
 QWidget#trashBar { background: @pathBg; border-bottom: 1px solid @border; }
 QLabel#trashBarText { color: @fg; }
 QToolButton#barButton { background: @button; color: @fg; border: none; border-radius: 6px;
@@ -442,9 +450,54 @@ void MainWindow::setupActions()
     m_selectAllAct->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAct, &QAction::triggered, this, [this] { m_view->selectAll(); });
 
-    m_closeAct = new QAction(tr("Close Window"), this);
-    m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W));
-    connect(m_closeAct, &QAction::triggered, this, &QWidget::close);
+    m_closeAct = new QAction(tr("Close Tab"), this);
+    m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // the last tab closes the window
+    connect(m_closeAct, &QAction::triggered, this, [this] { closeTab(m_activeTab); });
+
+    m_closeWindowAct = new QAction(tr("Close Window"), this);
+    m_closeWindowAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
+    connect(m_closeWindowAct, &QAction::triggered, this, &QWidget::close);
+
+    m_newTabAct = new QAction(tr("New Tab"), this);
+    m_newTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    connect(m_newTabAct, &QAction::triggered, this, [this] { openTab(m_current, true); });
+
+    m_reopenTabAct = new QAction(tr("Reopen Closed Tab"), this);
+    m_reopenTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
+    connect(m_reopenTabAct, &QAction::triggered, this, &MainWindow::reopenClosedTab);
+
+    m_openInNewTabAct = new QAction(tr("Open in New Tab"), this);
+    connect(m_openInNewTabAct, &QAction::triggered, this, [this] {
+        for (const QModelIndex &index : selectedViewIndexes()) {
+            const QModelIndex source = toSource(index);
+            if (m_model->isDir(source))
+                openTab(m_model->filePath(source), false);
+        }
+    });
+
+    auto addTabSwitch = [this](const QList<QKeySequence> &keys, int step) {
+        auto *act = new QAction(this);
+        act->setShortcuts(keys);
+        connect(act, &QAction::triggered, this, [this, step] {
+            if (m_tabs.size() > 1)
+                m_tabBar->setCurrentIndex((m_activeTab + step + int(m_tabs.size())) % int(m_tabs.size()));
+        });
+        addAction(act);
+    };
+    addTabSwitch({QKeySequence(Qt::CTRL | Qt::Key_Tab), QKeySequence(Qt::CTRL | Qt::Key_PageDown)}, 1);
+    addTabSwitch({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Backtab),
+                  QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab),
+                  QKeySequence(Qt::CTRL | Qt::Key_PageUp)},
+                 -1);
+    for (int n = 1; n <= 9; ++n) {
+        auto *act = new QAction(this);
+        act->setShortcut(QKeySequence(Qt::ALT | Qt::Key(Qt::Key_0 + n)));
+        connect(act, &QAction::triggered, this, [this, n] {
+            if (n - 1 < m_tabs.size())
+                m_tabBar->setCurrentIndex(n - 1);
+        });
+        addAction(act);
+    }
 
     m_quitAct = new QAction(tr("Quit"), this);
     m_quitAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
@@ -519,7 +572,8 @@ void MainWindow::setupActions()
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
-                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct});
+                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
+                m_newTabAct, m_closeWindowAct, m_reopenTabAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -557,6 +611,10 @@ void MainWindow::setupUi()
     connect(m_model, &DirectoryModel::loaded, this, [this] {
         updateFloatingBar();
         applyPendingSelection();
+        if (m_pendingScroll >= 0) { // a tab coming back: where it was
+            m_view->verticalScrollBar()->setValue(m_pendingScroll);
+            m_pendingScroll = -1;
+        }
     });
     // The open folder was deleted or moved: go to the nearest folder left.
     connect(m_model, &DirectoryModel::folderGone, this, [this](const QString &gone) {
@@ -823,6 +881,30 @@ QWidget *MainWindow::buildContentPane()
     trashRow->addWidget(m_trashRestoreButton);
     trashRow->addWidget(m_trashEmptyButton);
     m_trashBar->hide();
+    m_tabBar = new QTabBar(pane);
+    m_tabBar->setObjectName("tabs");
+    m_tabBar->setExpanding(true);
+    m_tabBar->setMovable(true);
+    m_tabBar->setDocumentMode(true);
+    m_tabBar->setElideMode(Qt::ElideMiddle);
+    m_tabBar->setFocusPolicy(Qt::NoFocus);
+    m_tabBar->setAcceptDrops(true); // drop files onto a tab's folder
+    m_tabBar->installEventFilter(this);
+    m_tabs.append(TabState());
+    m_tabBar->addTab(QString());
+    addTabCloseButton(0);
+    m_tabBar->hide(); // shown from two tabs on
+    connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::switchToTab);
+    connect(m_tabBar, &QTabBar::tabMoved, this, [this](int from, int to) {
+        m_tabs.move(from, to);
+        if (m_activeTab == from)
+            m_activeTab = to;
+        else if (from < m_activeTab && to >= m_activeTab)
+            --m_activeTab;
+        else if (from > m_activeTab && to <= m_activeTab)
+            ++m_activeTab;
+    });
+    layout->addWidget(m_tabBar);
     layout->addWidget(m_trashBar);
 
     m_contentSplitter = new QSplitter(Qt::Vertical, pane);
@@ -890,6 +972,10 @@ void MainWindow::applyTheme(bool force)
     m_gridDelegate->setTheme(m_theme);
     m_listDelegate->setTheme(m_theme);
     m_opsPanel->setTheme(m_theme);
+    for (int i = 0; m_tabBar && i < m_tabBar->count(); ++i) {
+        if (auto *close = qobject_cast<QToolButton *>(m_tabBar->tabButton(i, QTabBar::RightSide)))
+            close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
+    }
 #if defined(KAFTILOUS_TERMINAL)
     m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
     m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
@@ -1209,6 +1295,11 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
                           : info.fileName().isEmpty() ? QDir::toNativeSeparators(clean)
                                                       : info.fileName();
     setWindowTitle(tr("%1 — Kaftilous").arg(title));
+    if (m_tabBar && m_activeTab < m_tabBar->count()) {
+        m_tabBar->setTabText(m_activeTab, title);
+        m_tabBar->setTabToolTip(m_activeTab, QDir::toNativeSeparators(clean));
+        m_tabs[m_activeTab].path = clean;
+    }
 
     syncSidebarSelection();
     updateActions();
@@ -1483,6 +1574,30 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                                   event);
         if (m_sidebar && watched == m_sidebar->viewport())
             return handleSidebarDrag(event);
+        if (m_tabBar && watched == m_tabBar) {
+            // Dropping onto a tab: into that tab's folder.
+            if (event->type() == QEvent::DragLeave)
+                return true;
+            auto *drop = static_cast<QDropEvent *>(event);
+            const int index = m_tabBar->tabAt(drop->position().toPoint());
+            const QStringList sources = localPaths(drop->mimeData());
+            const QString target = index >= 0 ? m_tabs.at(index).path : QString();
+            const Qt::DropAction action =
+                target.isEmpty() ? Qt::IgnoreAction
+                                 : dropActionFor(sources, target, drop->modifiers(), drop->possibleActions());
+            if (action == Qt::IgnoreAction) {
+                if (event->type() == QEvent::DragEnter && !sources.isEmpty())
+                    drop->acceptProposedAction();
+                else
+                    drop->ignore();
+                return true;
+            }
+            drop->setDropAction(action);
+            drop->accept();
+            if (event->type() == QEvent::Drop)
+                performDrop(sources, target, action);
+            return true;
+        }
         break;
     default:
         break;
@@ -1548,11 +1663,29 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                && event->type() == QEvent::MouseButtonPress) {
         auto *me = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_sidebar->itemAt(me->position().toPoint());
+        if (item && me->button() == Qt::MiddleButton && !item->data(PathRole).toString().isEmpty()) {
+            openTab(item->data(PathRole).toString(), false);
+            return true;
+        }
         if (item && me->button() == Qt::LeftButton && item->data(EjectRole).toBool()
             && ejectRect(m_sidebar->visualItemRect(item)).contains(me->position().toPoint())) {
             ejectDrive(item->data(PathRole).toString(), item->text());
             return true; // don't also open it
         }
+    } else if (isFileViewport(watched) && event->type() == QEvent::MouseButtonPress
+               && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton) {
+        auto *view = static_cast<QAbstractItemView *>(static_cast<QWidget *>(watched)->parentWidget());
+        const QModelIndex source =
+            toSource(view->indexAt(static_cast<QMouseEvent *>(event)->position().toPoint()));
+        if (source.isValid() && m_model->isDir(source))
+            openTab(m_model->filePath(source), false);
+        return true;
+    } else if (m_tabBar && watched == m_tabBar && event->type() == QEvent::MouseButtonRelease
+               && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton) {
+        const int index = m_tabBar->tabAt(static_cast<QMouseEvent *>(event)->position().toPoint());
+        if (index >= 0)
+            closeTab(index);
+        return true;
     } else if (m_view
                && ((isFileViewport(watched) && event->type() == QEvent::MouseButtonPress)
                    || ((watched == m_iconView || watched == m_detailView)
@@ -1757,6 +1890,8 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
     } else if (index.isValid()) {
         menu->addAction(m_openAct);
+        if (m_model->isDir(toSource(index)))
+            menu->addAction(m_openInNewTabAct);
         if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
             menu->addAction(m_openTerminalHereAct);
         menu->addSeparator();
@@ -1932,7 +2067,11 @@ QWidget *MainWindow::buildMenuBar()
         file->addAction(m_emptyTrashAct);
         file->addSeparator();
     }
+    file->addAction(m_newTabAct);
+    file->addAction(m_reopenTabAct);
+    file->addSeparator();
     file->addAction(m_closeAct);
+    file->addAction(m_closeWindowAct);
     file->addAction(m_quitAct);
 
     QMenu *edit = addMenu(tr("&Edit"));
@@ -2528,4 +2667,143 @@ void MainWindow::showNextConflict()
         if (next.job)
             next.job->resolveConflict(dialog.resolution());
     }
+}
+
+// ---------------------------------------------------------------- tabs ---
+
+QString MainWindow::tabTitle(const QString &path) const
+{
+    if (!Trash::filesDirOf(path).isEmpty() && Trash::isFilesDir(path))
+        return tr("Trash");
+    const QString name = QFileInfo(path).fileName();
+    return name.isEmpty() ? QDir::toNativeSeparators(path) : name;
+}
+
+void MainWindow::addTabCloseButton(int index)
+{
+    auto *close = new QToolButton(m_tabBar);
+    close->setObjectName("flat");
+    close->setFixedSize(20, 20);
+    close->setIconSize(QSize(12, 12));
+    close->setFocusPolicy(Qt::NoFocus);
+    close->setToolTip(tr("Close Tab (Ctrl+W)"));
+    close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
+    connect(close, &QToolButton::clicked, this, [this, close] {
+        for (int i = 0; i < m_tabBar->count(); ++i) {
+            if (m_tabBar->tabButton(i, QTabBar::RightSide) == close) {
+                closeTab(i);
+                return;
+            }
+        }
+    });
+    m_tabBar->setTabButton(index, QTabBar::RightSide, close);
+}
+
+void MainWindow::updateTabBar()
+{
+    m_tabBar->setVisible(m_tabs.size() > 1);
+}
+
+void MainWindow::saveActiveTab()
+{
+    if (m_activeTab < 0 || m_activeTab >= m_tabs.size())
+        return;
+    TabState &tab = m_tabs[m_activeTab];
+    tab.path = m_current;
+    tab.back = m_backHistory;
+    tab.forward = m_forwardHistory;
+    tab.selection = selectedPaths();
+    tab.scroll = m_view->verticalScrollBar()->value();
+}
+
+// New tab right after the current one, like browsers. Background tabs
+// (middle-click) don't take you there.
+void MainWindow::openTab(const QString &path, bool activate)
+{
+    saveActiveTab();
+    TabState tab;
+    tab.path = QDir::cleanPath(path);
+    const int index = m_activeTab + 1;
+    m_switchingTabs = true;
+    m_tabs.insert(index, tab);
+    m_tabBar->insertTab(index, tabTitle(tab.path));
+    m_tabBar->setTabToolTip(index, QDir::toNativeSeparators(tab.path));
+    addTabCloseButton(index);
+    m_switchingTabs = false;
+    updateTabBar();
+    if (activate)
+        m_tabBar->setCurrentIndex(index);
+    else
+        showMessage(tr("Opened “%1” in a new tab").arg(tabTitle(tab.path)));
+}
+
+void MainWindow::closeTab(int index)
+{
+    if (index < 0 || index >= m_tabs.size())
+        return;
+    if (m_tabs.size() == 1) {
+        close(); // the last tab closes the window
+        return;
+    }
+    if (index == m_activeTab)
+        saveActiveTab();
+    m_closedTabs.append(m_tabs.at(index));
+    if (m_closedTabs.size() > 10)
+        m_closedTabs.removeFirst();
+
+    const bool wasActive = index == m_activeTab;
+    m_switchingTabs = true;
+    m_tabs.removeAt(index);
+    m_tabBar->removeTab(index);
+    m_switchingTabs = false;
+    if (wasActive) {
+        m_activeTab = -1; // nothing to save: it's gone
+        switchToTab(m_tabBar->currentIndex());
+    } else if (index < m_activeTab) {
+        --m_activeTab;
+    }
+    updateTabBar();
+}
+
+void MainWindow::reopenClosedTab()
+{
+    if (m_closedTabs.isEmpty())
+        return;
+    const TabState tab = m_closedTabs.takeLast();
+    openTab(tab.path, true);
+    // Bring back its history and selection too.
+    m_backHistory = tab.back;
+    m_forwardHistory = tab.forward;
+    m_tabs[m_activeTab].back = tab.back;
+    m_tabs[m_activeTab].forward = tab.forward;
+    updateActions();
+    selectPaths(tab.selection);
+    m_pendingScroll = tab.scroll;
+}
+
+void MainWindow::switchToTab(int index)
+{
+    if (m_switchingTabs || index < 0 || index >= m_tabs.size() || index == m_activeTab)
+        return;
+    saveActiveTab();
+    m_activeTab = index;
+    const TabState tab = m_tabs.at(index);
+
+    if (tab.path != m_current) {
+        if (!navigateTo(tab.path, false)) // its folder may be gone by now
+            navigateTo(QDir::homePath(), false);
+    } else {
+        setWindowTitle(tr("%1 — Kaftilous").arg(tabTitle(m_current)));
+    }
+    m_backHistory = tab.back;
+    m_forwardHistory = tab.forward;
+    updateActions();
+    if (!tab.selection.isEmpty())
+        selectPaths(tab.selection);
+    else
+        m_view->selectionModel()->clearSelection();
+    if (m_model->isLoading())
+        m_pendingScroll = tab.scroll;
+    else
+        m_view->verticalScrollBar()->setValue(tab.scroll);
 }

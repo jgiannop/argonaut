@@ -108,6 +108,11 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
     - The file's folder is watched, so Nautilus's edits appear.
   - Drives mounted by udisks (`/media`, `/run/media`) get an ⏏ button, painted by `SidebarDelegate` and handled in `eventFilter`. `ejectDrive` runs `gio mount --eject <root>` (`KAFTILOUS_EJECT_PROGRAM` overrides the program). It refuses while a job uses the drive, and leaves the drive first if it's the open folder.
   - Mount changes come from `POLLPRI` on `/proc/self/mounts` (a `QSocketNotifier` of type Exception) on Linux, and a 3 s poll elsewhere.
+- Tabs share the **one** view and model. `m_tabs[i]` (`TabState`) stores a tab's folder, back/forward stacks, selected paths and scroll position.
+  - `switchToTab` saves the active tab (`saveActiveTab`), then navigates (`navigateTo(path, false)`), restores the history stacks, and restores the selection through `selectPaths` and the scroll position through `m_pendingScroll` (applied on `loaded`).
+  - `m_switchingTabs` silences `QTabBar` signals while the code edits the bar. The bar is hidden below 2 tabs. Close buttons are custom `QToolButton`s, re-iconed in `applyTheme`.
+  - Ctrl+W closes a tab (the last one closes the window), Ctrl+Shift+W closes the window and Ctrl+Shift+T reopens a closed tab.
+  - Middle-click opens a folder or sidebar entry in a background tab, and closes a tab when used on the tab bar. Drops onto a tab go into that tab's folder.
 - Settings (`loadSettings` at startup, `saveSettings` in `closeEvent`; `QSettings` keys `window/*` and `view/*`): window geometry, sidebar width, terminal height, list column widths, sort column and order, hidden files, sidebar visibility, and grid or list view.
 - Menu bar (File/Edit/View/Go/Help, `buildMenuBar`): it sits inside the frameless window's root layout, except on macOS, where it uses the global menu bar. Its empty space drags and maximises the window like the header bars. Every command is a `QAction` member, added to the window with `addActions` so its shortcut works everywhere, and reused in the menus and the context menu. Enablement is updated in `updateEditActions()`.
 - New Folder / New File create "New Folder", "New Folder 2"… then open the inline rename field (`m_pendingRename` → `startRename` once the item appears).

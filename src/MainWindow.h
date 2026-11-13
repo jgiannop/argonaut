@@ -32,6 +32,7 @@ class QMenuBar;
 class QModelIndex;
 class QSplitter;
 class QStackedWidget;
+class QTabBar;
 class QTimer;
 class QToolButton;
 
@@ -68,6 +69,25 @@ private:
     void updateBookmarkAction();
     void loadSettings();
     void saveSettings();
+
+    // Tabs: one shared view/model; each tab keeps its folder, history,
+    // selection and scroll position, restored when it becomes active.
+    struct TabState
+    {
+        QString path;
+        QStack<QString> back;
+        QStack<QString> forward;
+        QStringList selection;
+        int scroll = 0;
+    };
+    void openTab(const QString &path, bool activate);
+    void closeTab(int index);
+    void reopenClosedTab();
+    void switchToTab(int index);
+    void saveActiveTab();
+    void addTabCloseButton(int index);
+    void updateTabBar();
+    QString tabTitle(const QString &path) const;
     void syncSidebarSelection();
 
     void goBack();
@@ -219,6 +239,17 @@ private:
     };
     QList<PendingConflict> m_conflicts;
     bool m_conflictOpen = false;
+
+    QList<TabState> m_tabs;
+    QList<TabState> m_closedTabs; // for Ctrl+Shift+T
+    int m_activeTab = 0;
+    bool m_switchingTabs = false; // ignore QTabBar signals while we edit it
+    int m_pendingScroll = -1;     // restore a tab's scroll position once loaded
+    QTabBar *m_tabBar = nullptr;
+    QAction *m_newTabAct = nullptr;
+    QAction *m_closeWindowAct = nullptr;
+    QAction *m_reopenTabAct = nullptr;
+    QAction *m_openInNewTabAct = nullptr;
 
     QAction *m_bookmarkAct = nullptr;   // Ctrl+D: bookmark / unbookmark this folder
     QTimer *m_sidebarRefresh = nullptr; // debounces drive/bookmark changes
