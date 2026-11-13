@@ -154,9 +154,8 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
         m_active.removeOne(job);
         const QList<TransferResult> results = job->results();
         if (recordUndo && !results.isEmpty()) {
-            m_undo.append({job->kind(), results, QString()});
-            while (m_undo.size() > MaxUndo)
-                m_undo.removeFirst();
+            pushUndo({job->kind(), results, job->kind(), QString()});
+            m_redo.clear(); // a new action: the old future is gone
             emit undoChanged();
         }
         emit jobFinished(job);
@@ -167,41 +166,59 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
     return job;
 }
 
+void FileOperations::pushUndo(const UndoEntry &entry)
+{
+    m_undo.append(entry);
+    while (m_undo.size() > MaxUndo)
+        m_undo.removeFirst();
+}
+
 void FileOperations::recordUndo(FileJob::Kind kind, const QList<TransferResult> &results,
-                                const QString &label)
+                                const QString &action)
 {
     if (results.isEmpty())
         return;
-    m_undo.append({kind, results, label});
-    while (m_undo.size() > MaxUndo)
-        m_undo.removeFirst();
+    pushUndo({kind, results, kind, action});
+    m_redo.clear(); // a new action: the old future is gone
     emit undoChanged();
+}
+
+QString FileOperations::historyText(const QList<UndoEntry> &list, bool undo) const
+{
+    if (list.isEmpty())
+        return undo ? tr("Undo") : tr("Redo");
+    const UndoEntry &e = list.last();
+    if (!e.name.isEmpty())
+        return (undo ? tr("Undo %1") : tr("Redo %1")).arg(e.name);
+    int n = 0;
+    for (const TransferResult &r : e.results)
+        n += r.target.isEmpty() ? 0 : 1;
+    const QString items = n == 1 ? tr("1 item") : tr("%1 items").arg(n);
+    switch (e.action) {
+    case FileJob::Kind::Copy:
+        return (undo ? tr("Undo Copy (%1)") : tr("Redo Copy (%1)")).arg(items);
+    case FileJob::Kind::Move:
+        return (undo ? tr("Undo Move (%1)") : tr("Redo Move (%1)")).arg(items);
+    case FileJob::Kind::Trash:
+        return (undo ? tr("Undo Move to Trash (%1)") : tr("Redo Move to Trash (%1)")).arg(items);
+    case FileJob::Kind::Extract:
+        return undo ? tr("Undo Extract") : tr("Redo Extract");
+    case FileJob::Kind::Compress:
+        return undo ? tr("Undo Compress") : tr("Redo Compress");
+    default:
+        break;
+    }
+    return undo ? tr("Undo") : tr("Redo");
 }
 
 QString FileOperations::undoText() const
 {
-    if (m_undo.isEmpty())
-        return tr("Undo");
-    const UndoEntry &e = m_undo.last();
-    if (!e.label.isEmpty())
-        return e.label;
-    const int n = int(e.results.size());
-    const QString items = n == 1 ? tr("1 item") : tr("%1 items").arg(n);
-    switch (e.kind) {
-    case FileJob::Kind::Copy:
-        return tr("Undo Copy (%1)").arg(items);
-    case FileJob::Kind::Move:
-        return tr("Undo Move (%1)").arg(items);
-    case FileJob::Kind::Trash:
-        return tr("Undo Move to Trash (%1)").arg(items);
-    case FileJob::Kind::Extract:
-        return tr("Undo Extract");
-    case FileJob::Kind::Compress:
-        return tr("Undo Compress");
-    case FileJob::Kind::Restore:
-        break;
-    }
-    return tr("Undo");
+    return historyText(m_undo, true);
+}
+
+QString FileOperations::redoText() const
+{
+    return historyText(m_redo, false);
 }
 
 // Run the inverse of the last operation. Undoing a copy moves the copies to
@@ -211,31 +228,63 @@ void FileOperations::undo()
     if (m_undo.isEmpty())
         return;
     const UndoEntry entry = m_undo.takeLast();
+    runInverse(entry, &m_redo, "undo");
     emit undoChanged();
+}
 
-    QList<Transfer> back;
-    QStringList copies;
+void FileOperations::redo()
+{
+    if (m_redo.isEmpty())
+        return;
+    const UndoEntry entry = m_redo.takeLast();
+    runInverse(entry, &m_undo, "redo");
+    emit undoChanged();
+}
+
+void FileOperations::runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, const char *history)
+{
+    QList<Transfer> back;     // each result moved back to where it came from
+    QStringList created;      // results to put in the Trash
     for (const TransferResult &r : entry.results) {
+        if (r.target.isEmpty())
+            continue;
         const QFileInfo original(r.source);
         back.append({r.target, original.absolutePath(), original.fileName()});
-        copies.append(r.target);
+        created.append(r.target);
     }
 
+    FileJob *job = nullptr;
     switch (entry.kind) {
-    case FileJob::Kind::Copy:
+    case FileJob::Kind::Copy:     // copies, extracted files, new items…
     case FileJob::Kind::Extract:
     case FileJob::Kind::Compress:
-        startJob(FileJob::Kind::Trash, transfersInto(copies, QString()), false, false);
+    case FileJob::Kind::Restore:  // …and what came back from the Trash
+        job = startJob(FileJob::Kind::Trash, transfersInto(created, QString()), false, false);
         break;
     case FileJob::Kind::Move:
-        startJob(FileJob::Kind::Move, back, false, false);
+        job = startJob(FileJob::Kind::Move, back, false, false);
         break;
     case FileJob::Kind::Trash:
-        startJob(FileJob::Kind::Restore, back, false, false);
+        job = startJob(FileJob::Kind::Restore, back, false, false);
         break;
-    case FileJob::Kind::Restore:
+    case FileJob::Kind::Delete: // permanent: nothing to reverse
         break;
     }
+    if (!job)
+        return;
+    job->setProperty(HistoryProperty, QString::fromLatin1(history));
+    // When it's done, what it did can be reversed in turn.
+    connect(job, &FileJob::finished, this, [this, job, onto, action = entry.action, name = entry.name] {
+        const QList<TransferResult> results = job->results();
+        if (results.isEmpty())
+            return;
+        const UndoEntry next{job->kind(), results, action, name};
+        if (onto == &m_undo)
+            pushUndo(next);
+        else
+            onto->append(next);
+        emit undoChanged();
+    });
 }
 
 // ------------------------------------------------------------ clipboard ---

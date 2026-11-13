@@ -266,7 +266,7 @@ QString Thumbnailer::cachePathFor(const QString &path, const char *sizeDir)
 
 Thumbnailer::Thumbnailer(QObject *parent)
     : QObject(parent)
-    , m_cache(64 * 1024) // ~64 MiB
+    , m_cache(96 * 1024) // ~96 MiB
 {
     m_pool.setMaxThreadCount(qBound(1, QThread::idealThreadCount() / 2, 4));
     m_external.setMaxThreadCount(2);

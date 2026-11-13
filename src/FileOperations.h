@@ -15,8 +15,11 @@ class FileOperations : public QObject
     Q_OBJECT
 
 public:
-    // Dynamic property on each job: true for user actions, false for undos.
+    // Dynamic property on each job: true for user actions, false for undos
+    // and redos.
     static constexpr const char *UserActionProperty = "kaftilousUserAction";
+    // Dynamic property on undo/redo jobs: "undo" or "redo".
+    static constexpr const char *HistoryProperty = "kaftilousHistory";
 
     explicit FileOperations(QObject *parent = nullptr);
     ~FileOperations() override;
@@ -39,16 +42,23 @@ public:
 
     // Record an action done outside a job so it can be undone like one:
     // Move (e.g. a rename) moves back; Copy (e.g. "New Folder") trashes the
-    // created items. `label` names it in the Undo menu item.
+    // created items. `action` names it in the menus ("Rename" gives
+    // "Undo Rename" / "Redo Rename").
     void recordUndo(FileJob::Kind kind, const QList<TransferResult> &results,
-                    const QString &label = QString());
+                    const QString &action = QString());
 
     // Ask about name clashes (conflictRaised) instead of always keeping both.
     void setAskOnConflict(bool ask) { m_askOnConflict = ask; }
 
+    // Undo runs the inverse of the last action; redo runs the inverse of
+    // that undo (restoring what it trashed, moving back what it moved…), so
+    // the very same items come back. A new action clears what can be redone.
     bool canUndo() const { return !m_undo.isEmpty(); }
+    bool canRedo() const { return !m_redo.isEmpty(); }
     QString undoText() const;
+    QString redoText() const;
     void undo();
+    void redo();
 
     const QList<FileJob *> &activeJobs() const { return m_active; }
     void cancelAll();
@@ -67,16 +77,23 @@ signals:
 private:
     struct UndoEntry
     {
-        FileJob::Kind kind;
-        QList<TransferResult> results;
-        QString label; // custom Undo text, e.g. "Undo Rename"
+        FileJob::Kind kind;            // the job whose effect this reverses
+        QList<TransferResult> results; // what that job did
+        FileJob::Kind action;          // the user's original action (for the menu text)
+        QString name;                  // custom name, e.g. "Rename"
     };
 
     FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
                       bool userAction);
+    // Starts the job that reverses `entry`; when it finishes, its own
+    // inverse goes on `onto` (undo -> redo list, redo -> undo list).
+    void runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, const char *history);
+    QString historyText(const QList<UndoEntry> &list, bool undo) const;
+    void pushUndo(const UndoEntry &entry);
 
     QList<FileJob *> m_active;
     QList<UndoEntry> m_undo;
+    QList<UndoEntry> m_redo;
     QThreadPool m_pool;
     bool m_askOnConflict = false;
     FileJob::ArchiveFormat m_pendingFormat = FileJob::ArchiveFormat::Zip;

@@ -100,6 +100,11 @@ private slots:
     void conflictCancel();
     void sameFolderCopyNeverAsks();
     void safeWritesCopyAndMove();
+    void redoCopy();
+    void redoMove();
+    void redoTrash();
+    void redoRenameAndNewFolder();
+    void newActionClearsRedo();
 
 private:
     Outcome waitForJob();
@@ -632,6 +637,109 @@ void TestFileOperations::sameFolderCopyNeverAsks()
     waitForJob();
     QCOMPARE(m_asked, 0);
     QVERIFY(exists(m_dir + "/a (copy).txt"));
+}
+
+void TestFileOperations::redoCopy()
+{
+    writeFile(m_dir + "/src/a.txt", 50);
+    QDir().mkpath(m_dir + "/dest");
+    m_ops->copy({m_dir + "/src/a.txt"}, m_dir + "/dest");
+    waitForJob();
+    QVERIFY(!m_ops->canRedo());
+    m_ops->undo(); // the copy goes to the Trash
+    waitForJob();
+    QVERIFY(!exists(m_dir + "/dest/a.txt"));
+    QVERIFY(m_ops->canRedo());
+    QCOMPARE(m_ops->redoText(), QStringLiteral("Redo Copy (1 item)"));
+    m_ops->redo(); // the very same copy comes back from the Trash
+    const Outcome o = waitForJob();
+    QCOMPARE(o.kind, FileJob::Kind::Restore);
+    QVERIFY(exists(m_dir + "/dest/a.txt"));
+    QVERIFY(sameContent(m_dir + "/src/a.txt", m_dir + "/dest/a.txt"));
+    QVERIFY(!m_ops->canRedo());
+    QCOMPARE(m_ops->undoText(), QStringLiteral("Undo Copy (1 item)"));
+    m_ops->undo(); // and it can be undone again
+    waitForJob();
+    QVERIFY(!exists(m_dir + "/dest/a.txt"));
+}
+
+void TestFileOperations::redoMove()
+{
+    writeFile(m_dir + "/a.txt", 10);
+    QDir().mkpath(m_dir + "/dest");
+    m_ops->move({m_dir + "/a.txt"}, m_dir + "/dest");
+    waitForJob();
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(exists(m_dir + "/a.txt") && !exists(m_dir + "/dest/a.txt"));
+    QCOMPARE(m_ops->redoText(), QStringLiteral("Redo Move (1 item)"));
+    m_ops->redo();
+    waitForJob();
+    QVERIFY(!exists(m_dir + "/a.txt") && exists(m_dir + "/dest/a.txt"));
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(exists(m_dir + "/a.txt"));
+}
+
+void TestFileOperations::redoTrash()
+{
+    writeFile(m_dir + "/a.txt", 10);
+    m_ops->trash({m_dir + "/a.txt"});
+    waitForJob();
+    m_ops->undo(); // restored
+    waitForJob();
+    QVERIFY(exists(m_dir + "/a.txt"));
+    QCOMPARE(m_ops->redoText(), QStringLiteral("Redo Move to Trash (1 item)"));
+    m_ops->redo(); // trashed again (into the sandbox trash)
+    const Outcome o = waitForJob();
+    QCOMPARE(o.kind, FileJob::Kind::Trash);
+    QVERIFY(!exists(m_dir + "/a.txt"));
+    QVERIFY(o.results.first().target.startsWith(m_sandbox));
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(exists(m_dir + "/a.txt"));
+}
+
+void TestFileOperations::redoRenameAndNewFolder()
+{
+    writeFile(m_dir + "/old.txt", 10);
+    QVERIFY(QFile::rename(m_dir + "/old.txt", m_dir + "/new.txt"));
+    m_ops->recordUndo(FileJob::Kind::Move, {{m_dir + "/old.txt", m_dir + "/new.txt"}}, "Rename");
+    QCOMPARE(m_ops->undoText(), QStringLiteral("Undo Rename"));
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(exists(m_dir + "/old.txt"));
+    QCOMPARE(m_ops->redoText(), QStringLiteral("Redo Rename"));
+    m_ops->redo();
+    waitForJob();
+    QVERIFY(exists(m_dir + "/new.txt") && !exists(m_dir + "/old.txt"));
+
+    QVERIFY(QDir().mkdir(m_dir + "/New Folder"));
+    m_ops->recordUndo(FileJob::Kind::Copy, {{QString(), m_dir + "/New Folder"}}, "New Folder");
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(!exists(m_dir + "/New Folder"));
+    QCOMPARE(m_ops->redoText(), QStringLiteral("Redo New Folder"));
+    m_ops->redo();
+    waitForJob();
+    QVERIFY(QFileInfo(m_dir + "/New Folder").isDir());
+}
+
+void TestFileOperations::newActionClearsRedo()
+{
+    writeFile(m_dir + "/a.txt", 10);
+    writeFile(m_dir + "/b.txt", 10);
+    m_ops->trash({m_dir + "/a.txt"});
+    waitForJob();
+    m_ops->undo();
+    waitForJob();
+    QVERIFY(m_ops->canRedo());
+    m_ops->trash({m_dir + "/b.txt"}); // something new
+    waitForJob();
+    QVERIFY(!m_ops->canRedo());
+    m_ops->redo(); // nothing happens
+    QTest::qWait(200);
+    QVERIFY(exists(m_dir + "/a.txt"));
 }
 
 int main(int argc, char **argv)

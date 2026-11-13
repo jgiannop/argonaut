@@ -20,12 +20,18 @@ class FileItemDelegate : public QStyledItemDelegate
     Q_OBJECT
 
 public:
-    static constexpr int GridIconSize = 48;
-    static constexpr int ListIconSize = 24;
+    // Zoom levels (icon px), smallest first, and the default of each.
+    static const QList<int> &gridSizes(); // 32 48 64 96 128 192 256
+    static const QList<int> &listSizes(); // 16 24 32 48
+    static constexpr int DefaultGridIconSize = 48;
+    static constexpr int DefaultListIconSize = 24;
 
     FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent = nullptr);
 
     void setGridMode(bool grid);
+    // Zoom. Views re-lay out themselves (sizeHintChanged), keeping the selection.
+    void setIconSize(int px);
+    int iconSize() const { return m_iconSize; }
     void setTheme(const Theme &theme);
     // Folder under a drag in progress: drawn highlighted ("drop here").
     void setDropTarget(const QModelIndex &index) { m_dropTarget = index; }
@@ -51,6 +57,7 @@ private:
     Thumbnailer *m_thumbnailer;
     Theme m_theme;
     bool m_grid = true;
+    int m_iconSize = DefaultGridIconSize;
     QPersistentModelIndex m_dropTarget;
     mutable QHash<QString, QStringList> m_wrapCache;
     // Thumbnails pre-rendered at their on-screen size (cost in KiB).
