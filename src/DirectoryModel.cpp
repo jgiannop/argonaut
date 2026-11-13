@@ -2,6 +2,7 @@
 
 #include "Format.h"
 
+#include "FileJob.h"
 #include "Trash.h"
 
 #include <QCollator>
@@ -17,6 +18,7 @@
 #include <QSet>
 #include <QUrl>
 #include <QSocketNotifier>
+#include <QStorageInfo>
 
 #include <algorithm>
 
@@ -70,6 +72,10 @@ DirectoryModel::DirectoryModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
     m_pool.setMaxThreadCount(2); // one listing + one item-counting job
+    m_contentPool.setMaxThreadCount(1); // reading file heads: one disk stream
+    m_contentTimer.setSingleShot(true);
+    m_contentTimer.setInterval(30); // batch requests from painting
+    connect(&m_contentTimer, &QTimer::timeout, this, &DirectoryModel::flushContentQueue);
     m_rescanTimer.setSingleShot(true);
     m_rescanTimer.setInterval(RescanDelayMs);
     connect(&m_rescanTimer, &QTimer::timeout, this, [this] {
@@ -116,6 +122,8 @@ DirectoryModel::~DirectoryModel()
     ++m_generation; // ask running jobs to stop
     m_pool.clear();
     m_pool.waitForDone();
+    m_contentPool.clear();
+    m_contentPool.waitForDone();
 #if defined(Q_OS_LINUX)
     if (m_inotifyFd >= 0)
         ::close(m_inotifyFd);
@@ -173,6 +181,16 @@ void DirectoryModel::setPath(const QString &path)
     endResetModel();
     emit headerDataChanged(Qt::Horizontal, 0, ColumnCount - 1);
 
+    // Read every file's head on local disks; on removable and network drives
+    // only what's on screen, so a big stick isn't read in full.
+    m_wanted.clear();
+    m_queued.clear();
+    m_contentPool.clear();
+    static const QStringList network = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs",
+                                        "fuse.rclone", "9p", "afs", "davfs", "fuse.gvfsd-fuse"};
+    const QString fs = QString::fromLatin1(QStorageInfo(path).fileSystemType());
+    m_thorough = m_trash || (!needsSafeWrites(path) && !network.contains(fs));
+
     m_loading = true;
     watch(m_dirs);
     startScan(true);
@@ -223,7 +241,7 @@ void DirectoryModel::startScan(bool initial)
                     return; // the user went elsewhere
                 it.next();
                 FileEntry e = makeEntry(it.fileInfo(), collator);
-                e.dir = dir;
+                e.setDir(dir);
                 if (trash) {
                     const Trash::Info info = Trash::info(e.path());
                     e.originalPath = info.originalPath;
@@ -248,6 +266,9 @@ void DirectoryModel::applyBatch(quint64 generation, Entries batch, bool done)
 
     Entries shown;
     for (FileEntry &e : batch) {
+        applyCachedContent(e);
+        if (m_thorough && !e.isDir && e.verdict == ContentType::Verdict::NotChecked)
+            wantContent(e); // just this batch's new files, not the whole folder again
         if (isShown(e))
             shown.push_back(std::move(e));
         else
@@ -268,7 +289,7 @@ void DirectoryModel::applyBatch(quint64 generation, Entries batch, bool done)
                 m_rows.push_back(std::move(e));
             rebuildIndex(); // before endInsertRows: listeners may look names up
             endInsertRows();
-            resort();
+            resort(first); // the old rows are sorted: merge the new ones in
         }
     }
 
@@ -276,6 +297,7 @@ void DirectoryModel::applyBatch(quint64 generation, Entries batch, bool done)
         m_loading = false;
         m_scanning = false;
         emit loaded(m_path);
+        m_contentTimer.start(); // now read the real types
         startCounting();
         if (m_rescanPending) {
             m_rescanPending = false;
@@ -292,6 +314,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         return;
     m_scanning = false;
 
+    for (FileEntry &e : fresh)
+        applyCachedContent(e);
     QHash<QString, size_t> freshByPath;
     freshByPath.reserve(qsizetype(fresh.size()));
     for (size_t i = 0; i < fresh.size(); ++i)
@@ -305,6 +329,7 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
             ++removed;
     }
     for (const FileEntry &e : fresh) {
+        ensureIndex();
         if (isShown(e) && !m_rowByPath.contains(e.path()))
             ++added;
     }
@@ -342,6 +367,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
                 continue;
             if (cur.isDir != now.isDir || cur.mtime != now.mtime)
                 cur.childCount = -1; // recount
+            cur.verdict = ContentType::Verdict::NotChecked; // contents changed: look again
+            cur.contentMime.clear();
             cur.size = now.size;
             cur.mtime = now.mtime;
             cur.isDir = now.isDir;
@@ -353,6 +380,7 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
 
         // 3. Insertions at their sorted position.
         for (FileEntry &e : fresh) {
+            ensureIndex();
             if (!isShown(e) || m_rowByPath.contains(e.path()))
                 continue;
             const auto pos = std::lower_bound(m_rows.begin(), m_rows.end(), e,
@@ -376,6 +404,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
             resort();
     }
 
+    if (m_thorough)
+        queueAllUnchecked();
     startCounting();
     if (m_rescanPending) {
         m_rescanPending = false;
@@ -430,6 +460,7 @@ void DirectoryModel::applyCounts(quint64 generation, const QHash<QString, int> &
     if (generation != m_generation || counts.isEmpty())
         return;
     for (auto it = counts.constBegin(); it != counts.constEnd(); ++it) {
+        ensureIndex();
         const int row = m_rowByPath.value(it.key(), -1);
         if (row >= 0) {
             m_rows[size_t(row)].childCount = it.value();
@@ -515,7 +546,7 @@ void DirectoryModel::sortRows()
                      [this](const FileEntry &a, const FileEntry &b) { return lessThan(a, b); });
 }
 
-void DirectoryModel::resort()
+void DirectoryModel::resort(int sortedPrefix)
 {
     emit layoutAboutToBeChanged({}, QAbstractItemModel::VerticalSortHint);
     const QModelIndexList before = persistentIndexList();
@@ -524,21 +555,39 @@ void DirectoryModel::resort()
     for (const QModelIndex &idx : before)
         paths.append(idx.row() < int(m_rows.size()) ? m_rows[size_t(idx.row())].path() : QString());
 
-    sortRows();
+    const auto less = [this](const FileEntry &a, const FileEntry &b) { return lessThan(a, b); };
+    if (sortedPrefix >= 0 && sortedPrefix <= int(m_rows.size())) {
+        const auto middle = m_rows.begin() + sortedPrefix;
+        std::stable_sort(middle, m_rows.end(), less);
+        std::inplace_merge(m_rows.begin(), middle, m_rows.end(), less);
+    } else {
+        sortRows();
+    }
     rebuildIndex();
 
-    QModelIndexList after;
-    after.reserve(before.size());
-    for (int i = 0; i < before.size(); ++i) {
-        const int row = m_rowByPath.value(paths.at(i), -1);
-        after.append(row < 0 ? QModelIndex() : index(row, before.at(i).column()));
+    if (!before.isEmpty()) { // nothing to remap while a folder is still loading
+        QModelIndexList after;
+        after.reserve(before.size());
+        ensureIndex();
+        for (int i = 0; i < before.size(); ++i) {
+            const int row = m_rowByPath.value(paths.at(i), -1);
+            after.append(row < 0 ? QModelIndex() : index(row, before.at(i).column()));
+        }
+        changePersistentIndexList(before, after);
     }
-    changePersistentIndexList(before, after);
     emit layoutChanged({}, QAbstractItemModel::VerticalSortHint);
 }
 
 void DirectoryModel::rebuildIndex()
 {
+    m_indexStale = true;
+}
+
+void DirectoryModel::ensureIndex() const
+{
+    if (!m_indexStale)
+        return;
+    m_indexStale = false;
     m_rowByPath.clear();
     m_rowByPath.reserve(qsizetype(m_rows.size()));
     for (size_t i = 0; i < m_rows.size(); ++i)
@@ -549,6 +598,7 @@ void DirectoryModel::rebuildIndex()
 
 QModelIndex DirectoryModel::indexForPath(const QString &path, int column) const
 {
+    ensureIndex();
     const int row = m_rowByPath.value(QDir::cleanPath(path), -1);
     return row < 0 ? QModelIndex() : index(row, column);
 }
@@ -644,6 +694,9 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
     if (!index.isValid() || index.row() >= int(m_rows.size()))
         return {};
     const FileEntry &e = m_rows[size_t(index.row())];
+    if (!m_thorough && !e.isDir && e.verdict == ContentType::Verdict::NotChecked
+        && (role == Qt::DecorationRole || role == Qt::DisplayRole))
+        wantContent(e); // visible on a slow drive: check just this one
 
     switch (role) {
     case Qt::DisplayRole:
@@ -688,6 +741,16 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return e.path();
     case OriginalPathRole:
         return e.originalPath;
+    case VerdictRole:
+        return int(e.verdict);
+    case NameMimeRole:
+        return nameMimeFor(e);
+    case ContentMimeRole:
+        return e.contentMime;
+    case Qt::ToolTipRole:
+        if (index.column() == NameColumn && !e.isDir)
+            return ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
+        break;
     case IsDirRole:
         return e.isDir;
     case SizeRole:
@@ -703,6 +766,21 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
 // Mime type from the name only (no file access). Cached per name pattern:
 // the part after the first dot, or the whole name ("Makefile").
 const QString &DirectoryModel::mimeFor(const FileEntry &e) const
+{
+    switch (e.verdict) {
+    case ContentType::Verdict::Identified:
+    case ContentType::Verdict::Mismatch:
+    case ContentType::Verdict::Dangerous:
+        if (!e.contentMime.isEmpty())
+            return e.contentMime;
+        break;
+    default:
+        break;
+    }
+    return nameMimeFor(e);
+}
+
+const QString &DirectoryModel::nameMimeFor(const FileEntry &e) const
 {
     if (!e.mimeName.isEmpty())
         return e.mimeName;
@@ -745,4 +823,98 @@ QString DirectoryModel::typeFor(const FileEntry &e) const
         it = m_typeNames.insert(mime, db.mimeTypeForName(mime).comment());
     }
     return *it;
+}
+
+// -------------------------------------------------------- content check ---
+
+void DirectoryModel::applyCachedContent(FileEntry &e) const
+{
+    if (e.isDir) {
+        e.verdict = ContentType::Verdict::Consistent;
+        return;
+    }
+    if (e.verdict != ContentType::Verdict::NotChecked)
+        return;
+    ContentType::Result cached;
+    if (ContentType::Cache::instance().lookup(e.path(), e.size, e.mtime, &cached)) {
+        e.verdict = cached.verdict;
+        e.contentMime = cached.contentMime;
+    }
+}
+
+void DirectoryModel::wantContent(const FileEntry &e) const
+{
+    const QString path = e.path();
+    if (m_queued.contains(path))
+        return;
+    m_queued.insert(path);
+    m_wanted.append({path, e.size, e.mtime});
+    if (!m_loading) // while listing, wait: don't compete with it
+        m_contentTimer.start();
+}
+
+void DirectoryModel::queueAllUnchecked()
+{
+    // In view order, so what's on screen first is checked first.
+    for (const Entries *list : {&m_rows, &m_hidden}) {
+        for (const FileEntry &e : *list) {
+            if (!e.isDir && e.verdict == ContentType::Verdict::NotChecked)
+                wantContent(e);
+        }
+    }
+}
+
+void DirectoryModel::flushContentQueue()
+{
+    if (m_wanted.isEmpty())
+        return;
+    const QList<Wanted> work = std::exchange(m_wanted, {});
+    const quint64 generation = m_generation;
+    m_contentPool.start([this, work, generation] {
+        QList<ContentResult> results;
+        QElapsedTimer sinceSend;
+        sinceSend.start();
+        auto send = [&] {
+            QMetaObject::invokeMethod(
+                this, [this, generation, r = std::move(results)] { applyContent(generation, r); },
+                Qt::QueuedConnection);
+            results = QList<ContentResult>();
+            sinceSend.restart();
+        };
+        for (const Wanted &w : work) {
+            if (m_generation != generation)
+                break; // another folder now: don't keep the disk busy for this one
+            results.append({w.path, w.size, w.mtime, ContentType::inspect(w.path)});
+            if (sinceSend.elapsed() > 100)
+                send();
+        }
+        if (!results.isEmpty())
+            send();
+    });
+}
+
+void DirectoryModel::applyContent(quint64 generation, const QList<ContentResult> &results)
+{
+    for (const ContentResult &r : results) {
+        // Remember it even if we've moved on: next visit won't read the file.
+        ContentType::Cache::instance().store(r.path, r.size, r.mtime, r.result);
+        if (generation != m_generation)
+            continue;
+        m_queued.remove(r.path);
+        ensureIndex();
+        const int row = m_rowByPath.value(r.path, -1);
+        FileEntry *e = row >= 0 ? &m_rows[size_t(row)] : nullptr;
+        if (!e) {
+            for (FileEntry &hidden : m_hidden) {
+                if (hidden.path() == r.path)
+                    e = &hidden;
+            }
+        }
+        if (!e || e->size != r.size || e->mtime != r.mtime)
+            continue; // changed meanwhile: the rescan will queue it again
+        e->verdict = r.result.verdict;
+        e->contentMime = r.result.contentMime;
+        if (row >= 0)
+            emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+    }
 }

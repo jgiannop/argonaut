@@ -7,7 +7,10 @@
 #include <QHash>
 #include <QIcon>
 #include <QThreadPool>
+#include <QSet>
 #include <QTimer>
+
+#include "ContentType.h"
 
 #include <vector>
 
@@ -30,10 +33,19 @@ struct FileEntry
     bool isDir = false;
     bool isSymLink = false;
     bool isHidden = false;
+    // Real type from the first bytes (ContentType), filled in the background.
+    ContentType::Verdict verdict = ContentType::Verdict::NotChecked;
+    QString contentMime;
     // Trash view only (from .trashinfo):
     QString originalPath;
     qint64 deleted = 0; // ms since epoch
-    QString path() const { return dir.endsWith(QLatin1Char('/')) ? dir + name : dir + QLatin1Char('/') + name; }
+    QString fullPath; // dir + name, built once when listed (hashing and lookups use it a lot)
+    const QString &path() const { return fullPath; }
+    void setDir(const QString &folder)
+    {
+        dir = folder;
+        fullPath = folder.endsWith(QLatin1Char('/')) ? folder + name : folder + QLatin1Char('/') + name;
+    }
 };
 
 // Flat, sortable model of one folder's contents (replaces QFileSystemModel,
@@ -57,6 +69,9 @@ public:
         ModifiedRole,                // QDateTime
         FileNameRole,                // QString
         OriginalPathRole,            // QString, Trash view only
+        VerdictRole,                 // int, ContentType::Verdict
+        NameMimeRole,                // QString: what the name says
+        ContentMimeRole,             // QString: what the content says (if checked)
     };
 
     explicit DirectoryModel(QObject *parent = nullptr);
@@ -118,11 +133,30 @@ private:
 
     bool lessThan(const FileEntry &a, const FileEntry &b) const;
     void sortRows();
-    void resort(); // re-sort with layoutChanged, keeping persistent indexes
-    void rebuildIndex();
+    // Re-sort with layoutChanged, keeping persistent indexes. With
+    // `sortedPrefix` >= 0 only rows from there on are new: they're sorted and
+    // merged in (one pass) instead of sorting everything again.
+    void resort(int sortedPrefix = -1);
+    void rebuildIndex();      // marks m_rowByPath stale (cheap)
+    void ensureIndex() const; // rebuilds it if stale, on first use
     bool isShown(const FileEntry &e) const { return m_showHidden || !e.isHidden; }
 
-    const QString &mimeFor(const FileEntry &e) const;
+    const QString &mimeFor(const FileEntry &e) const;     // effective: content if it knows better
+    const QString &nameMimeFor(const FileEntry &e) const; // from the name only
+    // Content checks: cached results apply at once; the rest are read on a
+    // worker (every file on local disks, visible ones on USB/network drives).
+    void applyCachedContent(FileEntry &e) const;
+    void wantContent(const FileEntry &e) const;
+    void queueAllUnchecked();
+    void flushContentQueue();
+    struct ContentResult
+    {
+        QString path;
+        qint64 size;
+        qint64 mtime;
+        ContentType::Result result;
+    };
+    void applyContent(quint64 generation, const QList<ContentResult> &results);
     QIcon iconFor(const FileEntry &e) const;
     QString typeFor(const FileEntry &e) const;
 
@@ -131,7 +165,8 @@ private:
     bool m_trash = false;
     Entries m_rows;   // shown entries, sorted
     Entries m_hidden; // hidden entries while they aren't shown
-    QHash<QString, int> m_rowByPath; // full path -> row
+    mutable QHash<QString, int> m_rowByPath; // full path -> row; built lazily
+    mutable bool m_indexStale = false;
 
     int m_sortColumn = NameColumn;
     Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
@@ -150,6 +185,17 @@ private:
     QList<int> m_watchIds;
     QTimer m_rescanTimer;
     QThreadPool m_pool;
+    QThreadPool m_contentPool;
+    bool m_thorough = true; // check every file (local disk) or only visible ones
+    struct Wanted
+    {
+        QString path;
+        qint64 size;
+        qint64 mtime;
+    };
+    mutable QList<Wanted> m_wanted;
+    mutable QSet<QString> m_queued;
+    mutable QTimer m_contentTimer;
 
     mutable QFileIconProvider m_iconProvider;
     mutable QHash<QString, QIcon> m_iconCache;      // "mime:<type>" or "dir:<path>"

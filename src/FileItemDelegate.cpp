@@ -113,6 +113,7 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     }
 
     paintIcon(painter, iconRect, index);
+    paintContentBadge(painter, iconRect, index);
 
     painter->setPen(m_theme.fg);
     painter->setFont(option.font);
@@ -158,6 +159,7 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
                              option.rect.center().y() - ListIconSize / 2 + 1, ListIconSize,
                              ListIconSize);
         paintIcon(painter, iconRect, index);
+        paintContentBadge(painter, iconRect, index);
         const int left = iconRect.right() + 12;
         const QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
                              option.rect.height());
@@ -251,6 +253,30 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
     const QPixmap pm = icon.pixmap(rect.size(), dpr);
     if (!pm.isNull())
         drawCentered(painter, rect, pm);
+}
+
+// "!" in a circle at the icon's corner when the content doesn't match the
+// name: amber for a mismatch, red for a program in disguise.
+void FileItemDelegate::paintContentBadge(QPainter *painter, const QRect &iconRect,
+                                         const QModelIndex &index) const
+{
+    const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+    if (verdict != ContentType::Verdict::Mismatch && verdict != ContentType::Verdict::Dangerous)
+        return;
+    const int d = qMax(10, iconRect.width() * 3 / 8);
+    const QRectF badge(iconRect.right() - d + 3, iconRect.bottom() - d + 3, d, d);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(QPen(m_theme.window, 1.5)); // ring separates it from the icon
+    painter->setBrush(verdict == ContentType::Verdict::Dangerous ? QColor("#e01b24") : QColor("#e5a50a"));
+    painter->drawEllipse(badge);
+    QFont font = painter->font();
+    font.setBold(true);
+    font.setPixelSize(int(d * 0.75));
+    painter->setFont(font);
+    painter->setPen(Qt::white);
+    painter->drawText(badge, Qt::AlignCenter, QStringLiteral("!"));
+    painter->restore();
 }
 
 // Word-wrap `name` into at most GridMaxLines lines; if it is longer, the

@@ -12,7 +12,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
 - Search the current folder (Ctrl+F), show hidden files (Ctrl+H)
 - Live updates when files change on disk
-- Fast with big folders: 20,000 files load in about 0.2 s
+- Fast with big folders: 20,000 files load in about 0.2 s (Nautilus needs several times longer just to gather its file information)
 
 **Files**
 - Copy, cut and paste, which also work with other file managers' clipboards
@@ -23,6 +23,16 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - New Folder, New File, Rename (F2)
 - USB sticks: Kaftilous says "done" only after the data is really written to the drive
 
+**Real file types: safer than trusting names**
+
+Most file managers, Nautilus included, believe a file's extension: `report.pdf` is shown and opened as a PDF without anyone looking inside. Kaftilous checks what each file really is, from its first few kilobytes, and tells you when the name lies:
+- An **amber ⚠ badge** marks files whose content doesn't match their name, for example a `.pdf` that is really an HTML error page from a failed download, or a `.zip` that is really a 7z archive. Hover for details. Right-click → **Rename to “report.html”** fixes it (and can be undone).
+- A **red ⚠ badge** marks **programs disguised as documents** (`invoice.pdf` that is really an executable). Opening one shows a warning; Kaftilous never runs it.
+- Files are **opened with the app for what they really are**, so a mislabelled file still opens correctly.
+- Files with no extension get their real type and icon.
+- **Properties** shows both what the name says and what the file is.
+- **It doesn't slow anything down.** The folder appears instantly from the names, the check runs in the background, and the results are remembered (in `~/.cache`), so each file is read only once until it changes. On USB sticks and network drives only the files on screen are checked.
+
 **Trash** (Linux)
 - Restore to the original location, Delete Permanently (Shift+Delete), Empty Trash
 - Shows items trashed on all drives, including by other apps
@@ -30,6 +40,8 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 **Extras**
 - Embedded terminal (Ctrl+`) that opens in the current folder
 - Themes: Follow System, Light, Dark, Midnight Blue, Rosé Dawn, Forest, Sunset (Preferences, Ctrl+,)
+- Tabs (Ctrl+T), bookmarks shared with Nautilus (Ctrl+D), eject for USB drives, Open With…, Properties (Ctrl+I), type-to-find
+- Sizes in GNOME's units (kB, MB, GB), matching Nautilus and drive labels
 
 ### Keyboard shortcuts
 
@@ -46,6 +58,11 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 | Undo | Ctrl+Z |
 | Rename | F2 |
 | New folder / New file | Ctrl+Shift+N / Ctrl+Alt+N |
+| New tab / Close tab / Reopen closed tab | Ctrl+T / Ctrl+W / Ctrl+Shift+T |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Bookmark this folder | Ctrl+D |
+| Properties | Ctrl+I or Alt+Enter |
+| Find a file by typing | just start typing in the folder |
 | Terminal | Ctrl+` |
 | Preferences | Ctrl+, |
 
