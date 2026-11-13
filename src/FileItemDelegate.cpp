@@ -9,6 +9,8 @@
 #include <QPainterPath>
 #include <QTextLayout>
 
+#include <cmath>
+
 namespace {
 constexpr int GridCellWidth = 118;
 constexpr int GridMaxLines = 3;
@@ -30,6 +32,7 @@ void FileItemDelegate::setGridMode(bool grid)
 void FileItemDelegate::setTheme(const Theme &theme)
 {
     m_theme = theme;
+    m_thumbCache.clear(); // the frame colour is baked in
 }
 
 QSize FileItemDelegate::gridCellSize(const QFontMetrics &fm) const
@@ -137,6 +140,48 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
                       fm.elidedText(info, Qt::ElideLeft, infoRect.width()));
 }
 
+// Draw `pm` (already at its final size) centred in `rect`, snapped to whole
+// device pixels so it's a straight copy: no filtering, no blur.
+static void drawCentered(QPainter *painter, const QRect &rect, const QPixmap &pm)
+{
+    const qreal dpr = pm.devicePixelRatio();
+    const QSizeF logical = QSizeF(pm.size()) / dpr;
+    const QPointF topLeft(std::round((rect.center().x() + 0.5 - logical.width() / 2) * dpr) / dpr,
+                          std::round((rect.center().y() + 0.5 - logical.height() / 2) * dpr) / dpr);
+    painter->drawPixmap(topLeft, pm);
+}
+
+// Thumbnail scaled to fit `box`, with rounded corners and a hairline frame
+// baked in. Done once per thumbnail and size, then reused for every repaint.
+QPixmap FileItemDelegate::renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const
+{
+    const QSizeF logical = QSizeF(thumb.size()).scaled(QSizeF(box), Qt::KeepAspectRatio);
+    const QSize device(qMax(1, qRound(logical.width() * dpr)), qMax(1, qRound(logical.height() * dpr)));
+
+    QPixmap out(device);
+    out.setDevicePixelRatio(dpr);
+    out.fill(Qt::transparent);
+
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF r(0, 0, device.width() / dpr, device.height() / dpr);
+    QPainterPath clip;
+    clip.addRoundedRect(r, 3, 3);
+    p.setClipPath(clip);
+    // Smooth, high-quality downscale once (much better than per-paint filtering).
+    const QImage scaled = thumb.toImage().scaled(device, Qt::IgnoreAspectRatio,
+                                                 Qt::SmoothTransformation);
+    p.drawImage(r, scaled);
+    p.setClipping(false);
+    QColor frame = m_theme.fg;
+    frame.setAlpha(30);
+    p.setPen(QPen(frame, 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+    p.end();
+    return out;
+}
+
 // Thumbnail when available, otherwise the file-type icon.
 void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
                                  const QModelIndex &index) const
@@ -147,34 +192,31 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
         if (auto *model = qobject_cast<const QFileSystemModel *>(index.model())) {
             const QPixmap thumb = m_thumbnailer->thumbnail(model->fileInfo(index));
             if (!thumb.isNull()) {
-                QSizeF size = QSizeF(thumb.size()).scaled(QSizeF(rect.size()), Qt::KeepAspectRatio);
-                const QRectF target(rect.center().x() - size.width() / 2 + 0.5,
-                                    rect.center().y() - size.height() / 2 + 0.5, size.width(),
-                                    size.height());
-                QPainterPath clip;
-                clip.addRoundedRect(target, 3, 3);
-                painter->save();
-                painter->setClipPath(clip);
-                painter->drawPixmap(target, thumb, QRectF(thumb.rect()));
-                painter->restore();
-                QColor frame = m_theme.fg;
-                frame.setAlpha(30);
-                painter->setPen(QPen(frame, 1));
-                painter->setBrush(Qt::NoBrush);
-                painter->drawRoundedRect(target.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
-                return;
+                // cacheKey() changes whenever the thumbnail is replaced.
+                const QString key = QStringLiteral("%1:%2x%3@%4")
+                                        .arg(thumb.cacheKey())
+                                        .arg(rect.width())
+                                        .arg(rect.height())
+                                        .arg(dpr);
+                QPixmap *ready = m_thumbCache.object(key);
+                if (!ready) {
+                    ready = new QPixmap(renderThumbnail(thumb, rect.size(), dpr));
+                    const int costKiB = qMax(1, ready->width() * ready->height() * 4 / 1024);
+                    m_thumbCache.insert(key, ready, costKiB);
+                    ready = m_thumbCache.object(key);
+                }
+                if (ready) {
+                    drawCentered(painter, rect, *ready);
+                    return;
+                }
             }
         }
     }
 
     const QIcon icon = qvariant_cast<QIcon>(index.data(Qt::DecorationRole));
     const QPixmap pm = icon.pixmap(rect.size(), dpr);
-    if (pm.isNull())
-        return;
-    const QSizeF logical = QSizeF(pm.size()) / pm.devicePixelRatio();
-    const QPointF topLeft(rect.center().x() - logical.width() / 2 + 0.5,
-                          rect.center().y() - logical.height() / 2 + 0.5);
-    painter->drawPixmap(QRectF(topLeft, logical), pm, QRectF(pm.rect()));
+    if (!pm.isNull())
+        drawCentered(painter, rect, pm);
 }
 
 // Word-wrap `name` into at most GridMaxLines lines; if it is longer, the
