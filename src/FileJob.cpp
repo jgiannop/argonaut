@@ -282,8 +282,9 @@ void FileJob::runTransfers()
 
         const QString src = QDir::cleanPath(srcInfo.absoluteFilePath());
         const QString dir = QDir::cleanPath(t.targetDir);
-        if (m_kind == Kind::Restore && !QFileInfo(dir).exists())
-            QDir().mkpath(dir); // its original folder was deleted meanwhile
+        // Restores (and moves back by undo) may need their old folder again.
+        if (m_kind != Kind::Copy && !QFileInfo(dir).exists())
+            QDir().mkpath(dir);
         if (!QFileInfo(dir).isDir()) {
             addError(tr("The destination folder “%1” doesn't exist.")
                          .arg(QDir::toNativeSeparators(dir)));
@@ -302,7 +303,6 @@ void FileJob::runTransfers()
             continue;
         }
 
-        const QString target = uniqueTargetPath(dir, name, isRealDir);
         setCurrent(name);
         auto safe = safeByDir.constFind(dir);
         if (safe == safeByDir.constEnd())
@@ -311,36 +311,148 @@ void FileJob::runTransfers()
         if (m_safeWrites)
             safeDirsUsed.insert(dir);
 
-        bool ok = false;
-        if (m_kind == Kind::Copy) {
-            ok = copyTree(src, target);
-        } else if (QDir().rename(src, target)) {
-            // Same filesystem: instant.
-            addBytes(sizes.at(i));
-            ok = true;
-        } else {
-            // Different filesystem: copy, and delete the original only once
-            // the copy is complete (and, on a removable drive, really written).
-            ok = copyTree(src, target);
-            if (ok && m_safeWrites)
-                syncFilesystemOf(dir);
-            if (ok && !removeTree(src))
-                addError(tr("“%1” was copied but the original couldn't be removed.").arg(name));
-        }
-
-        if (ok) {
-            if (m_kind == Kind::Restore)
-                removeTrashInfo(src);
-            addResult(src, target);
-        } else if (pathExists(target)) {
-            removeTree(target); // incomplete copy: it didn't exist before
-        }
+        const bool keepGoing = transferItem(src, dir, name, sizes.at(i), true);
         itemDone();
+        if (!keepGoing)
+            break; // cancelled from the conflict question
     }
 
     // 3. Removable drives: don't report "done" while data is still in RAM.
     for (const QString &dir : std::as_const(safeDirsUsed))
         flushDrive(dir);
+}
+
+// Transfer `source` to `dir/name`, resolving a name clash first. Returns
+// false only if the user cancelled the whole job.
+bool FileJob::transferItem(const QString &source, const QString &dir, const QString &name,
+                           qint64 bytes, bool topLevel)
+{
+    const QFileInfo srcInfo(source);
+    const bool srcIsDir = srcInfo.isDir() && !srcInfo.isSymLink();
+    QString target = QDir::cleanPath(dir + QLatin1Char('/') + name);
+
+    if (pathExists(target)) {
+        // Pasting into the folder it came from duplicates, like Nautilus.
+        const bool duplicate = m_kind == Kind::Copy && topLevel
+                               && QDir::cleanPath(srcInfo.absolutePath()) == dir;
+        const Resolution r = duplicate ? Resolution{} : askUser(source, target);
+        const QFileInfo existing(target);
+        const bool targetIsDir = existing.isDir() && !existing.isSymLink();
+        switch (r.action) {
+        case ConflictAction::Cancel:
+            cancel();
+            return false;
+        case ConflictAction::Skip:
+            addBytes(bytes);
+            return true;
+        case ConflictAction::KeepBoth: {
+            const QString wanted = r.newName.trimmed();
+            const bool usable = !wanted.isEmpty() && !wanted.contains(QLatin1Char('/'))
+                                && wanted != QLatin1String(".") && wanted != QLatin1String("..");
+            target = uniqueTargetPath(dir, usable ? wanted : name, srcIsDir);
+            break;
+        }
+        case ConflictAction::Merge:
+            if (srcIsDir && targetIsDir)
+                return mergeInto(source, target);
+            [[fallthrough]]; // not two folders: merging means replacing
+        case ConflictAction::Replace: {
+            // Never destroy the existing item: it goes to the Trash.
+            if (!QFile::moveToTrash(target)) {
+                addError(tr("Couldn't move the existing “%1” to the Trash, so it wasn't replaced.")
+                             .arg(name));
+                addBytes(bytes);
+                return true;
+            }
+            break;
+        }
+        }
+    }
+
+    const bool ok = moveOrCopy(source, target, bytes, dir);
+    if (ok) {
+        if (m_kind == Kind::Restore && topLevel)
+            removeTrashInfo(source);
+        addResult(source, target);
+    } else if (pathExists(target)) {
+        removeTree(target); // incomplete copy: it didn't exist before
+    }
+    return true;
+}
+
+// Folder onto an existing folder: transfer each child into it (asking again
+// for clashes inside). Results record only what this job created, so undo
+// never touches what was already there.
+bool FileJob::mergeInto(const QString &sourceDir, const QString &targetDir)
+{
+    const QFileInfoList children = QDir(sourceDir).entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo &child : children) {
+        if (isCanceled())
+            return false;
+        if (!transferItem(child.absoluteFilePath(), targetDir, child.fileName(),
+                          treeSize(child.absoluteFilePath()), false))
+            return false;
+    }
+    if (m_kind != Kind::Copy)
+        QDir().rmdir(sourceDir); // moved: drop the source folder if it's now empty
+    return true;
+}
+
+bool FileJob::moveOrCopy(const QString &source, const QString &target, qint64 bytes,
+                         const QString &dir)
+{
+    if (m_kind == Kind::Copy)
+        return copyTree(source, target);
+    if (QDir().rename(source, target)) {
+        addBytes(bytes); // same filesystem: instant
+        return true;
+    }
+    // Different filesystem: copy, and delete the original only once the
+    // copy is complete (and, on a removable drive, really written).
+    const bool ok = copyTree(source, target);
+    if (ok && m_safeWrites)
+        syncFilesystemOf(dir);
+    if (ok && !removeTree(source))
+        addError(tr("“%1” was copied but the original couldn't be removed.")
+                     .arg(QFileInfo(source).fileName()));
+    return ok;
+}
+
+// Worker thread: ask the GUI (conflict signal) and wait for the answer.
+FileJob::Resolution FileJob::askUser(const QString &source, const QString &existing)
+{
+    const QFileInfo s(source);
+    const QFileInfo e(existing);
+    const bool folders = s.isDir() && !s.isSymLink() && e.isDir() && !e.isSymLink();
+    std::optional<ConflictAction> &remembered = folders ? m_folderChoice : m_fileChoice;
+    if (remembered)
+        return {*remembered, true, QString()};
+    if (!m_interactive)
+        return {}; // KeepBoth
+
+    {
+        QMutexLocker lock(&m_askMutex);
+        m_answer.reset();
+    }
+    emit conflict(source, existing);
+    QMutexLocker lock(&m_askMutex);
+    while (!m_answer && !isCanceled())
+        m_answered.wait(&m_askMutex, 200);
+    if (!m_answer)
+        return {ConflictAction::Cancel, false, QString()};
+    const Resolution answer = *m_answer;
+    // A typed name only makes sense once; everything else can be remembered.
+    if (answer.applyToAll && answer.newName.isEmpty())
+        remembered = answer.action;
+    return answer;
+}
+
+void FileJob::resolveConflict(const Resolution &resolution)
+{
+    QMutexLocker lock(&m_askMutex);
+    m_answer = resolution;
+    m_answered.wakeAll();
 }
 
 void FileJob::flushDrive(const QString &dir)

@@ -111,6 +111,10 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
         return nullptr;
     auto *job = new FileJob(kind, std::move(transfers), this);
     job->setProperty(UserActionProperty, userAction);
+    job->setInteractive(m_askOnConflict);
+    connect(job, &FileJob::conflict, this, [this, job](const QString &source, const QString &existing) {
+        emit conflictRaised(job, source, existing);
+    });
     m_active.append(job);
     connect(job, &FileJob::finished, this, [this, job, recordUndo] {
         m_active.removeOne(job);

@@ -37,6 +37,9 @@ public:
     void recordUndo(FileJob::Kind kind, const QList<TransferResult> &results,
                     const QString &label = QString());
 
+    // Ask about name clashes (conflictRaised) instead of always keeping both.
+    void setAskOnConflict(bool ask) { m_askOnConflict = ask; }
+
     bool canUndo() const { return !m_undo.isEmpty(); }
     QString undoText() const;
     void undo();
@@ -52,6 +55,8 @@ signals:
     void jobStarted(FileJob *job);
     void jobFinished(FileJob *job); // the job is deleted right after
     void undoChanged();
+    // `job` is paused: answer with job->resolveConflict().
+    void conflictRaised(FileJob *job, const QString &source, const QString &existing);
 
 private:
     struct UndoEntry
@@ -67,4 +72,5 @@ private:
     QList<FileJob *> m_active;
     QList<UndoEntry> m_undo;
     QThreadPool m_pool;
+    bool m_askOnConflict = false;
 };

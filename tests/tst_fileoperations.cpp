@@ -93,10 +93,19 @@ private slots:
     void deletePermanently();
     void emptyTrash();
     void trashInfoOnOtherDrives();
+    void conflictReplace();
+    void conflictSkipAndKeepBothNamed();
+    void conflictApplyToAll();
+    void conflictMergeFolders();
+    void conflictCancel();
+    void sameFolderCopyNeverAsks();
     void safeWritesCopyAndMove();
 
 private:
     Outcome waitForJob();
+    // Answer conflict questions in order; returns how many were asked.
+    void answerConflicts(QList<FileJob::Resolution> answers);
+    int m_asked = 0;
 
     QString m_sandbox;
     QString m_dir; // per-test work folder
@@ -138,6 +147,17 @@ Outcome TestFileOperations::waitForJob()
     if (!done)
         qWarning("timed out waiting for a file job");
     return outcome;
+}
+
+void TestFileOperations::answerConflicts(QList<FileJob::Resolution> answers)
+{
+    m_asked = 0;
+    m_ops->setAskOnConflict(true);
+    connect(m_ops, &FileOperations::conflictRaised, this,
+            [this, answers](FileJob *job, const QString &, const QString &) mutable {
+                ++m_asked;
+                job->resolveConflict(answers.isEmpty() ? FileJob::Resolution{} : answers.takeFirst());
+            });
 }
 
 void TestFileOperations::uniqueTargetNames()
@@ -510,6 +530,108 @@ void TestFileOperations::trashInfoOnOtherDrives()
     QCOMPARE(info.deletionDate, QDateTime(QDate(2024, 5, 6), QTime(7, 8, 9)));
     QVERIFY(!Trash::isFilesDir(m_dir + "/drive/files"));
     QVERIFY(Trash::filesDirOf(m_dir + "/drive/other").isEmpty());
+}
+
+using Action = FileJob::ConflictAction;
+
+void TestFileOperations::conflictReplace()
+{
+    writeFile(m_dir + "/src/a.txt", 100);
+    writeFile(m_dir + "/dest/a.txt", 7);
+    answerConflicts({{Action::Replace, false, {}}});
+    m_ops->copy({m_dir + "/src/a.txt"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QCOMPARE(m_asked, 1);
+    QVERIFY(o.errors.isEmpty());
+    QVERIFY(sameContent(m_dir + "/src/a.txt", m_dir + "/dest/a.txt"));
+    QVERIFY(!exists(m_dir + "/dest/a (copy).txt"));
+    // The replaced file is in the (sandboxed) Trash, not gone.
+    const QStringList trashed = QDir(Trash::homeFilesDir()).entryList(QDir::Files);
+    QVERIFY2(trashed.contains("a.txt"), qPrintable(trashed.join(',')));
+    QCOMPARE(QFileInfo(Trash::homeFilesDir() + "/a.txt").size(), 7);
+}
+
+void TestFileOperations::conflictSkipAndKeepBothNamed()
+{
+    writeFile(m_dir + "/src/a.txt", 100);
+    writeFile(m_dir + "/src/b.txt", 100);
+    writeFile(m_dir + "/dest/a.txt", 7);
+    writeFile(m_dir + "/dest/b.txt", 7);
+    answerConflicts({{Action::Skip, false, {}}, {Action::KeepBoth, false, "b-new.txt"}});
+    m_ops->copy({m_dir + "/src/a.txt", m_dir + "/src/b.txt"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QCOMPARE(m_asked, 2);
+    QCOMPARE(QFileInfo(m_dir + "/dest/a.txt").size(), 7); // skipped: untouched
+    QCOMPARE(QFileInfo(m_dir + "/dest/b.txt").size(), 7);
+    QCOMPARE(QFileInfo(m_dir + "/dest/b-new.txt").size(), 100);
+    QCOMPARE(o.results.size(), 1); // only what was created can be undone
+}
+
+void TestFileOperations::conflictApplyToAll()
+{
+    for (const char *n : {"1.txt", "2.txt", "3.txt"}) {
+        writeFile(m_dir + "/src/" + n, 100);
+        writeFile(m_dir + "/dest/" + n, 7);
+    }
+    answerConflicts({{Action::Skip, true, {}}});
+    m_ops->copy({m_dir + "/src/1.txt", m_dir + "/src/2.txt", m_dir + "/src/3.txt"}, m_dir + "/dest");
+    waitForJob();
+    QCOMPARE(m_asked, 1); // asked once, applied to the rest
+    for (const char *n : {"1.txt", "2.txt", "3.txt"})
+        QCOMPARE(QFileInfo(m_dir + "/dest/" + n).size(), 7);
+}
+
+void TestFileOperations::conflictMergeFolders()
+{
+    writeFile(m_dir + "/src/Photos/new.jpg", 50);
+    writeFile(m_dir + "/src/Photos/same.jpg", 50);
+    writeFile(m_dir + "/src/Photos/sub/deep.jpg", 50);
+    writeFile(m_dir + "/dest/Photos/old.jpg", 5);
+    writeFile(m_dir + "/dest/Photos/same.jpg", 5);
+    // Merge the folder, then for the clashing file inside: keep both.
+    answerConflicts({{Action::Merge, false, {}}, {Action::KeepBoth, false, {}}});
+    m_ops->move({m_dir + "/src/Photos"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QCOMPARE(m_asked, 2);
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/old.jpg").size(), 5);   // kept
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/same.jpg").size(), 5);  // kept
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/same (copy).jpg").size(), 50);
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/new.jpg").size(), 50);
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/sub/deep.jpg").size(), 50);
+    QVERIFY(!exists(m_dir + "/src/Photos")); // moved out entirely
+
+    // Undo puts back only what was moved; the folder's old contents stay.
+    m_ops->undo();
+    waitForJob();
+    QCOMPARE(QFileInfo(m_dir + "/src/Photos/new.jpg").size(), 50);
+    QCOMPARE(QFileInfo(m_dir + "/src/Photos/same.jpg").size(), 50);
+    QCOMPARE(QFileInfo(m_dir + "/src/Photos/sub/deep.jpg").size(), 50);
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/old.jpg").size(), 5);
+    QCOMPARE(QFileInfo(m_dir + "/dest/Photos/same.jpg").size(), 5);
+}
+
+void TestFileOperations::conflictCancel()
+{
+    writeFile(m_dir + "/src/a.txt", 100);
+    writeFile(m_dir + "/src/b.txt", 100);
+    writeFile(m_dir + "/dest/a.txt", 7);
+    answerConflicts({{Action::Cancel, false, {}}});
+    m_ops->copy({m_dir + "/src/a.txt", m_dir + "/src/b.txt"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QVERIFY(o.canceled);
+    QCOMPARE(QFileInfo(m_dir + "/dest/a.txt").size(), 7);
+    QVERIFY(!exists(m_dir + "/dest/b.txt")); // stopped before it
+}
+
+void TestFileOperations::sameFolderCopyNeverAsks()
+{
+    writeFile(m_dir + "/a.txt", 10);
+    answerConflicts({{Action::Cancel, false, {}}});
+    m_ops->copy({m_dir + "/a.txt"}, m_dir);
+    waitForJob();
+    QCOMPARE(m_asked, 0);
+    QVERIFY(exists(m_dir + "/a (copy).txt"));
 }
 
 int main(int argc, char **argv)
