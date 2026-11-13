@@ -25,6 +25,12 @@ public:
     FileJob *move(const QStringList &paths, const QString &targetDir);
     FileJob *trash(const QStringList &paths);
 
+    // Record an action done outside a job so it can be undone like one:
+    // Move (e.g. a rename) moves back; Copy (e.g. "New Folder") trashes the
+    // created items. `label` names it in the Undo menu item.
+    void recordUndo(FileJob::Kind kind, const QList<TransferResult> &results,
+                    const QString &label = QString());
+
     bool canUndo() const { return !m_undo.isEmpty(); }
     QString undoText() const;
     void undo();
@@ -46,6 +52,7 @@ private:
     {
         FileJob::Kind kind;
         QList<TransferResult> results;
+        QString label; // custom Undo text, e.g. "Undo Rename"
     };
 
     FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo);

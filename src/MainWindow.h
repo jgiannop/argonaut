@@ -7,6 +7,7 @@
 #include <QStack>
 #include <QString>
 
+class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
 class FileOperations;
@@ -21,6 +22,7 @@ class QLineEdit;
 class QListView;
 class QListWidget;
 class QMenu;
+class QMenuBar;
 class QModelIndex;
 class QSplitter;
 class QStackedWidget;
@@ -49,6 +51,7 @@ private:
     QWidget *buildContentPane();
     QToolButton *makeButton(const QString &toolTip, const char *objectName = "flat");
     QMenu *makeMenu();
+    QWidget *buildMenuBar();
 
     void applyTheme(bool force = false);
     void populateSidebar();
@@ -64,6 +67,10 @@ private:
     void updateFilter();
     void updateActions();
 
+    // View (proxy) <-> QFileSystemModel indexes.
+    QModelIndex toSource(const QModelIndex &viewIndex) const;
+    QModelIndex toView(const QModelIndex &sourceIndex) const;
+
     // File operations
     QStringList selectedPaths() const;
     void openSelection();
@@ -72,6 +79,14 @@ private:
     void trashSelection();
     void updateEditActions();
     void showContextMenu(const QPoint &pos);
+    void createNewItem(bool folder);
+
+    // Inline rename (F2, and right after New Folder / New File).
+    void renameSelection();
+    void startRename(const QModelIndex &viewIndex);
+    bool commitRename();
+    void cancelRename();
+    void updateRenameGeometry();
     void onJobFinished(FileJob *job);
 
     // Highlight `paths` (in the current folder) once the model has them.
@@ -98,6 +113,7 @@ private:
     OperationsPanel *m_opsPanel = nullptr;
     Toast *m_toast = nullptr;
     QFileSystemModel *m_model = nullptr;
+    FileFilterProxy *m_proxy = nullptr; // search filter between model and view
     Thumbnailer *m_thumbnailer = nullptr;
     FileItemDelegate *m_delegate = nullptr;
     QListView *m_view = nullptr;
@@ -135,6 +151,27 @@ private:
     QAction *m_pasteAct = nullptr;
     QAction *m_trashAct = nullptr;
     QAction *m_undoAct = nullptr;
+    QAction *m_homeAct = nullptr;
+    QAction *m_locationAct = nullptr;
+    QAction *m_gridAct = nullptr;
+    QAction *m_listAct = nullptr;
+    QAction *m_newFolderAct = nullptr;
+    QAction *m_newFileAct = nullptr;
+    QAction *m_renameAct = nullptr;
+    QAction *m_selectAllAct = nullptr;
+    QAction *m_closeAct = nullptr;
+    QAction *m_quitAct = nullptr;
+    QAction *m_sidebarAct = nullptr;
+
+    QMenuBar *m_menuBar = nullptr;
+    QPoint m_menuPressPos; // dragging the window by empty menu bar space
+    bool m_menuPressed = false;
+    QWidget *m_sidebarPane = nullptr;
+
+    QLineEdit *m_renameEdit = nullptr;
+    QString m_renamePath;
+    QString m_pendingRename; // start renaming this once it appears
+    bool m_committingRename = false;
 
     QStack<QString> m_backHistory;
     QStack<QString> m_forwardHistory;

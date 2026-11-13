@@ -27,6 +27,8 @@ public:
     void setGridMode(bool grid);
     void setTheme(const Theme &theme);
     QSize gridCellSize(const QFontMetrics &fm) const;
+    // Where the inline rename field goes for an item drawn in `itemRect`.
+    QRect nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const;
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;

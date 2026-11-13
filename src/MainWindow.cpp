@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "FileFilterProxy.h"
 #include "FileItemDelegate.h"
 #include "FileOperations.h"
 #include "HeaderBar.h"
@@ -27,10 +28,14 @@
 #include <QListView>
 #include <QListWidget>
 #include <QLocale>
+#include <QActionGroup>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScrollBar>
 #include <QPainter>
 #include <QPointer>
 #include <QSplitter>
@@ -135,7 +140,7 @@ QScrollBar::add-page, QScrollBar::sub-page { background: none; }
 
 QMenu { background: @popup; color: @fg; border: 1px solid @border; border-radius: 10px;
     padding: 6px; }
-QMenu::item { padding: 7px 24px 7px 28px; border-radius: 6px; }
+QMenu::item { padding: 7px 32px 7px 28px; border-radius: 6px; }
 QMenu::item:selected { background: @hover; }
 QMenu::item:disabled { color: @dim; }
 QMenu::separator { height: 1px; background: @border; margin: 5px 6px; }
@@ -150,6 +155,15 @@ QLabel#toastText { color: @fg; }
 QToolButton#toastAction { background: @button; color: @fg; border: none; border-radius: 14px;
     padding: 5px 14px; font-weight: bold; }
 QToolButton#toastAction:hover { background: @buttonHover; }
+
+QMenuBar#menuBar { background: @sidebar; color: @fg; border: none;
+    border-bottom: 1px solid @border; padding: 2px 4px; }
+QMenuBar#menuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }
+QMenuBar#menuBar::item:selected { background: @hover; }
+QMenuBar#menuBar::item:pressed { background: @pressed; }
+QLineEdit#renameEdit { background: @window; color: @fg; border: 2px solid @accent;
+    border-radius: 6px; padding: 1px 4px; selection-background-color: @accent;
+    selection-color: #ffffff; }
 
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
@@ -222,13 +236,13 @@ void MainWindow::setupActions()
     m_upAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
     connect(m_upAct, &QAction::triggered, this, &MainWindow::goUp);
 
-    auto *homeAct = new QAction(tr("Home"), this);
-    homeAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Home));
-    connect(homeAct, &QAction::triggered, this, [this] { navigateTo(QDir::homePath()); });
+    m_homeAct = new QAction(tr("Home"), this);
+    m_homeAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Home));
+    connect(m_homeAct, &QAction::triggered, this, [this] { navigateTo(QDir::homePath()); });
 
-    auto *locationAct = new QAction(tr("Enter Location"), this);
-    locationAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
-    connect(locationAct, &QAction::triggered, this, [this] {
+    m_locationAct = new QAction(tr("Enter Location…"), this);
+    m_locationAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
+    connect(m_locationAct, &QAction::triggered, this, [this] {
         setSearchActive(false);
         m_pathBar->startEditing();
     });
@@ -243,12 +257,49 @@ void MainWindow::setupActions()
     m_searchAct->setShortcut(QKeySequence::Find);
     connect(m_searchAct, &QAction::toggled, this, &MainWindow::setSearchActive);
 
-    auto *gridAct = new QAction(tr("Grid View"), this);
-    gridAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
-    connect(gridAct, &QAction::triggered, this, [this] { setGridMode(true); });
-    auto *listAct = new QAction(tr("List View"), this);
-    listAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
-    connect(listAct, &QAction::triggered, this, [this] { setGridMode(false); });
+    m_gridAct = new QAction(tr("Grid"), this);
+    m_gridAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_gridAct->setCheckable(true);
+    m_gridAct->setChecked(true);
+    connect(m_gridAct, &QAction::triggered, this, [this] { setGridMode(true); });
+    m_listAct = new QAction(tr("List"), this);
+    m_listAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
+    m_listAct->setCheckable(true);
+    connect(m_listAct, &QAction::triggered, this, [this] { setGridMode(false); });
+    auto *viewGroup = new QActionGroup(this);
+    viewGroup->addAction(m_gridAct);
+    viewGroup->addAction(m_listAct);
+
+    m_sidebarAct = new QAction(tr("Sidebar"), this);
+    m_sidebarAct->setShortcut(QKeySequence(Qt::Key_F9));
+    m_sidebarAct->setCheckable(true);
+    m_sidebarAct->setChecked(true);
+    connect(m_sidebarAct, &QAction::toggled, this, [this](bool on) { m_sidebarPane->setVisible(on); });
+
+    m_newFolderAct = new QAction(tr("New Folder"), this);
+    m_newFolderAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+    connect(m_newFolderAct, &QAction::triggered, this, [this] { createNewItem(true); });
+
+    m_newFileAct = new QAction(tr("New File"), this);
+    m_newFileAct->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
+    connect(m_newFileAct, &QAction::triggered, this, [this] { createNewItem(false); });
+
+    m_renameAct = new QAction(tr("Rename…"), this);
+    m_renameAct->setShortcut(QKeySequence(Qt::Key_F2));
+    connect(m_renameAct, &QAction::triggered, this, &MainWindow::renameSelection);
+
+    m_selectAllAct = new QAction(tr("Select All"), this);
+    m_selectAllAct->setShortcut(QKeySequence::SelectAll);
+    connect(m_selectAllAct, &QAction::triggered, this, [this] { m_view->selectAll(); });
+
+    m_closeAct = new QAction(tr("Close Window"), this);
+    m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W));
+    connect(m_closeAct, &QAction::triggered, this, &QWidget::close);
+
+    m_quitAct = new QAction(tr("Quit"), this);
+    m_quitAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
+    m_quitAct->setMenuRole(QAction::QuitRole);
+    connect(m_quitAct, &QAction::triggered, this, &QApplication::closeAllWindows);
 
     m_copyLocationAct = new QAction(tr("Copy Location"), this);
     connect(m_copyLocationAct, &QAction::triggered, this, [this] {
@@ -257,6 +308,7 @@ void MainWindow::setupActions()
     });
 
     m_prefsAct = new QAction(tr("Preferences"), this);
+    m_prefsAct->setMenuRole(QAction::PreferencesRole);
     m_prefsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
     connect(m_prefsAct, &QAction::triggered, this, [this] {
         static QPointer<PreferencesDialog> dialog;
@@ -293,15 +345,17 @@ void MainWindow::setupActions()
     connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
 
     m_aboutAct = new QAction(tr("About Kaftilous"), this);
+    m_aboutAct->setMenuRole(QAction::AboutRole);
     connect(m_aboutAct, &QAction::triggered, this, [this] {
         QMessageBox::about(this, tr("About Kaftilous"),
                            tr("<b>Kaftilous</b> %1<br>A fast, cross-platform file manager.")
                                .arg(QApplication::applicationVersion()));
     });
 
-    addActions({m_backAct, m_forwardAct, m_upAct, homeAct, locationAct, m_hiddenAct, m_searchAct,
-                gridAct, listAct, m_prefsAct, m_cutAct, m_copyAct, m_pasteAct, m_trashAct,
-                m_undoAct});
+    addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
+                m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
+                m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
+                m_selectAllAct, m_closeAct, m_quitAct});
 }
 
 QToolButton *MainWindow::makeButton(const QString &toolTip, const char *objectName)
@@ -332,15 +386,16 @@ void MainWindow::setupUi()
 {
     m_model = new QFileSystemModel(this);
     m_model->setRootPath(QString()); // watch the whole filesystem lazily
-    m_model->setNameFilterDisables(false);
+    m_proxy = new FileFilterProxy(this);
+    m_proxy->setSourceModel(m_model);
     updateFilter();
     connect(m_model, &QFileSystemModel::directoryLoaded, this, [this](const QString &path) {
         if (QDir::cleanPath(path) == m_current)
             updateFloatingBar();
         applyPendingSelection();
     });
-    // New files may reach the model a little after a paste finishes.
-    connect(m_model, &QAbstractItemModel::rowsInserted, this,
+    // New files may reach the view a little after a paste finishes.
+    connect(m_proxy, &QAbstractItemModel::rowsInserted, this,
             &MainWindow::applyPendingSelection);
 
     m_thumbnailer = new Thumbnailer(this);
@@ -351,6 +406,12 @@ void MainWindow::setupUi()
     auto *rootLayout = new QVBoxLayout(m_root);
     rootLayout->setSpacing(0);
 
+#if defined(Q_OS_MACOS)
+    setMenuBar(qobject_cast<QMenuBar *>(buildMenuBar())); // global macOS menu bar
+#else
+    rootLayout->addWidget(buildMenuBar(), 0);
+#endif
+
     m_splitter = new QSplitter(m_root);
     m_splitter->setObjectName("mainSplitter");
     m_splitter->addWidget(buildSidebarPane());
@@ -359,7 +420,7 @@ void MainWindow::setupUi()
     m_splitter->setHandleWidth(1);
     m_splitter->setStretchFactor(1, 1);
     m_splitter->setSizes({230, 920});
-    rootLayout->addWidget(m_splitter);
+    rootLayout->addWidget(m_splitter, 1);
 
     setCentralWidget(m_root);
 }
@@ -367,6 +428,7 @@ void MainWindow::setupUi()
 QWidget *MainWindow::buildSidebarPane()
 {
     auto *pane = new QWidget(this);
+    m_sidebarPane = pane;
     pane->setObjectName("sidebarPane");
     pane->setAttribute(Qt::WA_StyledBackground);
     pane->setMinimumWidth(170);
@@ -486,7 +548,7 @@ QWidget *MainWindow::buildContentPane()
     m_delegate = new FileItemDelegate(m_thumbnailer, this);
     m_view = new QListView(pane);
     m_view->setObjectName("files");
-    m_view->setModel(m_model);
+    m_view->setModel(m_proxy);
     m_view->setItemDelegate(m_delegate);
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_view->setUniformItemSizes(true);
@@ -500,10 +562,13 @@ QWidget *MainWindow::buildContentPane()
             &MainWindow::updateFloatingBar);
     connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
             &MainWindow::updateEditActions);
-    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
-        if (!m_applyingSelection)
-            m_pendingSelection.clear(); // the user picked something else
-    });
+    // A click or key press in the view means the user is choosing: stop
+    // applying a pending "highlight what was pasted" (see eventFilter).
+    m_view->viewport()->installEventFilter(this);
+    // Keep an open rename field on its item while scrolling / re-sorting.
+    connect(m_view->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            &MainWindow::updateRenameGeometry);
+    connect(m_proxy, &QAbstractItemModel::layoutChanged, this, &MainWindow::updateRenameGeometry);
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
     connect(m_thumbnailer, &Thumbnailer::thumbnailReady, m_view->viewport(),
@@ -679,14 +744,18 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         return true;
 
     setSearchActive(false);
+    cancelRename();
     m_pendingSelection.clear();
+    m_pendingRename.clear();
     if (addToHistory && !m_current.isEmpty()) {
         m_backHistory.push(m_current);
         m_forwardHistory.clear();
     }
     m_current = clean;
 
-    m_view->setRootIndex(m_model->index(clean));
+    const QModelIndex folder = m_model->index(clean);
+    m_proxy->setFolder(folder);
+    m_view->setRootIndex(toView(folder));
     m_view->scrollToTop();
     m_pathBar->setPath(clean);
 
@@ -696,6 +765,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 
     syncSidebarSelection();
     updateActions();
+    updateEditActions();
     updateFloatingBar();
     return true;
 }
@@ -727,8 +797,9 @@ void MainWindow::goUp()
         navigateTo(dir.absolutePath());
 }
 
-void MainWindow::openIndex(const QModelIndex &index)
+void MainWindow::openIndex(const QModelIndex &viewIndex)
 {
+    const QModelIndex index = toSource(viewIndex);
     const QString path = m_model->filePath(index);
     if (m_model->isDir(index))
         navigateTo(path);
@@ -764,6 +835,9 @@ void MainWindow::setGridMode(bool grid)
     m_view->setResizeMode(QListView::Adjust);
     m_view->setWordWrap(true);
     m_viewButton->setIcon(glyphIcon(grid ? Glyph::List : Glyph::Grid, m_theme.fg));
+    if (m_gridAct)
+        (grid ? m_gridAct : m_listAct)->setChecked(true);
+    updateRenameGeometry();
     m_viewButton->setToolTip(grid ? tr("List view (Ctrl+2)") : tr("Grid view (Ctrl+1)"));
 }
 
@@ -791,20 +865,26 @@ void MainWindow::setSearchActive(bool active)
     }
 }
 
-// Search = filter the current folder by name (case-insensitive substring).
+// Search = filter the current folder by name (case-insensitive substring),
+// done by FileFilterProxy. The model filter only handles hidden files.
 void MainWindow::updateFilter()
 {
-    QDir::Filters filters = QDir::AllEntries | QDir::NoDotAndDotDot;
-    const QString query = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
-    if (query.isEmpty()) {
-        filters |= QDir::AllDirs;
-        m_model->setNameFilters({});
-    } else {
-        m_model->setNameFilters({'*' + query + '*'});
-    }
+    QDir::Filters filters = QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs;
     if (m_showHidden)
         filters |= QDir::Hidden;
-    m_model->setFilter(filters);
+    if (m_model->filter() != filters)
+        m_model->setFilter(filters);
+    m_proxy->setQuery(m_searchEdit ? m_searchEdit->text().trimmed() : QString());
+}
+
+QModelIndex MainWindow::toSource(const QModelIndex &viewIndex) const
+{
+    return viewIndex.model() == m_proxy ? m_proxy->mapToSource(viewIndex) : viewIndex;
+}
+
+QModelIndex MainWindow::toView(const QModelIndex &sourceIndex) const
+{
+    return m_proxy->mapFromSource(sourceIndex);
 }
 
 // -------------------------------------------------------- floating bar ---
@@ -822,7 +902,7 @@ void MainWindow::updateFloatingBar()
     if (text.isEmpty()) {
         const QModelIndexList selected = m_view->selectionModel()->selectedIndexes();
         if (selected.size() == 1) {
-            const QModelIndex &idx = selected.first();
+            const QModelIndex idx = toSource(selected.first());
             text = m_model->isDir(idx)
                        ? tr("“%1” selected").arg(m_model->fileName(idx))
                        : tr("“%1” selected (%2)")
@@ -830,9 +910,11 @@ void MainWindow::updateFloatingBar()
                                   QLocale().formattedDataSize(m_model->size(idx)));
         } else if (selected.size() > 1) {
             qint64 bytes = 0;
-            for (const QModelIndex &idx : selected)
+            for (const QModelIndex &viewIdx : selected) {
+                const QModelIndex idx = toSource(viewIdx);
                 if (!m_model->isDir(idx))
                     bytes += m_model->size(idx);
+            }
             text = tr("%n items selected", nullptr, int(selected.size()));
             if (bytes > 0)
                 text += QStringLiteral(" (%1)").arg(QLocale().formattedDataSize(bytes));
@@ -916,6 +998,62 @@ void MainWindow::updateResizeCursor(Qt::Edges edges)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    // Inline rename: Enter commits, Esc cancels, clicking elsewhere commits
+    // (or cancels if the name isn't valid). Enter must be consumed here:
+    // QLineEdit passes it on, and the view would then open the item.
+    if (m_renameEdit && watched == m_renameEdit) {
+        if (event->type() == QEvent::KeyPress) {
+            const int key = static_cast<QKeyEvent *>(event)->key();
+            if (key == Qt::Key_Escape) {
+                cancelRename();
+                return true;
+            }
+            if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+                commitRename();
+                return true;
+            }
+        }
+        if (event->type() == QEvent::FocusOut
+            && static_cast<QFocusEvent *>(event)->reason() != Qt::PopupFocusReason) {
+            if (!commitRename())
+                cancelRename();
+        }
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    // Empty menu bar space behaves like the header bars: drag to move,
+    // double-click to maximise.
+    if (m_csd && m_menuBar && watched == m_menuBar) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+            m_menuPressed = me->button() == Qt::LeftButton
+                            && !m_menuBar->actionAt(me->position().toPoint());
+            m_menuPressPos = me->position().toPoint();
+            break;
+        case QEvent::MouseMove:
+            if (m_menuPressed && (me->buttons() & Qt::LeftButton)
+                && (me->position().toPoint() - m_menuPressPos).manhattanLength()
+                       >= QApplication::startDragDistance()) {
+                m_menuPressed = false;
+                windowHandle()->startSystemMove();
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonRelease:
+            m_menuPressed = false;
+            break;
+        case QEvent::MouseButtonDblClick:
+            if (!m_menuBar->actionAt(me->position().toPoint())) {
+                isMaximized() ? showNormal() : showMaximized();
+                return true;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
     if (m_csd && watched == windowHandle()) {
         switch (event->type()) {
         case QEvent::MouseMove: {
@@ -939,7 +1077,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         default:
             break;
         }
-    } else if (watched == m_view && event->type() == QEvent::Resize) {
+    } else if (m_view
+               && ((watched == m_view->viewport() && event->type() == QEvent::MouseButtonPress)
+                   || (watched == m_view && event->type() == QEvent::KeyPress))) {
+        m_pendingSelection.clear();
+        m_pendingRename.clear();
+    }
+    if (m_renameEdit && m_view && watched == m_view->viewport() && event->type() == QEvent::Paint)
+        updateRenameGeometry(); // item positions are final when the view paints
+    if (m_view && watched == m_view && event->type() == QEvent::Resize) {
         if (m_floatingBar->isVisible())
             positionFloatingBar();
         if (m_opsPanel->isVisible()) {
@@ -948,6 +1094,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
         if (m_toast->isVisible())
             m_toast->reposition();
+        updateRenameGeometry();
     } else if (watched == m_searchEdit && event->type() == QEvent::KeyPress) {
         if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
             setSearchActive(false);
@@ -963,7 +1110,7 @@ QStringList MainWindow::selectedPaths() const
 {
     QStringList paths;
     for (const QModelIndex &index : m_view->selectionModel()->selectedIndexes())
-        paths.append(m_model->filePath(index));
+        paths.append(m_model->filePath(toSource(index)));
     return paths;
 }
 
@@ -975,8 +1122,9 @@ void MainWindow::openSelection()
         return;
     }
     for (const QModelIndex &index : selected) {
-        if (!m_model->isDir(index))
-            QDesktopServices::openUrl(QUrl::fromLocalFile(m_model->filePath(index)));
+        const QModelIndex source = toSource(index);
+        if (!m_model->isDir(source))
+            QDesktopServices::openUrl(QUrl::fromLocalFile(m_model->filePath(source)));
     }
 }
 
@@ -1023,7 +1171,11 @@ void MainWindow::updateEditActions()
     const bool hasSelection = m_view && m_view->selectionModel()->hasSelection();
     for (QAction *action : {m_openAct, m_cutAct, m_copyAct, m_trashAct})
         action->setEnabled(hasSelection);
-    m_pasteAct->setEnabled(FileOperations::clipboardHasFiles());
+    const bool writable = !m_current.isEmpty() && QFileInfo(m_current).isWritable();
+    m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
+    m_newFolderAct->setEnabled(writable);
+    m_newFileAct->setEnabled(writable);
+    m_renameAct->setEnabled(m_view && m_view->selectionModel()->selectedIndexes().size() == 1);
     m_undoAct->setEnabled(m_ops->canUndo());
     m_undoAct->setText(m_ops->undoText());
 }
@@ -1043,11 +1195,16 @@ void MainWindow::showContextMenu(const QPoint &pos)
     if (index.isValid()) {
         menu->addAction(m_openAct);
         menu->addSeparator();
+        menu->addAction(m_renameAct);
+        menu->addSeparator();
         menu->addAction(m_cutAct);
         menu->addAction(m_copyAct);
         menu->addSeparator();
         menu->addAction(m_trashAct);
     } else {
+        menu->addAction(m_newFolderAct);
+        menu->addAction(m_newFileAct);
+        menu->addSeparator();
         menu->addAction(m_pasteAct);
         menu->addAction(m_undoAct);
         menu->addSeparator();
@@ -1143,7 +1300,7 @@ void MainWindow::applyPendingSelection()
     QModelIndex first;
     int found = 0;
     for (const QString &path : std::as_const(m_pendingSelection)) {
-        const QModelIndex index = m_model->index(path);
+        const QModelIndex index = toView(m_model->index(path));
         if (!index.isValid() || index.parent() != m_view->rootIndex())
             continue;
         selection.select(index, index);
@@ -1163,4 +1320,222 @@ void MainWindow::applyPendingSelection()
 
     if (found == m_pendingSelection.size())
         m_pendingSelection.clear();
+
+    if (!m_pendingRename.isEmpty()) {
+        const QModelIndex index = toView(m_model->index(m_pendingRename));
+        if (index.isValid() && index.parent() == m_view->rootIndex()) {
+            m_pendingRename.clear();
+            startRename(index);
+        }
+    }
+}
+
+// ------------------------------------------------------------- menu bar ---
+
+QWidget *MainWindow::buildMenuBar()
+{
+    m_menuBar = new QMenuBar(this);
+    m_menuBar->setObjectName("menuBar");
+    m_menuBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto addMenu = [this](const QString &title) {
+        QMenu *menu = makeMenu();
+        menu->setTitle(title);
+        m_menuBar->addMenu(menu);
+        return menu;
+    };
+
+    QMenu *file = addMenu(tr("&File"));
+    file->addAction(m_newFolderAct);
+    file->addAction(m_newFileAct);
+    file->addSeparator();
+    file->addAction(m_openAct);
+    file->addSeparator();
+    file->addAction(m_closeAct);
+    file->addAction(m_quitAct);
+
+    QMenu *edit = addMenu(tr("&Edit"));
+    edit->addAction(m_undoAct);
+    edit->addSeparator();
+    edit->addAction(m_cutAct);
+    edit->addAction(m_copyAct);
+    edit->addAction(m_pasteAct);
+    edit->addSeparator();
+    edit->addAction(m_selectAllAct);
+    edit->addAction(m_renameAct);
+    edit->addAction(m_trashAct);
+    edit->addSeparator();
+    edit->addAction(m_copyLocationAct);
+    edit->addSeparator();
+    edit->addAction(m_prefsAct);
+
+    QMenu *view = addMenu(tr("&View"));
+    view->addAction(m_gridAct);
+    view->addAction(m_listAct);
+    view->addSeparator();
+    view->addAction(m_hiddenAct);
+    view->addAction(m_sidebarAct);
+
+    QMenu *go = addMenu(tr("&Go"));
+    go->addAction(m_backAct);
+    go->addAction(m_forwardAct);
+    go->addAction(m_upAct);
+    go->addAction(m_homeAct);
+    go->addSeparator();
+    go->addAction(m_locationAct);
+    go->addAction(m_searchAct);
+
+    QMenu *help = addMenu(tr("&Help"));
+    help->addAction(m_aboutAct);
+
+    m_menuBar->installEventFilter(this);
+    return m_menuBar;
+}
+
+// ----------------------------------------------------- new items, rename ---
+
+void MainWindow::createNewItem(bool folder)
+{
+    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable()) {
+        showMessage(tr("You can't create items in this folder"));
+        return;
+    }
+    const QDir dir(m_current);
+    const QString base = folder ? tr("New Folder") : tr("New File");
+    QString path = dir.filePath(base);
+    for (int i = 2; QFileInfo(path).exists() || QFileInfo(path).isSymLink(); ++i)
+        path = dir.filePath(base + ' ' + QString::number(i));
+
+    bool ok = false;
+    if (folder) {
+        ok = dir.mkdir(QFileInfo(path).fileName());
+    } else {
+        QFile file(path);
+        ok = file.open(QIODevice::WriteOnly | QIODevice::NewOnly);
+    }
+    if (!ok) {
+        showMessage(folder ? tr("Couldn't create the folder") : tr("Couldn't create the file"));
+        return;
+    }
+    // Undo trashes it (same as undoing a copy).
+    m_ops->recordUndo(FileJob::Kind::Copy, {{QString(), path}},
+                      folder ? tr("Undo New Folder") : tr("Undo New File"));
+    m_pendingRename = path;
+    selectPaths({path});
+}
+
+void MainWindow::renameSelection()
+{
+    const QModelIndexList selected = m_view->selectionModel()->selectedIndexes();
+    if (selected.size() == 1)
+        startRename(selected.first());
+}
+
+void MainWindow::startRename(const QModelIndex &viewIndex)
+{
+    cancelRename();
+    const QModelIndex source = toSource(viewIndex);
+    if (!source.isValid())
+        return;
+    m_renamePath = m_model->filePath(source);
+    m_view->scrollTo(viewIndex);
+
+    m_renameEdit = new QLineEdit(m_view->viewport());
+    m_renameEdit->setObjectName("renameEdit");
+    m_renameEdit->setText(m_model->fileName(source));
+    m_renameEdit->setAlignment(m_grid ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
+    m_renameEdit->installEventFilter(this); // Enter / Esc / focus-out
+    updateRenameGeometry();
+    m_renameEdit->show();
+    m_renameEdit->setFocus(Qt::OtherFocusReason);
+
+    // Select the name without its extension, like Nautilus.
+    const QString name = m_renameEdit->text();
+    int end = int(name.size());
+    if (!m_model->isDir(source)) {
+        const int dot = int(name.lastIndexOf('.'));
+        if (dot > 0) {
+            end = dot;
+            if (name.left(dot).endsWith(QLatin1String(".tar")))
+                end -= 4;
+        }
+    }
+    m_renameEdit->setSelection(0, end);
+}
+
+void MainWindow::updateRenameGeometry()
+{
+    if (!m_renameEdit)
+        return;
+    const QModelIndex index = toView(m_model->index(m_renamePath));
+    if (!index.isValid()) {
+        cancelRename();
+        return;
+    }
+    QRect rect = m_delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics());
+    const int width = m_view->viewport()->width();
+    if (rect.right() > width - 3)
+        rect.moveRight(width - 3);
+    if (rect.left() < 3)
+        rect.moveLeft(3);
+    m_renameEdit->setGeometry(rect);
+}
+
+void MainWindow::cancelRename()
+{
+    if (!m_renameEdit)
+        return;
+    QLineEdit *edit = m_renameEdit;
+    m_renameEdit = nullptr;
+    m_renamePath.clear();
+    edit->removeEventFilter(this);
+    edit->hide();
+    edit->deleteLater();
+    m_view->setFocus();
+}
+
+// Returns false (and keeps the field open) if the name can't be used.
+bool MainWindow::commitRename()
+{
+    if (!m_renameEdit || m_committingRename)
+        return true;
+    const QString newName = m_renameEdit->text().trimmed();
+    const QFileInfo old(m_renamePath);
+    if (newName.isEmpty() || newName == old.fileName()) {
+        cancelRename();
+        return true;
+    }
+
+    QString problem;
+    if (newName == QLatin1String(".") || newName == QLatin1String(".."))
+        problem = tr("“%1” isn't a valid name").arg(newName);
+    else if (newName.contains('/'))
+        problem = tr("Names can't contain “/”");
+#if defined(Q_OS_WIN)
+    else if (newName.contains(QRegularExpression(QStringLiteral(R"([<>:"\\|?*])"))))
+        problem = tr("Names can't contain any of: < > : \" \\ | ? *");
+#endif
+    const QString target = old.absolutePath() + '/' + newName;
+    const QFileInfo targetInfo(target);
+    if (problem.isEmpty() && (targetInfo.exists() || targetInfo.isSymLink()) && targetInfo != old)
+        problem = tr("“%1” already exists").arg(newName);
+
+    bool renamed = false;
+    if (problem.isEmpty()) {
+        m_committingRename = true;
+        renamed = QDir().rename(m_renamePath, target);
+        m_committingRename = false;
+        if (!renamed)
+            problem = tr("Couldn't rename “%1”").arg(old.fileName());
+    }
+    if (!renamed) {
+        showMessage(problem);
+        if (m_renameEdit)
+            m_renameEdit->setFocus();
+        return false;
+    }
+
+    m_ops->recordUndo(FileJob::Kind::Move, {{m_renamePath, target}}, tr("Undo Rename"));
+    cancelRename();
+    selectPaths({target});
+    return true;
 }
