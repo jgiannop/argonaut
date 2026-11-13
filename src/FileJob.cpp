@@ -4,13 +4,55 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QMutexLocker>
+#include <QSet>
+#include <QStorageInfo>
 #include <QThreadPool>
+
+#if defined(Q_OS_UNIX)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
 constexpr qint64 ChunkSize = 1 << 20; // 1 MiB
+// On removable drives, push data to the device this often so progress shows
+// the drive's real speed instead of filling RAM and waiting at the end.
+constexpr qint64 SafeFlushInterval = 32 << 20; // 32 MiB
 constexpr qint64 NotifyIntervalMs = 80;
+
+// Write a file's data to the device itself, not just the OS cache.
+void flushToDevice(QFile &file)
+{
+    file.flush();
+#if defined(Q_OS_LINUX)
+    ::fdatasync(file.handle());
+#elif defined(Q_OS_UNIX)
+    ::fsync(file.handle());
+#endif
+}
+
+// Write everything pending for the filesystem containing `dir` to the device
+// (file data and directory entries).
+void syncFilesystemOf(const QString &dir)
+{
+#if defined(Q_OS_LINUX)
+    const int fd = ::open(QFile::encodeName(dir).constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0) {
+        ::syncfs(fd);
+        ::close(fd);
+        return;
+    }
+    ::sync();
+#elif defined(Q_OS_UNIX)
+    Q_UNUSED(dir)
+    ::sync();
+#else
+    Q_UNUSED(dir) // Windows: removable drives default to "quick removal" (write-through)
+#endif
+}
 
 bool pathExists(const QString &path)
 {
@@ -40,6 +82,43 @@ void removeTrashInfo(const QString &pathInTrash)
 #endif
 
 } // namespace
+
+bool needsSafeWrites(const QString &dir)
+{
+    if (qEnvironmentVariableIsSet("KAFTILOUS_SAFE_WRITES"))
+        return qEnvironmentVariableIntValue("KAFTILOUS_SAFE_WRITES") != 0;
+
+    const QStorageInfo storage(dir);
+    if (!storage.isValid())
+        return false;
+#if defined(Q_OS_LINUX)
+    const QString root = storage.rootPath();
+    // udisks mounts user drives (USB sticks, SD cards, external disks) here.
+    if (root.startsWith(QLatin1String("/media/")) || root.startsWith(QLatin1String("/run/media/")))
+        return true;
+    // Otherwise ask the kernel: USB-attached, or marked removable.
+    const QString device = QFileInfo(QString::fromLocal8Bit(storage.device())).canonicalFilePath();
+    if (!device.startsWith(QLatin1String("/dev/")))
+        return false; // network, tmpfs, fuse…
+    const QString sysPath =
+        QFileInfo("/sys/class/block/" + QFileInfo(device).fileName()).canonicalFilePath();
+    if (sysPath.isEmpty())
+        return false;
+    if (sysPath.contains(QLatin1String("/usb")))
+        return true;
+    // "removable" lives on the disk, so check the partition's parent too.
+    for (const QString &node : {sysPath, QFileInfo(sysPath).absolutePath()}) {
+        QFile flag(node + "/removable");
+        if (flag.open(QIODevice::ReadOnly) && flag.readAll().trimmed() == "1")
+            return true;
+    }
+    return false;
+#elif defined(Q_OS_MACOS)
+    return storage.rootPath().startsWith(QLatin1String("/Volumes/"));
+#else
+    return false;
+#endif
+}
 
 QString uniqueTargetPath(const QString &dir, const QString &name, bool isDir)
 {
@@ -101,6 +180,12 @@ QStringList FileJob::errors() const
     return m_errors;
 }
 
+QStringList FileJob::flushedDrives() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_flushedDrives;
+}
+
 // ------------------------------------------------------- worker thread ---
 
 void FileJob::run()
@@ -154,6 +239,8 @@ void FileJob::runTransfers()
     notify(true);
 
     // 2. Transfer.
+    QHash<QString, bool> safeByDir; // cache: one storage lookup per folder
+    QSet<QString> safeDirsUsed;
     for (int i = 0; i < m_transfers.size(); ++i) {
         if (isCanceled())
             break;
@@ -188,6 +275,12 @@ void FileJob::runTransfers()
 
         const QString target = uniqueTargetPath(dir, name, isRealDir);
         setCurrent(name);
+        auto safe = safeByDir.constFind(dir);
+        if (safe == safeByDir.constEnd())
+            safe = safeByDir.insert(dir, needsSafeWrites(dir));
+        m_safeWrites = *safe;
+        if (m_safeWrites)
+            safeDirsUsed.insert(dir);
 
         bool ok = false;
         if (m_kind == Kind::Copy) {
@@ -198,8 +291,10 @@ void FileJob::runTransfers()
             ok = true;
         } else {
             // Different filesystem: copy, and delete the original only once
-            // the copy is complete.
+            // the copy is complete (and, on a removable drive, really written).
             ok = copyTree(src, target);
+            if (ok && m_safeWrites)
+                syncFilesystemOf(dir);
             if (ok && !removeTree(src))
                 addError(tr("“%1” was copied but the original couldn't be removed.").arg(name));
         }
@@ -215,6 +310,28 @@ void FileJob::runTransfers()
         }
         itemDone();
     }
+
+    // 3. Removable drives: don't report "done" while data is still in RAM.
+    for (const QString &dir : std::as_const(safeDirsUsed))
+        flushDrive(dir);
+}
+
+void FileJob::flushDrive(const QString &dir)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.finishing = true;
+    }
+    notify(true);
+    syncFilesystemOf(dir);
+
+    const QStorageInfo storage(dir);
+    QString name = storage.displayName();
+    if (name.isEmpty())
+        name = QDir::toNativeSeparators(storage.rootPath());
+    QMutexLocker lock(&m_mutex);
+    if (!m_flushedDrives.contains(name))
+        m_flushedDrives.append(name);
 }
 
 bool FileJob::copyTree(const QString &source, const QString &target)
@@ -264,6 +381,7 @@ bool FileJob::copyFile(const QString &source, const QString &target, const QFile
     }
 
     QByteArray buffer(ChunkSize, Qt::Uninitialized);
+    qint64 sinceFlush = 0;
     while (true) {
         if (isCanceled()) {
             out.close();
@@ -281,7 +399,14 @@ bool FileJob::copyFile(const QString &source, const QString &target, const QFile
             return false;
         }
         addBytes(n);
+        sinceFlush += n;
+        if (m_safeWrites && sinceFlush >= SafeFlushInterval) {
+            flushToDevice(out);
+            sinceFlush = 0;
+        }
     }
+    if (m_safeWrites && sinceFlush > 0 && info.size() >= SafeFlushInterval)
+        flushToDevice(out); // big files: finish now; small ones go in the final sync
 
     // Flush first: writing buffered data on close() would reset the date.
     out.flush();

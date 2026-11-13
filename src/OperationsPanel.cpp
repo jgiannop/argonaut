@@ -149,6 +149,12 @@ void OperationsPanel::updateJob(FileJob *job)
     const FileJob::Progress p = job->progress();
     if (p.measuring)
         return;
+    if (p.finishing) {
+        row.bar->setRange(0, 0); // busy: the drive decides how long this takes
+        row.detail->setText(tr("Writing to the drive… don't remove it yet"));
+        row.cancel->setEnabled(false);
+        return;
+    }
 
     const QLocale locale;
     if (job->kind() == FileJob::Kind::Trash) {
