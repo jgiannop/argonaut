@@ -439,6 +439,14 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
               {1.75, 12.75}, {1.75, 6}});
         line(1.75, 7.25, 14.25, 7.25);
         break;
+    case Glyph::Recent: // a clock
+        p->drawEllipse(QPointF(8, 8), 5.75, 5.75);
+        poly({{8, 4.75}, {8, 8.25}, {10.5, 9.75}});
+        break;
+    case Glyph::Star:
+        poly({{8, 2.25}, {9.7, 6}, {13.75, 6.35}, {10.65, 9}, {11.6, 13}, {8, 10.85},
+              {4.4, 13}, {5.35, 9}, {2.25, 6.35}, {6.3, 6}}, true);
+        break;
     case Glyph::Usage: // a pie chart: disk usage
         p->drawEllipse(QPointF(8, 8), 5.75, 5.75);
         filled([&] {

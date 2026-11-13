@@ -166,6 +166,7 @@ void TestThumbnailer::failureIsRemembered()
     QFile f(path);
     f.open(QIODevice::WriteOnly);
     f.write("changed");
+    f.flush(); // or closing writes it and sets the time back to "now"
     f.setFileTime(mtime.addSecs(10), QFileDevice::FileModificationTime);
     f.close();
     mtime = QFileInfo(path).lastModified();

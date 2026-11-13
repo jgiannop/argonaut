@@ -59,7 +59,7 @@ enum class Glyph {
     Home, Desktop, Documents, Downloads, Music, Pictures, Videos, Trash,
     Drive, Removable,
     Search, Menu, Kebab, ChevronLeft, ChevronRight, Grid, List,
-    Minimize, Maximize, Restore, Close, Terminal, Folder, Eject, Usage,
+    Minimize, Maximize, Restore, Close, Terminal, Folder, Eject, Usage, Recent, Star,
 };
 
 QIcon glyphIcon(Glyph glyph, const QColor &color);

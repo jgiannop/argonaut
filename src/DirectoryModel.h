@@ -39,6 +39,8 @@ struct FileEntry
     // Trash view only (from .trashinfo):
     QString originalPath;
     qint64 deleted = 0; // ms since epoch
+    // Recent view only: when it was last used (ms since epoch).
+    qint64 used = 0;
     QString fullPath; // dir + name, built once when listed (hashing and lookups use it a lot)
     const QString &path() const { return fullPath; }
     void setDir(const QString &folder)
@@ -72,7 +74,15 @@ public:
         VerdictRole,                 // int, ContentType::Verdict
         NameMimeRole,                // QString: what the name says
         ContentMimeRole,             // QString: what the content says (if checked)
+        StarredRole,                 // bool
     };
+    // Places that aren't folders: lists of items from anywhere. setPath()
+    // takes these paths; they're never on disk.
+    enum class Place { Folder, Recent, Starred };
+    static QString recentPath() { return QStringLiteral("recent:///"); }
+    static QString starredPath() { return QStringLiteral("starred:///"); }
+    static Place placeOf(const QString &path);
+    static bool isVirtualPath(const QString &path) { return placeOf(path) != Place::Folder; }
 
     explicit DirectoryModel(QObject *parent = nullptr);
     ~DirectoryModel() override;
@@ -85,6 +95,9 @@ public:
     // Showing the Trash: all trash folders merged, with "Original Location"
     // and "Deleted" instead of "Type" and "Modified".
     bool isTrash() const { return m_trash; }
+    // Showing Recent or Starred (items from many folders, with a Location column).
+    Place place() const { return m_place; }
+    bool isVirtual() const { return m_place != Place::Folder; }
     // Re-read the folder soon (changes are also picked up automatically).
     void refresh();
 
@@ -178,6 +191,7 @@ private:
     QString m_path;
     QStringList m_dirs; // folders listed: just m_path, or every trash folder
     bool m_trash = false;
+    Place m_place = Place::Folder;
     QString m_query;                 // search (empty: just the folder)
     bool m_searchTruncated = false;
     Entries m_rows;   // shown entries, sorted

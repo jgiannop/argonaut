@@ -437,7 +437,13 @@ void TestDirectoryModel::realTypesInBackground()
 int main(int argc, char **argv)
 {
     QTemporaryDir cache;
-    qputenv("XDG_CACHE_HOME", QFile::encodeName(cache.path())); // never the real cache
+    // Never the real cache, data (stars, recent files) or settings.
+    qputenv("XDG_CACHE_HOME", QFile::encodeName(cache.path() + "/cache"));
+    qputenv("XDG_DATA_HOME", QFile::encodeName(cache.path() + "/data"));
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(cache.path() + "/config"));
+    qputenv("HOME", QFile::encodeName(cache.path() + "/home"));
+    QDir().mkpath(cache.path() + "/home");
+    QDir().mkpath(cache.path() + "/data");
     QCoreApplication app(argc, argv);
     TestDirectoryModel test;
     return QTest::qExec(&test, argc, argv);

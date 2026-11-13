@@ -139,6 +139,7 @@ private:
 
     // File operations
     QStringList selectedPaths() const;
+    void rememberOpened(const QStringList &files); // add to the shared Recent list
     // Zoom the visible view (grid and list have their own size): +1, -1, or 0 = default.
     void zoom(int step);
     void applyZoom();
@@ -248,6 +249,12 @@ private:
     QAction *m_trashAct = nullptr;
     QAction *m_undoAct = nullptr;
     QAction *m_redoAct = nullptr;         // Ctrl+Shift+Z / Ctrl+Y
+    QAction *m_starAct = nullptr;         // Star / Unstar the selection
+    QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
+    // Recent is shown newest first; the folder sort comes back when leaving.
+    bool m_recentSort = false;
+    int m_sortColumnBefore = 0;
+    Qt::SortOrder m_sortOrderBefore = Qt::AscendingOrder;
     QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
     QAction *m_zoomOutAct = nullptr;      // Ctrl+-
     QAction *m_zoomResetAct = nullptr;    // Ctrl+0

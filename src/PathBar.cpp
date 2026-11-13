@@ -1,5 +1,6 @@
 #include "PathBar.h"
 
+#include "DirectoryModel.h"
 #include "Trash.h"
 
 #include <QDir>
@@ -137,7 +138,11 @@ void PathBar::rebuild()
     const QString trash = Trash::filesDirOf(m_path);
     QString base;
     QString rest;
-    if (!trash.isEmpty()) {
+    if (DirectoryModel::isVirtualPath(m_path)) {
+        // Recent / Starred: one place, not a folder.
+        const bool recent = DirectoryModel::placeOf(m_path) == DirectoryModel::Place::Recent;
+        segments.append({recent ? tr("Recent") : tr("Starred"), m_path, recent ? Glyph::Recent : Glyph::Star, true});
+    } else if (!trash.isEmpty()) {
         // The Trash is one place, wherever its folders really are.
         segments.append({tr("Trash"), Trash::homeFilesDir(), Glyph::Trash, true});
         base = trash;

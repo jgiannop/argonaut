@@ -11,6 +11,8 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Thumbnails for photos, **PDFs, videos, fonts, comics and more**, using the thumbnailers already installed on your system (the same ones Nautilus uses) and sharing their cache. They run **sandboxed** (no network, nothing visible but the one file), two at a time at low priority, only for files on screen, and by default only on the computer's own disks (Preferences)
 - Folders first, in natural order ("file2" before "file10"); sort by name, size, type or date
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
+- **Recent**: what you opened lately, in Kaftilous or any other app (the list GNOME apps share), newest first. Respects GNOME's "remember recent files" privacy switch. Right-click → Remove from Recent
+- **Starred**: star files and folders (right-click → Star); they get a ★ and their own place in the sidebar. Stars follow items you rename or move
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
 - Show hidden files (Ctrl+H)
 - Zoom (Ctrl+plus / Ctrl+minus / Ctrl+0, or Ctrl+mouse wheel): grid icons from 32 to 256 px, list icons from 16 to 48 px, remembered separately for each
