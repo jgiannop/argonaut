@@ -1074,6 +1074,9 @@ void MainWindow::onJobFinished(FileJob *job)
             done == 1 ? tr("“%1” moved to the Trash").arg(QFileInfo(results.first().source).fileName())
                       : tr("%n items moved to the Trash", nullptr, done);
         m_toast->showMessage(text, tr("Undo"), [this] { m_ops->undo(); });
+    } else if (!job->flushedDrives().isEmpty() && done > 0) {
+        showMessage(tr("Done — everything is written to “%1”")
+                        .arg(job->flushedDrives().join(QStringLiteral("”, “"))));
     } else if (done > 0) {
         const bool copied = job->kind() == FileJob::Kind::Copy;
         if (done == 1)

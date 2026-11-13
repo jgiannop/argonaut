@@ -84,6 +84,8 @@ private slots:
     void cancelRemovesPartialCopy();
     void undoCopyTrashesCopies();
     void clipboardRoundTrip();
+    void safeWritesDetection();
+    void safeWritesCopyAndMove();
 
 private:
     Outcome waitForJob();
@@ -346,6 +348,56 @@ void TestFileOperations::clipboardRoundTrip()
     FileOperations::setClipboardFiles(files, false);
     QVERIFY(FileOperations::clipboardFiles(&paths, &cut));
     QVERIFY(!cut);
+}
+
+void TestFileOperations::safeWritesDetection()
+{
+    // The forced answer is what tests and users can rely on everywhere.
+    qputenv("KAFTILOUS_SAFE_WRITES", "1");
+    QVERIFY(needsSafeWrites(m_dir));
+    qputenv("KAFTILOUS_SAFE_WRITES", "0");
+    QVERIFY(!needsSafeWrites(m_dir));
+    qunsetenv("KAFTILOUS_SAFE_WRITES");
+#if defined(Q_OS_LINUX)
+    // RAM-backed /dev/shm is never a removable drive.
+    if (QFileInfo(QStringLiteral("/dev/shm")).isDir())
+        QVERIFY(!needsSafeWrites(QStringLiteral("/dev/shm")));
+#endif
+}
+
+// With safe writes on (as for a USB stick), copies and moves must still be
+// correct, go through the "writing to the drive" phase, and report the drive.
+void TestFileOperations::safeWritesCopyAndMove()
+{
+    qputenv("KAFTILOUS_SAFE_WRITES", "1");
+    writeFile(m_dir + "/src/big.bin", 70 << 20); // > 2 flush intervals
+    writeFile(m_dir + "/src/small.txt", 100);
+    QDir().mkpath(m_dir + "/stick");
+
+    FileJob *job = m_ops->copy({m_dir + "/src/big.bin", m_dir + "/src/small.txt"},
+                               m_dir + "/stick");
+    bool sawFinishing = false;
+    QStringList drives;
+    connect(job, &FileJob::progressChanged, job, [&, job] {
+        sawFinishing = sawFinishing || job->progress().finishing;
+    });
+    connect(m_ops, &FileOperations::jobFinished, this,
+            [&](FileJob *j) { drives = j->flushedDrives(); }, Qt::SingleShotConnection);
+    Outcome o = waitForJob();
+
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    QVERIFY(sameContent(m_dir + "/src/big.bin", m_dir + "/stick/big.bin"));
+    QVERIFY(sameContent(m_dir + "/src/small.txt", m_dir + "/stick/small.txt"));
+    QVERIFY(sawFinishing);
+    QCOMPARE(drives.size(), 1);
+
+    // Same-filesystem move still just renames, then flushes.
+    m_ops->move({m_dir + "/stick/small.txt"}, m_dir + "/src");
+    o = waitForJob();
+    QVERIFY(o.errors.isEmpty());
+    QVERIFY(exists(m_dir + "/src/small (copy).txt")); // src already had small.txt
+    QVERIFY(!exists(m_dir + "/stick/small.txt"));
+    qunsetenv("KAFTILOUS_SAFE_WRITES");
 }
 
 int main(int argc, char **argv)
