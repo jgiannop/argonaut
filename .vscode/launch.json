@@ -9,10 +9,51 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "MIMode": "gdb",
+      "visualizerFile": "${command:qt-cpp.natvis6}",
+      "showDisplayString": true,
       "setupCommands": [
         { "description": "Pretty printing", "text": "-enable-pretty-printing", "ignoreFailures": true }
       ],
       "preLaunchTask": "CMake: build"
+    },
+    {
+      "name": "Debug Kaftilous (open folder…)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": ["${input:startFolder}"],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "visualizerFile": "${command:qt-cpp.natvis6}",
+      "showDisplayString": true,
+      "setupCommands": [
+        { "description": "Pretty printing", "text": "-enable-pretty-printing", "ignoreFailures": true }
+      ],
+      "preLaunchTask": "CMake: build"
+    },
+    {
+      "name": "Debug Kaftilous (native title bar)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "environment": [{ "name": "KAFTILOUS_NATIVE_DECORATIONS", "value": "1" }],
+      "MIMode": "gdb",
+      "visualizerFile": "${command:qt-cpp.natvis6}",
+      "showDisplayString": true,
+      "setupCommands": [
+        { "description": "Pretty printing", "text": "-enable-pretty-printing", "ignoreFailures": true }
+      ],
+      "preLaunchTask": "CMake: build"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "startFolder",
+      "type": "promptString",
+      "description": "Folder to open",
+      "default": "${userHome}/Downloads"
     }
   ]
 }
