@@ -1,9 +1,11 @@
 #include "PreferencesDialog.h"
 
 #include "Theme.h"
+#include "Thumbnailer.h"
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -131,6 +133,33 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
         connect(card, &QToolButton::clicked, this, [mode] { setThemeMode(mode); });
     }
     layout->addLayout(cards);
+
+#if defined(Q_OS_LINUX)
+    // Making thumbnails for PDFs and videos reads the files: cheap on the
+    // internal disk, slow over USB or the network.
+    layout->addSpacing(18);
+    auto *thumbsHeading = new QLabel(tr("Thumbnails"), this);
+    thumbsHeading->setObjectName("prefHeading");
+    auto *thumbsHint = new QLabel(tr("Previews for PDFs, videos, fonts and more, made with the "
+                                     "thumbnailers installed on this computer and shared with "
+                                     "other apps."),
+                                  this);
+    thumbsHint->setObjectName("prefHint");
+    thumbsHint->setWordWrap(true);
+    auto *thumbs = new QComboBox(this);
+    thumbs->setObjectName("propCombo");
+    thumbs->addItem(tr("Make previews on this computer's disks only"), int(Thumbnailer::Policy::LocalOnly));
+    thumbs->addItem(tr("Make previews everywhere, also USB and network drives"), int(Thumbnailer::Policy::Everywhere));
+    thumbs->addItem(tr("Only show previews that already exist"), int(Thumbnailer::Policy::Never));
+    thumbs->setCurrentIndex(thumbs->findData(int(Thumbnailer::policy())));
+    connect(thumbs, &QComboBox::currentIndexChanged, this, [thumbs] {
+        Thumbnailer::setPolicy(Thumbnailer::Policy(thumbs->currentData().toInt()));
+    });
+    layout->addWidget(thumbsHeading);
+    layout->addWidget(thumbsHint);
+    layout->addSpacing(6);
+    layout->addWidget(thumbs);
+#endif
 
     setFixedSize(sizeHint());
 }

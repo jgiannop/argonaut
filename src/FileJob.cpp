@@ -81,6 +81,13 @@ void removeTrashInfo(const QString &pathInTrash)
 
 } // namespace
 
+bool isNetworkFilesystem(const QString &path)
+{
+    static const QStringList network = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs",
+                                        "fuse.rclone", "9p", "afs", "davfs", "fuse.gvfsd-fuse"};
+    return network.contains(QString::fromLatin1(QStorageInfo(path).fileSystemType()));
+}
+
 bool needsSafeWrites(const QString &dir)
 {
     if (qEnvironmentVariableIsSet("KAFTILOUS_SAFE_WRITES"))

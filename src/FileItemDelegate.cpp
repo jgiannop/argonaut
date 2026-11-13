@@ -224,9 +224,18 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
 
     if (m_thumbnailer && !index.data(DirectoryModel::IsDirRole).toBool()) {
         {
+            // The real type picks the thumbnailer (a PDF named .bin still gets
+            // one); a program in disguise is never handed to one.
+            ContentType::Result real;
+            real.nameMime = index.data(DirectoryModel::NameMimeRole).toString();
+            real.contentMime = index.data(DirectoryModel::ContentMimeRole).toString();
+            real.verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+            const QString mime = real.verdict == ContentType::Verdict::Dangerous
+                                     ? QString()
+                                     : ContentType::effectiveMime(real);
             const QPixmap thumb =
                 m_thumbnailer->thumbnail(index.data(DirectoryModel::PathRole).toString(),
-                                         index.data(DirectoryModel::ModifiedRole).toDateTime());
+                                         index.data(DirectoryModel::ModifiedRole).toDateTime(), mime);
             if (!thumb.isNull()) {
                 // cacheKey() changes whenever the thumbnail is replaced.
                 const QString key = QStringLiteral("%1:%2x%3@%4")

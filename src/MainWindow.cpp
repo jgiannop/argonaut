@@ -1470,6 +1470,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     }
     m_current = clean;
 
+    m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
     m_model->setPath(clean);
     if (m_analyzing)
         m_usageModel->setRoot(clean); // instant if it's inside what was measured
