@@ -37,7 +37,11 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 - The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:
   - `Theme` (`src/Theme.{h,cpp}`) holds the light and dark colour tokens, chosen from `QApplication::palette()`. Use the application palette, not the widget palette: our own style sheet changes widget palettes.
   - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons come from the OS through `QFileIconProvider` (cached per mime type by `DirectoryModel`).
-  - Light/dark preference (`ThemeMode`, set in `PreferencesDialog`) is saved with `QSettings` under `appearance/theme`. `applyThemeMode()` replaces `QApplication`'s palette with a built light or dark palette. "System" keeps or restores the platform palette that was captured at startup, so startup in System mode never calls `setPalette`. `main.cpp` applies the saved mode before creating the window.
+  - Themes (`ThemeMode`: Follow System, Light, Dark, Midnight Blue, Rosé Dawn, Forest, Sunset) are chosen in `PreferencesDialog` and saved with `QSettings` under `appearance/theme` (keys are in `kThemes` in `Theme.cpp`).
+    - Light and Dark use libadwaita's exact colours (`adwaita()`). The named themes are built by `custom()` from four base colours (window, sidebar, text, accent), and every other token is derived from those.
+    - `applyThemeMode()` sets `QApplication`'s palette (`paletteFor(theme)`). Follow System keeps or restores the platform palette that was captured at startup.
+    - `currentTheme()` returns the applied tokens. `MainWindow::applyTheme()` re-styles only when `Theme::id` changes.
+    - To add a theme: add a `ThemeMode` value, a `kThemes` entry and a case in `Theme::forMode`. Preferences picks it up automatically.
   - `MainWindow::applyTheme()` builds one window-wide style sheet (`styleSheetFor`, using `@token` placeholders) and re-creates every themed icon. It runs again on `ApplicationPaletteChange`. Anything with a themed icon must be updated there.
 - Window chrome: on Linux and Windows the window is frameless (client-side decorations). Set `KAFTILOUS_NATIVE_DECORATIONS=1` to turn that off; macOS always uses the native frame.
   - Two `HeaderBar`s, one above the sidebar and one above the content, act as the title bar. Dragging empty space calls `startSystemMove`; double-click maximises.
