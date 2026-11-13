@@ -225,8 +225,8 @@ QToolButton#toastAction { background: @button; color: @fg; border: none; border-
     padding: 5px 14px; font-weight: bold; }
 QToolButton#toastAction:hover { background: @buttonHover; }
 
-QMenuBar#menuBar { background: @sidebar; color: @fg; border: none;
-    border-bottom: 1px solid @border; padding: 2px 4px; }
+QWidget#menuRow { background: @sidebar; border: none; border-bottom: 1px solid @border; }
+QMenuBar#menuBar { background: @sidebar; color: @fg; border: none; padding: 2px 4px; }
 QMenuBar#menuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }
 QMenuBar#menuBar::item:selected { background: @hover; }
 QMenuBar#menuBar::item:pressed { background: @pressed; }
@@ -709,6 +709,23 @@ void MainWindow::setupActions()
         addAction(m_terminalAct);
 }
 
+void MainWindow::addWindowButtons(QHBoxLayout *row)
+{
+    m_minButton = makeButton(tr("Minimize"), "win");
+    connect(m_minButton, &QToolButton::clicked, this, &QWidget::showMinimized);
+    m_maxButton = makeButton(tr("Maximize"), "win");
+    connect(m_maxButton, &QToolButton::clicked, this,
+            [this] { isMaximized() ? showNormal() : showMaximized(); });
+    m_closeButton = makeButton(tr("Close"), "win");
+    connect(m_closeButton, &QToolButton::clicked, this, &QWidget::close);
+    row->addSpacing(10);
+    for (QToolButton *b : {m_minButton, m_maxButton, m_closeButton}) {
+        row->addWidget(b, 0, Qt::AlignVCenter);
+        if (b != m_closeButton)
+            row->addSpacing(6);
+    }
+}
+
 QToolButton *MainWindow::makeButton(const QString &toolTip, const char *objectName)
 {
     auto *button = new QToolButton(this);
@@ -784,7 +801,17 @@ void MainWindow::setupUi()
 #if defined(Q_OS_MACOS)
     setMenuBar(qobject_cast<QMenuBar *>(buildMenuBar())); // global macOS menu bar
 #else
-    rootLayout->addWidget(buildMenuBar(), 0);
+    // The menu bar row also holds the window buttons, at its right end.
+    auto *menuRow = new QWidget(m_root);
+    menuRow->setObjectName("menuRow");
+    menuRow->setAttribute(Qt::WA_StyledBackground);
+    auto *menuLayout = new QHBoxLayout(menuRow);
+    menuLayout->setContentsMargins(0, 0, 8, 0);
+    menuLayout->setSpacing(0);
+    menuLayout->addWidget(buildMenuBar(), 1); // its empty space drags the window
+    if (m_csd)
+        addWindowButtons(menuLayout);
+    rootLayout->addWidget(menuRow, 0);
 #endif
 
     m_splitter = new QSplitter(m_root);
@@ -931,21 +958,6 @@ QWidget *MainWindow::buildContentPane()
     });
     row->addWidget(m_viewButton);
 
-    if (m_csd) {
-        row->addSpacing(10);
-        m_minButton = makeButton(tr("Minimize"), "win");
-        connect(m_minButton, &QToolButton::clicked, this, &QWidget::showMinimized);
-        m_maxButton = makeButton(tr("Maximize"), "win");
-        connect(m_maxButton, &QToolButton::clicked, this,
-                [this] { isMaximized() ? showNormal() : showMaximized(); });
-        m_closeButton = makeButton(tr("Close"), "win");
-        connect(m_closeButton, &QToolButton::clicked, this, &QWidget::close);
-        for (QToolButton *b : {m_minButton, m_maxButton, m_closeButton}) {
-            row->addWidget(b);
-            row->addSpacing(6);
-        }
-        row->addSpacing(-6);
-    }
     layout->addWidget(header);
 
     m_gridDelegate = new FileItemDelegate(m_thumbnailer, this);
