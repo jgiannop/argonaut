@@ -139,6 +139,9 @@ private:
 
     // File operations
     QStringList selectedPaths() const;
+    // Zoom the visible view (grid and list have their own size): +1, -1, or 0 = default.
+    void zoom(int step);
+    void applyZoom();
     QStringList selectedArchives() const; // empty unless every selected item is an archive
     void compressSelection();
     void openSelection();
@@ -244,6 +247,13 @@ private:
     QAction *m_pasteAct = nullptr;
     QAction *m_trashAct = nullptr;
     QAction *m_undoAct = nullptr;
+    QAction *m_redoAct = nullptr;         // Ctrl+Shift+Z / Ctrl+Y
+    QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
+    QAction *m_zoomOutAct = nullptr;      // Ctrl+-
+    QAction *m_zoomResetAct = nullptr;    // Ctrl+0
+    int m_gridZoom = 1;                   // index into FileItemDelegate::gridSizes()
+    int m_listZoom = 1;                   // index into FileItemDelegate::listSizes()
+    int m_wheelZoom = 0;                  // Ctrl+wheel delta not used yet (touchpads)
     QAction *m_homeAct = nullptr;
     QAction *m_locationAct = nullptr;
     QAction *m_gridAct = nullptr;

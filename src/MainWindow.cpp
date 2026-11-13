@@ -71,6 +71,7 @@
 #include <QTabBar>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QTreeView>
 #include <QToolButton>
 #include <QUrl>
@@ -649,6 +650,19 @@ void MainWindow::setupActions()
     m_undoAct = new QAction(tr("Undo"), this);
     m_undoAct->setShortcut(QKeySequence::Undo);
     connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
+    m_redoAct = new QAction(tr("Redo"), this);
+    m_redoAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), QKeySequence(Qt::CTRL | Qt::Key_Y)});
+    connect(m_redoAct, &QAction::triggered, m_ops, &FileOperations::redo);
+
+    m_zoomInAct = new QAction(tr("Zoom In"), this);
+    m_zoomInAct->setShortcuts({QKeySequence::ZoomIn, QKeySequence(Qt::CTRL | Qt::Key_Equal)});
+    connect(m_zoomInAct, &QAction::triggered, this, [this] { zoom(+1); });
+    m_zoomOutAct = new QAction(tr("Zoom Out"), this);
+    m_zoomOutAct->setShortcuts({QKeySequence::ZoomOut, QKeySequence(Qt::CTRL | Qt::Key_Underscore)});
+    connect(m_zoomOutAct, &QAction::triggered, this, [this] { zoom(-1); });
+    m_zoomResetAct = new QAction(tr("Normal Size"), this);
+    m_zoomResetAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    connect(m_zoomResetAct, &QAction::triggered, this, [this] { zoom(0); });
 
     m_aboutAct = new QAction(tr("About Kaftilous"), this);
     m_aboutAct->setMenuRole(QAction::AboutRole);
@@ -660,7 +674,8 @@ void MainWindow::setupActions()
 
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
-                m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
+                m_pasteAct, m_trashAct, m_undoAct, m_redoAct, m_zoomInAct, m_zoomOutAct,
+                m_zoomResetAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
                 m_extractHereAct, m_extractToAct, m_openLocationAct});
@@ -784,6 +799,7 @@ QWidget *MainWindow::buildSidebarPane()
     m_menuButton->setPopupMode(QToolButton::InstantPopup);
     QMenu *mainMenu = makeMenu();
     mainMenu->addAction(m_undoAct);
+    mainMenu->addAction(m_redoAct);
     mainMenu->addSeparator();
     mainMenu->addAction(m_hiddenAct);
     mainMenu->addSeparator();
@@ -934,6 +950,8 @@ QWidget *MainWindow::buildContentPane()
     m_iconView->setSpacing(0);
     setupFileView(m_iconView);
     m_iconView->setItemDelegate(m_gridDelegate);
+    m_gridDelegate->setIconSize(FileItemDelegate::DefaultGridIconSize);
+    m_listDelegate->setIconSize(FileItemDelegate::DefaultListIconSize);
     m_iconView->setGridSize(m_gridDelegate->gridCellSize(m_iconView->fontMetrics()));
 
     // List with columns. Both views share the model and the selection.
@@ -1401,6 +1419,20 @@ void MainWindow::loadSettings()
     m_sidebarAct->setChecked(settings.value("view/sidebar", true).toBool());
     setGridMode(settings.value("view/grid", true).toBool());
     m_analyzeFilesAct->setChecked(settings.value("view/analyzeFiles", false).toBool());
+    // Saved as pixels (not levels), so changing the levels later keeps the choice.
+    auto nearest = [](const QList<int> &sizes, int px) {
+        int best = 0;
+        for (int i = 0; i < sizes.size(); ++i) {
+            if (qAbs(sizes.at(i) - px) < qAbs(sizes.at(best) - px))
+                best = i;
+        }
+        return best;
+    };
+    m_gridZoom = nearest(FileItemDelegate::gridSizes(),
+                         settings.value("view/gridIconSize", FileItemDelegate::DefaultGridIconSize).toInt());
+    m_listZoom = nearest(FileItemDelegate::listSizes(),
+                         settings.value("view/listIconSize", FileItemDelegate::DefaultListIconSize).toInt());
+    applyZoom();
 }
 
 void MainWindow::saveSettings()
@@ -1417,6 +1449,8 @@ void MainWindow::saveSettings()
     settings.setValue("view/showHidden", m_showHidden);
     settings.setValue("view/sidebar", m_sidebarAct->isChecked());
     settings.setValue("view/grid", m_grid);
+    settings.setValue("view/gridIconSize", FileItemDelegate::gridSizes().at(m_gridZoom));
+    settings.setValue("view/listIconSize", FileItemDelegate::listSizes().at(m_listZoom));
     settings.setValue("view/analyzeFiles", m_analyzeFilesAct->isChecked());
 }
 
@@ -1574,6 +1608,12 @@ void MainWindow::setGridMode(bool grid)
         updateEditActions();
         updateFloatingBar();
     }
+    if (m_zoomInAct) { // grid and list have their own zoom limits
+        const int level = grid ? m_gridZoom : m_listZoom;
+        const int last = int((grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes()).size()) - 1;
+        m_zoomInAct->setEnabled(level < last);
+        m_zoomOutAct->setEnabled(level > 0);
+    }
     m_viewButton->setIcon(glyphIcon(grid ? Glyph::List : Glyph::Grid, m_theme.fg));
     if (m_gridAct)
         (grid ? m_gridAct : m_listAct)->setChecked(true);
@@ -1666,6 +1706,37 @@ void MainWindow::showAnalyzeMenu(const QPoint &pos)
     menu->addAction(m_analyzeFilesAct);
     menu->addAction(tr("Scan Again"), this, [this] { m_usageModel->rescan(); });
     menu->popup(m_analyzeView->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::zoom(int step)
+{
+    if (m_analyzing)
+        return;
+    const QList<int> &sizes = m_grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes();
+    int &level = m_grid ? m_gridZoom : m_listZoom;
+    const int defaultLevel = int(sizes.indexOf(m_grid ? FileItemDelegate::DefaultGridIconSize
+                                                     : FileItemDelegate::DefaultListIconSize));
+    const int next = step == 0 ? defaultLevel : qBound(0, level + step, int(sizes.size()) - 1);
+    if (next == level)
+        return;
+    level = next;
+    applyZoom();
+}
+
+void MainWindow::applyZoom()
+{
+    m_gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_gridZoom));
+    m_listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_listZoom));
+    m_iconView->setGridSize(m_gridDelegate->gridCellSize(m_iconView->fontMetrics()));
+    // Keep what you were looking at in view.
+    const QModelIndex current = m_view->currentIndex();
+    if (current.isValid())
+        m_view->scrollTo(current);
+    updateRenameGeometry();
+    const int level = m_grid ? m_gridZoom : m_listZoom;
+    const int last = int((m_grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes()).size()) - 1;
+    m_zoomInAct->setEnabled(level < last);
+    m_zoomOutAct->setEnabled(level > 0);
 }
 
 void MainWindow::setShowHidden(bool show)
@@ -1887,6 +1958,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 cancelRename();
         }
         return QMainWindow::eventFilter(watched, event);
+    }
+
+    // Ctrl+wheel zooms. Touchpads send many small steps: act on whole notches.
+    if (event->type() == QEvent::Wheel && isFileViewport(watched)) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        if (wheel->modifiers() & Qt::ControlModifier) {
+            m_wheelZoom += wheel->angleDelta().y();
+            while (qAbs(m_wheelZoom) >= 120) {
+                zoom(m_wheelZoom > 0 ? +1 : -1);
+                m_wheelZoom -= m_wheelZoom > 0 ? 120 : -120;
+            }
+            return true;
+        }
+        m_wheelZoom = 0;
     }
 
     switch (event->type()) {
@@ -2206,6 +2291,8 @@ void MainWindow::updateEditActions()
     m_extractToAct->setEnabled(extractable);
     m_undoAct->setEnabled(m_ops->canUndo());
     m_undoAct->setText(m_ops->undoText());
+    m_redoAct->setEnabled(m_ops->canRedo());
+    m_redoAct->setText(m_ops->redoText());
 }
 
 void MainWindow::showContextMenu(const QPoint &pos)
@@ -2286,6 +2373,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         }
         menu->addAction(m_pasteAct);
         menu->addAction(m_undoAct);
+        menu->addAction(m_redoAct);
         menu->addSeparator();
         menu->addAction(m_copyLocationAct);
         menu->addAction(m_hiddenAct);
@@ -2363,7 +2451,9 @@ void MainWindow::onJobFinished(FileJob *job)
         showMessage(tr("Canceled"));
     } else if (!userAction) {
         if (done > 0)
-            showMessage(tr("Undone"));
+            showMessage(job->property(FileOperations::HistoryProperty).toString() == QLatin1String("redo")
+                            ? tr("Redone")
+                            : tr("Undone"));
     } else if (job->kind() == FileJob::Kind::Trash && done > 0) {
         const QString text =
             done == 1 ? tr("“%1” moved to the Trash").arg(QFileInfo(results.first().source).fileName())
@@ -2521,6 +2611,7 @@ QWidget *MainWindow::buildMenuBar()
 
     QMenu *edit = addMenu(tr("&Edit"));
     edit->addAction(m_undoAct);
+    edit->addAction(m_redoAct);
     edit->addSeparator();
     edit->addAction(m_cutAct);
     edit->addAction(m_copyAct);
@@ -2542,6 +2633,10 @@ QWidget *MainWindow::buildMenuBar()
     view->addAction(m_listAct);
     view->addAction(m_analyzeAct);
     view->addAction(m_analyzeFilesAct);
+    view->addSeparator();
+    view->addAction(m_zoomInAct);
+    view->addAction(m_zoomOutAct);
+    view->addAction(m_zoomResetAct);
     view->addSeparator();
     QMenu *sortMenu = makeMenu();
     sortMenu->setTitle(tr("Sort Files"));
@@ -2600,8 +2695,7 @@ void MainWindow::createNewItem(bool folder)
         return;
     }
     // Undo trashes it (same as undoing a copy).
-    m_ops->recordUndo(FileJob::Kind::Copy, {{QString(), path}},
-                      folder ? tr("Undo New Folder") : tr("Undo New File"));
+    m_ops->recordUndo(FileJob::Kind::Copy, {{QString(), path}}, folder ? tr("New Folder") : tr("New File"));
     m_pendingRename = path;
     selectPaths({path});
 }
@@ -2718,7 +2812,7 @@ bool MainWindow::commitRename()
         return false;
     }
 
-    m_ops->recordUndo(FileJob::Kind::Move, {{m_renamePath, target}}, tr("Undo Rename"));
+    m_ops->recordUndo(FileJob::Kind::Move, {{m_renamePath, target}}, tr("Rename"));
     cancelRename();
     selectPaths({target});
     return true;
@@ -3440,7 +3534,7 @@ void MainWindow::fixExtension(const QString &path)
         showMessage(tr("Couldn't rename “%1”").arg(info.fileName()));
         return;
     }
-    m_ops->recordUndo(FileJob::Kind::Move, {{path, target}}, tr("Undo Rename"));
+    m_ops->recordUndo(FileJob::Kind::Move, {{path, target}}, tr("Rename"));
     selectPaths({target});
     showMessage(tr("Renamed to “%1”").arg(QFileInfo(target).fileName()));
 }

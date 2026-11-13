@@ -13,6 +13,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
 - Show hidden files (Ctrl+H)
+- Zoom (Ctrl+plus / Ctrl+minus / Ctrl+0, or Ctrl+mouse wheel): grid icons from 32 to 256 px, list icons from 16 to 48 px, remembered separately for each
 - **Analyze view** (Ctrl+3, or the pie button): how much disk space every folder and sub-folder uses, as a tree with usage bars, biggest first. Sizes match `du` exactly (space on disk, hard links counted once; symlinks and other drives aren't followed). Folders appear while it measures; opening a folder inside what's been measured is instant. **Show Files When Analyzing** (View menu or right-click) also lists each folder's biggest files. Copying, moving, trashing, extracting and Undo update the sizes at once, without measuring everything again. Right-click to open, trash or scan again
 - Live updates when files change on disk
 - Fast with big folders: 20,000 files load in about 0.2 s (Nautilus needs several times longer just to gather its file information)
@@ -21,7 +22,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Copy, cut and paste, which also work with other file managers' clipboards
 - Drag and drop: same drive moves, another drive copies, Ctrl copies, Shift moves
 - Progress for long operations, with time left and cancel
-- Undo (Ctrl+Z) for copy, move, trash, rename, new items, extract and compress
+- Undo (Ctrl+Z) and Redo (Ctrl+Shift+Z or Ctrl+Y) for copy, move, trash, rename, new items, extract and compress. Redo brings back the very same items (for example, from the Trash), it never copies again
 - Never overwrites: name clashes become "name (copy)"
 - New Folder, New File, Rename (F2)
 - USB sticks: Kaftilous says "done" only after the data is really written to the drive
@@ -66,7 +67,8 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 | Show hidden files | Ctrl+H |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |
 | Move to Trash / Delete permanently | Delete / Shift+Delete |
-| Undo | Ctrl+Z |
+| Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
+| Zoom in / out / normal size | Ctrl++ / Ctrl+− / Ctrl+0 (or Ctrl+wheel) |
 | Rename | F2 |
 | New folder / New file | Ctrl+Shift+N / Ctrl+Alt+N |
 | New tab / Close tab / Reopen closed tab | Ctrl+T / Ctrl+W / Ctrl+Shift+T |

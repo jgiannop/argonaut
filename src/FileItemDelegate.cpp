@@ -8,6 +8,7 @@
 #include <QPainterPath>
 #include <QTextLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -24,9 +25,31 @@ FileItemDelegate::FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent)
 {
 }
 
+const QList<int> &FileItemDelegate::gridSizes()
+{
+    static const QList<int> sizes = {32, 48, 64, 96, 128, 192, 256};
+    return sizes;
+}
+
+const QList<int> &FileItemDelegate::listSizes()
+{
+    static const QList<int> sizes = {16, 24, 32, 48};
+    return sizes;
+}
+
 void FileItemDelegate::setGridMode(bool grid)
 {
     m_grid = grid;
+}
+
+void FileItemDelegate::setIconSize(int px)
+{
+    if (px == m_iconSize)
+        return;
+    m_iconSize = px;
+    m_wrapCache.clear();  // cells are wider or narrower now
+    m_thumbCache.clear(); // rendered at the old size
+    emit sizeHintChanged(QModelIndex()); // the views lay out again
 }
 
 void FileItemDelegate::setTheme(const Theme &theme)
@@ -37,8 +60,9 @@ void FileItemDelegate::setTheme(const Theme &theme)
 
 QSize FileItemDelegate::gridCellSize(const QFontMetrics &fm) const
 {
-    return QSize(GridCellWidth,
-                 GridPad + GridIconSize + GridPad + GridMaxLines * fm.lineSpacing() + 2 * GridPad);
+    // Wider cells for bigger icons, so names get room too.
+    const int width = qMax(m_iconSize <= 32 ? 96 : GridCellWidth, m_iconSize + 70);
+    return QSize(width, GridPad + m_iconSize + GridPad + GridMaxLines * fm.lineSpacing() + 2 * GridPad);
 }
 
 QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const
@@ -47,12 +71,12 @@ QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics
     if (m_grid) {
         // Under the icon; a bit wider than the cell so names are editable.
         const QRect cell = itemRect.adjusted(3, 2, -3, -2);
-        const int top = cell.top() + GridPad + GridIconSize + GridPad - 5;
+        const int top = cell.top() + GridPad + m_iconSize + GridPad - 5;
         const int width = qMax(cell.width(), 190);
         return QRect(cell.center().x() - width / 2 + 1, top, width, height);
     }
     // List: `itemRect` is the Name cell; the field covers the name part.
-    const int left = itemRect.left() + ListInset + 10 + ListIconSize + 12 - 6;
+    const int left = itemRect.left() + ListInset + 10 + m_iconSize + 12 - 6;
     return QRect(left, itemRect.center().y() - height / 2 + 1,
                  qMax(120, itemRect.right() - 4 - left), height);
 }
@@ -61,12 +85,12 @@ QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMode
 {
     if (m_grid)
         return gridCellSize(option.fontMetrics);
-    const int height = qMax(36, option.fontMetrics.height() + 14);
+    const int height = std::max({36, option.fontMetrics.height() + 14, m_iconSize + 12});
     // Width matters only for "fit column to contents".
     const QString text = index.data().toString();
     int width = option.fontMetrics.horizontalAdvance(text) + 2 * ListTextPad;
     if (index.column() == 0)
-        width += ListInset + 10 + ListIconSize + 12;
+        width += ListInset + 10 + m_iconSize + 12;
     return QSize(width, height);
 }
 
@@ -93,8 +117,8 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     const int textWidth = cell.width() - 2 * GridPad;
     const QStringList lines = wrappedName(option.text, option, textWidth);
 
-    const QRect iconRect(cell.center().x() - GridIconSize / 2 + 1, cell.top() + GridPad,
-                         GridIconSize, GridIconSize);
+    const QRect iconRect(cell.center().x() - m_iconSize / 2 + 1, cell.top() + GridPad,
+                         m_iconSize, m_iconSize);
     const int textTop = iconRect.bottom() + 1 + GridPad;
     const int tileBottom = textTop + int(lines.size()) * fm.lineSpacing() + GridPad;
 
@@ -156,8 +180,8 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
     painter->setFont(option.font);
     if (column == 0) {
         const QRect iconRect(option.rect.left() + ListInset + 10,
-                             option.rect.center().y() - ListIconSize / 2 + 1, ListIconSize,
-                             ListIconSize);
+                             option.rect.center().y() - m_iconSize / 2 + 1, m_iconSize,
+                             m_iconSize);
         paintIcon(painter, iconRect, index);
         paintContentBadge(painter, iconRect, index);
         const int left = iconRect.right() + 12;
@@ -272,7 +296,7 @@ void FileItemDelegate::paintContentBadge(QPainter *painter, const QRect &iconRec
     const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
     if (verdict != ContentType::Verdict::Mismatch && verdict != ContentType::Verdict::Dangerous)
         return;
-    const int d = qMax(10, iconRect.width() * 3 / 8);
+    const int d = qBound(10, iconRect.width() * 3 / 8, 26); // not huge on big icons
     const QRectF badge(iconRect.right() - d + 3, iconRect.bottom() - d + 3, d, d);
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);

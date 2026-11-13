@@ -31,7 +31,7 @@ class Thumbnailer : public QObject
     Q_OBJECT
 
 public:
-    static constexpr int MaxSize = 128;      // px kept in memory, enough for 48px icons at 2x
+    static constexpr int MaxSize = 256;      // px kept in memory: up to 128 px icons at 2x
     static constexpr int GenerateSize = 256; // px made by thumbnailers ("large" cache folder)
 
     enum class Policy { LocalOnly, Everywhere, Never };
