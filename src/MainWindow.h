@@ -112,6 +112,7 @@ private:
     void setAnalyzeMode(bool on);
     void showAnalyzeMenu(const QPoint &pos);
     QString selectedAnalyzePath() const;
+    void setAnalyzeShowFiles(bool show);
     void setShowHidden(bool show);
     void setSearchActive(bool active);
     void updateFilter();
@@ -203,6 +204,7 @@ private:
     QTreeView *m_analyzeView = nullptr;   // Analyze: folder sizes as a tree
     DiskUsageModel *m_usageModel = nullptr;
     QAction *m_analyzeAct = nullptr;      // Ctrl+3
+    QAction *m_analyzeFilesAct = nullptr; // Analyze: also list the biggest files
     QToolButton *m_analyzeButton = nullptr;
     bool m_analyzing = false;
     QStackedWidget *m_viewStack = nullptr;

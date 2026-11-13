@@ -58,6 +58,9 @@ private slots:
     void sortByName();
     void newRootCancelsOldScan();
     void unreadableFolder();
+    void filesShownAndAddUp();
+    void removeKeepsOtherRows();
+    void addPathMeasuresWhatArrived();
 
 private:
     bool scan(const QString &path);
@@ -211,6 +214,94 @@ void TestDiskUsage::unreadableFolder()
     QVERIFY(m_model->rootIncomplete());
     QVERIFY(m_model->index(0, 0).data(Qt::ToolTipRole).toString().contains("couldn't be read"));
     QFile::setPermissions(m_dir + "/locked", QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+}
+
+void TestDiskUsage::filesShownAndAddUp()
+{
+    for (int i = 0; i < 12; ++i)
+        writeFile(m_dir + "/Media/big" + QString::number(i) + ".bin", 300000 + i * 10000);
+    for (int i = 0; i < 5; ++i)
+        writeFile(m_dir + "/Media/small" + QString::number(i) + ".txt", 100);
+    writeFile(m_dir + "/Media/Sub/inner.bin", 2000000);
+    writeFile(m_dir + "/root-file.bin", 600000);
+    QVERIFY(scan(m_dir));
+    const QModelIndex top = m_model->index(0, 0);
+    QCOMPARE(childNames(*m_model, top), QStringList({"Media"})); // folders only by default
+
+    m_model->setShowFiles(true);
+    const QModelIndex topAgain = m_model->index(0, 0);
+    QCOMPARE(childNames(*m_model, topAgain), QStringList({"Media", "root-file.bin"}));
+    const QModelIndex media = m_model->indexForPath(m_dir + "/Media");
+    const QStringList rows = childNames(*m_model, media);
+    // The sub-folder, the 10 biggest files (biggest first), then the rest in one row.
+    QCOMPARE(rows.size(), 1 + DiskUsageModel::MaxFilesPerFolder + 1);
+    QCOMPARE(rows.first(), QStringLiteral("Sub"));
+    QCOMPARE(rows.at(1), QStringLiteral("big11.bin"));
+    QCOMPARE(rows.last(), QStringLiteral("7 smaller files")); // 2 small-enough bigs + 5 small
+    qint64 sum = 0;
+    for (int r = 0; r < m_model->rowCount(media); ++r)
+        sum += m_model->index(r, 0, media).data(DiskUsageModel::BytesRole).toLongLong();
+    const qint64 folder = media.data(DiskUsageModel::BytesRole).toLongLong();
+    QVERIFY2(folder - sum >= 0 && folder - sum <= 64 * 1024, // just the folder's own entry
+             qPrintable(QString("%1 vs %2").arg(folder).arg(sum)));
+    const QModelIndex smaller = m_model->index(m_model->rowCount(media) - 1, 0, media);
+    QVERIFY(m_model->filePath(smaller).isEmpty()); // not a real item: no actions
+    QCOMPARE(m_model->indexForPath(m_dir + "/Media/big11.bin").data(DiskUsageModel::KindRole).toInt(),
+             int(DiskUsageModel::Node::File));
+    // A big file can be trashed from here too.
+    QVERIFY(m_model->removePath(m_dir + "/Media/big11.bin"));
+    QVERIFY(!m_model->indexForPath(m_dir + "/Media/big11.bin").isValid());
+}
+
+void TestDiskUsage::removeKeepsOtherRows()
+{
+    makeTree();
+    QVERIFY(scan(m_dir));
+    const QPersistentModelIndex deepest = m_model->indexForPath(m_dir + "/Big/Deeper/Deepest");
+    const QPersistentModelIndex small = m_model->indexForPath(m_dir + "/Small");
+    QSignalSpy resets(m_model, &QAbstractItemModel::modelReset);
+    QVERIFY(m_model->removePath(m_dir + "/Many"));
+    QCOMPARE(resets.count(), 0); // no reset: the view keeps its open folders
+    QVERIFY(deepest.isValid() && small.isValid());
+    QCOMPARE(m_model->filePath(deepest), m_dir + "/Big/Deeper/Deepest");
+    QCOMPARE(m_model->filePath(small), m_dir + "/Small");
+}
+
+void TestDiskUsage::addPathMeasuresWhatArrived()
+{
+    if (QStandardPaths::findExecutable("du").isEmpty())
+        QSKIP("no du");
+    makeTree();
+    QVERIFY(scan(m_dir));
+    const qint64 full = m_model->rootBytes();
+    // Like Move to Trash then Undo: it leaves, then comes back.
+    QTemporaryDir away;
+    QVERIFY(QDir().rename(m_dir + "/Big", away.path() + "/Big"));
+    QVERIFY(m_model->removePath(m_dir + "/Big"));
+    QVERIFY(m_model->rootBytes() < full);
+    QVERIFY(QDir().rename(away.path() + "/Big", m_dir + "/Big"));
+    QSignalSpy added(m_model, &DiskUsageModel::added);
+    QVERIFY(m_model->addPath(m_dir + "/Big"));
+    QVERIFY(added.wait(10000));
+    QCOMPARE(m_model->rootBytes(), full);
+    QCOMPARE(m_model->rootBytes(), du(m_dir));
+    QCOMPARE(childNames(*m_model, m_model->index(0, 0)).first(), QStringLiteral("Big")); // sorted back in
+    const QModelIndex deeper = m_model->indexForPath(m_dir + "/Big/Deeper");
+    QCOMPARE(deeper.data(DiskUsageModel::BytesRole).toLongLong(), du(m_dir + "/Big/Deeper"));
+
+    // A new file arrives (e.g. a copy); small ones join the "smaller files" row.
+    writeFile(m_dir + "/Small/copy.txt", 5000);
+    QVERIFY(m_model->addPath(m_dir + "/Small/copy.txt"));
+    QVERIFY(added.wait(10000));
+    QCOMPARE(m_model->rootBytes(), du(m_dir));
+    QVERIFY(!m_model->addPath("/somewhere/else"));
+
+    // ...and moving it away again takes it out (it's measured where it went).
+    QTemporaryDir elsewhere;
+    QVERIFY(QFile::rename(m_dir + "/Small/copy.txt", elsewhere.path() + "/copy.txt"));
+    QVERIFY(m_model->removePath(m_dir + "/Small/copy.txt",
+                                DiskUsageModel::sizeOnDisk(elsewhere.path() + "/copy.txt")));
+    QCOMPARE(m_model->rootBytes(), du(m_dir));
 }
 
 QTEST_MAIN(TestDiskUsage)
