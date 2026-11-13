@@ -7,6 +7,8 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    // Same base style everywhere; our style sheet and drawing do the rest.
+    QApplication::setStyle("Fusion");
     QApplication::setApplicationName("Kaftilous");
     QApplication::setApplicationVersion("0.1.0");
 

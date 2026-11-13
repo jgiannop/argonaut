@@ -13,6 +13,16 @@ qt_add_executable(kaftilous
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/Theme.h
+    src/Theme.cpp
+    src/HeaderBar.h
+    src/HeaderBar.cpp
+    src/PathBar.h
+    src/PathBar.cpp
+    src/FileItemDelegate.h
+    src/FileItemDelegate.cpp
+    src/Thumbnailer.h
+    src/Thumbnailer.cpp
 )
 
 target_link_libraries(kaftilous PRIVATE Qt6::Widgets)

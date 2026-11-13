@@ -27,8 +27,21 @@ There are no tests and no linter yet.
 ## Architecture
 
 - `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `qt_add_executable(...)` in `CMakeLists.txt`, or moc won't run on it.
-- `MainWindow` (`src/MainWindow.{h,cpp}`) holds the whole UI for now:
-  - It has one `QFileSystemModel` with `setRootPath("")`, shared by the `QListView`. Changing folder never resets the model; it only calls `m_view->setRootIndex(m_model->index(path))`. Folder loading is asynchronous: anything that needs the contents of a folder (for example the item count) must wait for `QFileSystemModel::directoryLoaded`.
-  - `navigateTo(path, addToHistory)` is the **only** way to change the current folder. It validates the path, cleans it into `m_current` (always with `/` separators; the native form is only for display), updates the back/forward stacks, the path bar, the window title and the action states. The back/forward/up/home actions, the sidebar, the path bar, double-click and the command-line argument in `main.cpp` all go through it.
-  - Grid/list is one `QListView` switching between `IconMode` and `ListMode` (`setGridMode`). The hidden-files toggle changes the model's `QDir` filter.
-  - Sidebar entries are `QListWidgetItem`s with the target path stored in `Qt::UserRole`. An item with an empty path, like the separator, is ignored on click.
+- The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:
+  - `Theme` (`src/Theme.{h,cpp}`) holds the light and dark colour tokens, chosen from `QApplication::palette()`. Use the application palette, not the widget palette: our own style sheet changes widget palettes.
+  - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons still come from `QFileSystemModel` / the OS.
+  - `MainWindow::applyTheme()` builds one window-wide style sheet (`styleSheetFor`, using `@token` placeholders) and re-creates every themed icon. It runs again on `ApplicationPaletteChange`. Anything with a themed icon must be updated there.
+- Window chrome: on Linux and Windows the window is frameless (client-side decorations). Set `KAFTILOUS_NATIVE_DECORATIONS=1` to turn that off; macOS always uses the native frame.
+  - Two `HeaderBar`s, one above the sidebar and one above the content, act as the title bar. Dragging empty space calls `startSystemMove`; double-click maximises.
+  - Edge resizing is handled by an event filter on the `QWindow` (`MainWindow::eventFilter` → `startSystemResize`).
+  - The window buttons only exist when `m_csd` is true.
+- Main view:
+  - There is one `QFileSystemModel` with `setRootPath("")`, shared by a single `QListView`. Changing folder only calls `setRootIndex`. Folder loading is asynchronous: anything that needs a folder's contents must wait for `directoryLoaded`.
+  - Grid/list is the same view switched between `IconMode` and `ListMode` (`setGridMode`). Grid cell size comes from `FileItemDelegate::gridCellSize`.
+  - `FileItemDelegate` paints every item itself: wrapped, middle-elided names, rounded hover/selection, list-mode size/date.
+  - `Thumbnailer` loads thumbnails in a thread pool. It reads the freedesktop cache (`~/.cache/thumbnails`) on Linux first, then decodes images with `QImageReader`. It emits `thumbnailReady`, which repaints the viewport.
+  - Search (Ctrl+F) only filters the current folder through the model's name filters (`updateFilter`). It drops `QDir::AllDirs` while active so folders are filtered too.
+- `navigateTo(path, addToHistory)` is the **only** way to change the current folder. It validates and cleans the path into `m_current` (always with `/` separators; the native form is only for display), leaves search mode, and updates history, `PathBar`, the title, the sidebar selection and the floating bar. Everything that changes folder goes through it: actions, sidebar, breadcrumbs, the typed path, double-click and the command-line argument.
+- `PathBar` shows breadcrumbs. Leading crumbs are hidden when space is short, and it switches to a `QLineEdit` on click or Ctrl+L. It emits `pathActivated`.
+- Sidebar entries are `QListWidgetItem`s with the path in `PathRole` (`Qt::UserRole`). Separator rows have `SeparatorRole` and an empty path.
+- There is no status bar. `m_floatingBar` (a `QLabel` over the view) shows selection info and temporary messages (`showMessage`).
