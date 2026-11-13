@@ -505,3 +505,45 @@ QIcon glyphIcon(Glyph glyph, const QColor &color)
 {
     return QIcon(new GlyphEngine(glyph, color));
 }
+
+// The app icon: a blue folder with a white K. Same geometry as
+// data/kaftilous.svg (128x128), drawn in code so no SVG plugin is needed.
+QIcon applicationIcon()
+{
+    QIcon icon;
+    for (int size : {16, 24, 32, 48, 64, 128, 256}) {
+        QPixmap pm(size, size);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.scale(size / 128.0, size / 128.0);
+        p.setPen(Qt::NoPen);
+        QPainterPath back;
+        back.moveTo(14, 26);
+        back.arcTo(QRectF(14, 16, 20, 20), 180, -90);
+        back.lineTo(50, 16);
+        back.lineTo(60, 26);
+        back.lineTo(104, 26);
+        back.arcTo(QRectF(94, 26, 20, 20), 90, -90);
+        back.lineTo(114, 44);
+        back.lineTo(14, 44);
+        back.closeSubpath();
+        p.setBrush(QColor("#1a5fb4"));
+        p.drawPath(back);
+        p.setBrush(QColor("#1c71d8"));
+        p.drawRoundedRect(QRectF(14, 36, 100, 78), 10, 10);
+        QLinearGradient front(0, 44, 0, 114);
+        front.setColorAt(0, QColor("#62a0ea"));
+        front.setColorAt(1, QColor("#3584e4"));
+        p.setBrush(front);
+        p.drawRoundedRect(QRectF(10, 44, 108, 70), 10, 10);
+        QPen pen(Qt::white, 9, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        p.setPen(pen);
+        p.drawLine(QPointF(50, 58), QPointF(50, 100));
+        p.drawLine(QPointF(50, 82), QPointF(74, 58));
+        p.drawLine(QPointF(58, 74), QPointF(76, 100));
+        p.end();
+        icon.addPixmap(pm);
+    }
+    return icon;
+}

@@ -55,3 +55,17 @@ qt_add_executable(tst_places tst_places.cpp)
 target_link_libraries(tst_places PRIVATE kaftilous_core Qt6::Test)
 add_test(NAME places COMMAND tst_places)
 set_tests_properties(places PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+qt_add_executable(tst_defaultfm tst_defaultfm.cpp)
+target_link_libraries(tst_defaultfm PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME defaultfm COMMAND tst_defaultfm)
+set_tests_properties(defaultfm PROPERTIES TIMEOUT 60)
+
+# D-Bus: only ever on a private bus.
+find_program(DBUS_RUN_SESSION dbus-run-session)
+if(TARGET Qt6::DBus AND DBUS_RUN_SESSION)
+    qt_add_executable(tst_fmservice tst_fmservice.cpp)
+    target_link_libraries(tst_fmservice PRIVATE kaftilous_core Qt6::Test)
+    add_test(NAME fmservice COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_fmservice>)
+    set_tests_properties(fmservice PROPERTIES ENVIRONMENT "KAFTILOUS_PRIVATE_BUS=1" TIMEOUT 60)
+endif()

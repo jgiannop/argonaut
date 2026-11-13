@@ -47,6 +47,11 @@ public:
 
     // Show the folder at `path`. Returns false if it doesn't exist.
     bool navigateTo(const QString &path, bool addToHistory = true);
+    // The first folder here, the others in tabs ("Open folder" from other apps).
+    void openFolders(const QStringList &folders);
+    // Files or folders shown selected in the folder that holds them ("Show
+    // in folder"); items in other folders open in tabs.
+    void showItems(const QStringList &items);
 
 protected:
     void changeEvent(QEvent *event) override;

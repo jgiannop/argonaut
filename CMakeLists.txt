@@ -20,6 +20,8 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/DiskUsageModel.cpp
+    src/DefaultFileManager.h
+    src/DefaultFileManager.cpp
     src/RecentFiles.h
     src/RecentFiles.cpp
     src/Starred.h
@@ -43,6 +45,14 @@ qt_add_library(kaftilous_core STATIC
 )
 target_include_directories(kaftilous_core PUBLIC src)
 target_link_libraries(kaftilous_core PUBLIC Qt6::Widgets Qt6::Xml)
+
+# "Show in folder" for other apps (org.freedesktop.FileManager1), Linux only.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Qt6 6.4 REQUIRED COMPONENTS DBus)
+    target_sources(kaftilous_core PRIVATE src/FileManagerService.h src/FileManagerService.cpp)
+    target_link_libraries(kaftilous_core PUBLIC Qt6::DBus)
+    target_compile_definitions(kaftilous_core PUBLIC KAFTILOUS_DBUS=1)
+endif()
 
 # Compress / Extract: needs libarchive (optional, like the terminal).
 find_package(PkgConfig QUIET)
@@ -116,6 +126,31 @@ set_target_properties(kaftilous PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
 )
+
+# ------------------------------------------------------------- install ---
+# `cmake --install build/release` (the release preset installs into ~/.local):
+# the program, its menu entry and icon. Uninstall: `cmake --build build/release
+# --target uninstall` (run `kaftilous --restore-nautilus` first if it's the default).
+include(GNUInstallDirs)
+install(TARGETS kaftilous RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} BUNDLE DESTINATION .)
+if(UNIX AND NOT APPLE)
+    # Absolute path: D-Bus and the desktop start it without the user's PATH.
+    set(KAFTILOUS_EXE "${CMAKE_INSTALL_FULL_BINDIR}/kaftilous")
+    configure_file(data/kaftilous.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/kaftilous.desktop @ONLY)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kaftilous.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES data/kaftilous.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    # Let menus and "Open With" see the new entry right away.
+    install(CODE [[
+        find_program(UPDATE_DESKTOP_DATABASE update-desktop-database)
+        if(UPDATE_DESKTOP_DATABASE AND "$ENV{DESTDIR}" STREQUAL "")
+            execute_process(COMMAND ${UPDATE_DESKTOP_DATABASE} "${CMAKE_INSTALL_PREFIX}/share/applications")
+        endif()
+    ]])
+endif()
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -DMANIFEST=${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Uninstall.cmake
+    COMMENT "Removing the installed files")
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

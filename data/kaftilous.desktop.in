@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Kaftilous
+GenericName=File Manager
+Comment=Browse and organize your files
+Keywords=folder;manager;explore;disk;filesystem;files;nautilus;
+Exec=@KAFTILOUS_EXE@ %U
+TryExec=@KAFTILOUS_EXE@
+Icon=kaftilous
+Terminal=false
+StartupNotify=true
+StartupWMClass=kaftilous
+Categories=Qt;System;FileTools;FileManager;
+MimeType=inode/directory;
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=@KAFTILOUS_EXE@
