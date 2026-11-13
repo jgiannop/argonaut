@@ -439,6 +439,16 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
               {1.75, 12.75}, {1.75, 6}});
         line(1.75, 7.25, 14.25, 7.25);
         break;
+    case Glyph::Usage: // a pie chart: disk usage
+        p->drawEllipse(QPointF(8, 8), 5.75, 5.75);
+        filled([&] {
+            QPainterPath slice;
+            slice.moveTo(8, 8);
+            slice.arcTo(QRectF(2.25, 2.25, 11.5, 11.5), 90, -125);
+            slice.closeSubpath();
+            p->drawPath(slice);
+        });
+        break;
     case Glyph::Eject:
         poly({{3, 9.5}, {8, 3.75}, {13, 9.5}}, true);
         line(3, 12.5, 13, 12.5);

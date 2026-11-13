@@ -40,3 +40,8 @@ if(LIBARCHIVE_FOUND)
         TIMEOUT 300
     )
 endif()
+
+qt_add_executable(tst_diskusage tst_diskusage.cpp)
+target_link_libraries(tst_diskusage PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME diskusage COMMAND tst_diskusage)
+set_tests_properties(diskusage PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)

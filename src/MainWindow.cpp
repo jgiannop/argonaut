@@ -7,6 +7,7 @@
 #include "CompressDialog.h"
 #include "ContentType.h"
 #include "DirectoryModel.h"
+#include "DiskUsageModel.h"
 #include "FileFilterProxy.h"
 #include "FileItemDelegate.h"
 #include "FileOperations.h"
@@ -22,6 +23,7 @@
 #include "TerminalWidget.h"
 #endif
 #include "Toast.h"
+#include "UsageDelegate.h"
 #include "Trash.h"
 
 #include <QAction>
@@ -177,6 +179,14 @@ QTreeView#detailView QHeaderView { background: @window; border: none; }
 QTreeView#detailView QHeaderView::section { background: @window; color: @dim; border: none;
     padding: 8px 10px 6px 16px; font-weight: bold; }
 QTreeView#detailView QHeaderView::section:hover { color: @fg; }
+QTreeView#analyzeView { background: @window; border: none; outline: 0; padding: 0px 6px 6px 6px; }
+QTreeView#analyzeView::item { border: none; padding-left: 4px; }
+QTreeView#analyzeView::item:hover { background: @hover; }
+QTreeView#analyzeView::item:selected { background: @itemSel; color: @fg; }
+QTreeView#analyzeView QHeaderView { background: @window; border: none; }
+QTreeView#analyzeView QHeaderView::section { background: @window; color: @dim; border: none;
+    padding: 8px 10px 6px 16px; font-weight: bold; }
+QTreeView#analyzeView QHeaderView::section:hover { color: @fg; }
 QLabel#floatingBar { background: @popup; color: @fg; border: 1px solid @border;
     border-radius: 8px; padding: 5px 12px; }
 
@@ -414,6 +424,11 @@ void MainWindow::setupActions()
     auto *viewGroup = new QActionGroup(this);
     viewGroup->addAction(m_gridAct);
     viewGroup->addAction(m_listAct);
+    m_analyzeAct = new QAction(tr("Analyze Disk Usage"), this);
+    m_analyzeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
+    m_analyzeAct->setCheckable(true);
+    connect(m_analyzeAct, &QAction::triggered, this, [this] { setAnalyzeMode(true); });
+    viewGroup->addAction(m_analyzeAct);
 
     m_sidebarAct = new QAction(tr("Sidebar"), this);
     m_sidebarAct->setShortcut(QKeySequence(Qt::Key_F9));
@@ -477,7 +492,10 @@ void MainWindow::setupActions()
 
     m_selectAllAct = new QAction(tr("Select All"), this);
     m_selectAllAct->setShortcut(QKeySequence::SelectAll);
-    connect(m_selectAllAct, &QAction::triggered, this, [this] { m_view->selectAll(); });
+    connect(m_selectAllAct, &QAction::triggered, this, [this] {
+        if (!m_analyzing)
+            m_view->selectAll();
+    });
 
     m_closeAct = new QAction(tr("Close Tab"), this);
     m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // the last tab closes the window
@@ -637,7 +655,7 @@ void MainWindow::setupActions()
     });
 
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
-                m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
+                m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
@@ -855,8 +873,16 @@ QWidget *MainWindow::buildContentPane()
         connect(m_terminalAct, &QAction::toggled, m_terminalButton, &QToolButton::setChecked);
         row->addWidget(m_terminalButton);
     }
+    m_analyzeButton = makeButton(tr("Analyze disk usage (Ctrl+3)"));
+    m_analyzeButton->setCheckable(true);
+    connect(m_analyzeButton, &QToolButton::clicked, this, [this](bool on) {
+        on ? setAnalyzeMode(true) : setGridMode(m_grid);
+    });
+    row->addWidget(m_analyzeButton);
     m_viewButton = makeButton(QString());
-    connect(m_viewButton, &QToolButton::clicked, this, [this] { setGridMode(!m_grid); });
+    connect(m_viewButton, &QToolButton::clicked, this, [this] {
+        setGridMode(m_analyzing ? m_grid : !m_grid); // from Analyze: back to the file view
+    });
     row->addWidget(m_viewButton);
 
     if (m_csd) {
@@ -934,8 +960,61 @@ QWidget *MainWindow::buildContentPane()
     m_detailView->setSortingEnabled(true);
     connect(columns, &QHeaderView::sortIndicatorChanged, this, &MainWindow::updateSortActions);
 
+    // Analyze: its own model and selection; never m_view.
+    m_usageModel = new DiskUsageModel(this);
+    m_analyzeView = new QTreeView(m_viewStack);
+    m_analyzeView->setObjectName("analyzeView");
+    m_analyzeView->setModel(m_usageModel);
+    m_analyzeView->setItemDelegate(new UsageDelegate(m_analyzeView));
+    m_analyzeView->setUniformRowHeights(true);
+    m_analyzeView->setAllColumnsShowFocus(true);
+    m_analyzeView->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_analyzeView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_analyzeView->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_analyzeView->setFrameShape(QFrame::NoFrame);
+    m_analyzeView->setSortingEnabled(true);
+    m_analyzeView->sortByColumn(DiskUsageModel::SizeColumn, Qt::DescendingOrder);
+    QHeaderView *usageColumns = m_analyzeView->header();
+    usageColumns->setStretchLastSection(false);
+    usageColumns->setHighlightSections(false);
+    usageColumns->setSectionsMovable(false);
+    usageColumns->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    usageColumns->setSectionResizeMode(DiskUsageModel::NameColumn, QHeaderView::Stretch);
+    usageColumns->resizeSection(DiskUsageModel::UsageColumn, 200);
+    usageColumns->resizeSection(DiskUsageModel::SizeColumn, 110);
+    usageColumns->resizeSection(DiskUsageModel::ItemsColumn, 130);
+    connect(m_analyzeView, &QTreeView::customContextMenuRequested, this, &MainWindow::showAnalyzeMenu);
+    connect(m_analyzeView->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            &MainWindow::updateFloatingBar);
+    connect(m_usageModel, &DiskUsageModel::progress, this, &MainWindow::updateFloatingBar);
+    connect(m_usageModel, &DiskUsageModel::finished, this, &MainWindow::updateFloatingBar);
+    // The analysed folder is the top row: keep it open.
+    connect(m_usageModel, &QAbstractItemModel::modelReset, this, [this] {
+        m_analyzeView->expand(m_usageModel->index(0, 0));
+    });
+    connect(m_usageModel, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex &parent) {
+        if (!parent.parent().isValid())
+            m_analyzeView->expand(m_usageModel->index(0, 0));
+    });
+    // Enter / double-click on a folder: open it in the Analyze view.
+    connect(m_analyzeView, &QTreeView::activated, this, [this](const QModelIndex &index) {
+        const QString path = m_usageModel->filePath(index);
+        if (!path.isEmpty() && path != m_current)
+            navigateTo(path);
+    });
+    auto *analyzeTrash = new QAction(tr("Move to Trash"), m_analyzeView);
+    analyzeTrash->setShortcut(QKeySequence::Delete);
+    analyzeTrash->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(analyzeTrash, &QAction::triggered, this, [this] {
+        const QString path = selectedAnalyzePath();
+        if (!path.isEmpty() && path != m_current)
+            m_ops->trash({path});
+    });
+    m_analyzeView->addAction(analyzeTrash);
+
     m_viewStack->addWidget(m_iconView);
     m_viewStack->addWidget(m_detailView);
+    m_viewStack->addWidget(m_analyzeView);
     m_view = m_iconView;
 
     QItemSelectionModel *selection = m_iconView->selectionModel();
@@ -1044,6 +1123,7 @@ void MainWindow::applyTheme(bool force)
     m_searchButton->setIcon(glyphIcon(Glyph::Search, m_theme.fg));
     m_menuButton->setIcon(glyphIcon(Glyph::Menu, m_theme.fg));
     m_viewButton->setIcon(glyphIcon(m_grid ? Glyph::List : Glyph::Grid, m_theme.fg));
+    m_analyzeButton->setIcon(glyphIcon(Glyph::Usage, m_theme.fg));
     if (m_csd) {
         m_minButton->setIcon(glyphIcon(Glyph::Minimize, m_theme.fg));
         m_closeButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
@@ -1379,6 +1459,8 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     m_current = clean;
 
     m_model->setPath(clean);
+    if (m_analyzing)
+        m_usageModel->setRoot(clean); // instant if it's inside what was measured
     m_trashBar->setVisible(m_model->isTrash());
     m_view->scrollToTop();
     m_pathBar->setPath(clean);
@@ -1452,6 +1534,10 @@ void MainWindow::updateActions()
 void MainWindow::setGridMode(bool grid)
 {
     cancelRename();
+    const bool wasAnalyzing = m_analyzing;
+    m_analyzing = false;
+    if (m_analyzeButton)
+        m_analyzeButton->setChecked(false);
     m_grid = grid;
     QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_iconView) : m_detailView;
     const bool hadFocus = m_view && m_view->hasFocus();
@@ -1469,13 +1555,71 @@ void MainWindow::setGridMode(bool grid)
     m_view = next;
     if (current.isValid())
         m_view->scrollTo(current);
-    if (hadFocus)
+    if (hadFocus || wasAnalyzing)
         m_view->setFocus();
+    if (wasAnalyzing) {
+        updateEditActions();
+        updateFloatingBar();
+    }
     m_viewButton->setIcon(glyphIcon(grid ? Glyph::List : Glyph::Grid, m_theme.fg));
     if (m_gridAct)
         (grid ? m_gridAct : m_listAct)->setChecked(true);
     updateRenameGeometry();
     m_viewButton->setToolTip(grid ? tr("List view (Ctrl+2)") : tr("Grid view (Ctrl+1)"));
+}
+
+void MainWindow::setAnalyzeMode(bool on)
+{
+    if (!on) {
+        setGridMode(m_grid);
+        return;
+    }
+    cancelRename();
+    setSearchActive(false); // search is about files; Analyze shows folders
+    m_analyzing = true;
+    m_analyzeAct->setChecked(true);
+    m_analyzeButton->setChecked(true);
+    m_viewStack->setCurrentWidget(m_analyzeView);
+    m_usageModel->setRoot(m_current);
+    m_analyzeView->expand(m_usageModel->index(0, 0));
+    m_analyzeView->setFocus();
+    updateEditActions();
+    updateFloatingBar();
+}
+
+QString MainWindow::selectedAnalyzePath() const
+{
+    const QModelIndex current = m_analyzeView->currentIndex();
+    return current.isValid() ? m_usageModel->filePath(current) : QString();
+}
+
+void MainWindow::showAnalyzeMenu(const QPoint &pos)
+{
+    const QModelIndex index = m_analyzeView->indexAt(pos);
+    if (index.isValid())
+        m_analyzeView->setCurrentIndex(index);
+    const QString path = index.isValid() ? m_usageModel->filePath(index) : m_current;
+    QMenu *menu = makeMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (index.isValid()) {
+        menu->addAction(tr("Open Folder"), this, [this, path] {
+            navigateTo(path);
+            setGridMode(m_grid);
+        });
+        menu->addAction(tr("Analyze This Folder"), this, [this, path] { navigateTo(path); })
+            ->setEnabled(path != m_current);
+        menu->addAction(tr("Open in New Tab"), this, [this, path] { openTab(path, false); });
+        menu->addAction(tr("Copy Location"), this, [path] {
+            QApplication::clipboard()->setText(QDir::toNativeSeparators(path));
+        });
+        if (path != m_current) {
+            menu->addSeparator();
+            menu->addAction(tr("Move to Trash"), this, [this, path] { m_ops->trash({path}); });
+        }
+        menu->addSeparator();
+    }
+    menu->addAction(tr("Scan Again"), this, [this] { m_usageModel->rescan(); });
+    menu->popup(m_analyzeView->viewport()->mapToGlobal(pos));
 }
 
 void MainWindow::setShowHidden(bool show)
@@ -1492,6 +1636,8 @@ void MainWindow::setSearchActive(bool active)
     if (m_searchAct->isChecked() != active)
         m_searchAct->setChecked(active); // re-enters with the same value
     if (active) {
+        if (m_analyzing)
+            setGridMode(m_grid); // search finds files: show the file view
         m_locationStack->setCurrentWidget(m_searchEdit);
         m_searchEdit->setFocus(Qt::ShortcutFocusReason);
         m_searchEdit->selectAll();
@@ -1542,7 +1688,29 @@ void MainWindow::showMessage(const QString &text)
 void MainWindow::updateFloatingBar()
 {
     QString text = m_message;
-    if (text.isEmpty()) {
+    if (text.isEmpty() && m_analyzing) {
+        if (m_usageModel->isScanning()) {
+            text = tr("Measuring… %1 in %2 items")
+                       .arg(formatSize(m_usageModel->scannedBytes()),
+                            QLocale().toString(m_usageModel->scannedItems()));
+        } else {
+            const QModelIndex current = m_analyzeView->currentIndex();
+            if (current.isValid() && current.parent().isValid()) {
+                text = tr("“%1”: %2, %3% of “%4”")
+                           .arg(current.data().toString(),
+                                formatSize(current.data(DiskUsageModel::BytesRole).toLongLong()))
+                           .arg(qRound(current.data(DiskUsageModel::FractionRole).toDouble() * 100))
+                           .arg(current.parent().data().toString());
+            } else if (m_usageModel->rowCount() > 0) {
+                text = tr("%1 on disk in %2 items")
+                           .arg(formatSize(m_usageModel->rootBytes()),
+                                QLocale().toString(m_usageModel->rootItems()));
+                if (m_usageModel->rootIncomplete())
+                    text += tr(" (some folders couldn't be read)");
+            }
+        }
+    }
+    if (text.isEmpty() && !m_analyzing) {
         const QModelIndexList selected = selectedViewIndexes();
         if (selected.size() == 1) {
             const QModelIndex idx = toSource(selected.first());
@@ -1563,7 +1731,7 @@ void MainWindow::updateFloatingBar()
                 text += QStringLiteral(" (%1)").arg(formatSize(bytes));
         }
     }
-    if (text.isEmpty() && m_model->isSearch()) {
+    if (text.isEmpty() && !m_analyzing && m_model->isSearch()) {
         const int found = m_model->rowCount();
         if (m_model->isLoading())
             text = found == 0 ? tr("Searching…") : tr("Searching… %n found", nullptr, found);
@@ -1966,11 +2134,11 @@ void MainWindow::performDrop(const QStringList &sources, const QString &targetDi
 
 void MainWindow::updateEditActions()
 {
-    const bool hasSelection = m_view && m_view->selectionModel()->hasSelection();
+    const bool hasSelection = !m_analyzing && m_view && m_view->selectionModel()->hasSelection();
     for (QAction *action : {m_openAct, m_cutAct, m_copyAct, m_trashAct})
         action->setEnabled(hasSelection);
     const bool inTrash = m_model && m_model->isTrash();
-    const bool writable = !inTrash && !m_current.isEmpty() && QFileInfo(m_current).isWritable();
+    const bool writable = !m_analyzing && !inTrash && !m_current.isEmpty() && QFileInfo(m_current).isWritable();
     m_deleteAct->setEnabled(hasSelection);
     m_restoreAct->setEnabled(inTrash && hasSelection);
     if (m_trashRestoreButton)
@@ -2116,6 +2284,15 @@ void MainWindow::onJobFinished(FileJob *job)
     // Results can be in sub-folders, which aren't watched: search again.
     if (m_model->isSearch())
         m_model->refresh();
+    // Folders trashed, moved or deleted leave the Analyze tree (and their
+    // size leaves every folder above). Anything else: "Scan Again".
+    if (job->kind() == FileJob::Kind::Trash || job->kind() == FileJob::Kind::Move
+        || job->kind() == FileJob::Kind::Delete) {
+        for (const TransferResult &r : results)
+            m_usageModel->removePath(r.source);
+        if (m_analyzing && m_usageModel->rowCount() == 0)
+            m_usageModel->setRoot(m_current); // the shown folder itself went: measure again
+    }
 
     if (job->isCanceled()) {
         showMessage(tr("Canceled"));
@@ -2298,6 +2475,7 @@ QWidget *MainWindow::buildMenuBar()
     QMenu *view = addMenu(tr("&View"));
     view->addAction(m_gridAct);
     view->addAction(m_listAct);
+    view->addAction(m_analyzeAct);
     view->addSeparator();
     QMenu *sortMenu = makeMenu();
     sortMenu->setTitle(tr("Sort Files"));
@@ -2517,6 +2695,8 @@ void MainWindow::setupFileView(QAbstractItemView *view)
 QModelIndexList MainWindow::selectedViewIndexes() const
 {
     QModelIndexList items;
+    if (m_analyzing)
+        return items; // the file view is hidden: its selection mustn't be acted on
     for (const QModelIndex &index : m_iconView->selectionModel()->selectedIndexes()) {
         if (index.column() == 0)
             items.append(index);

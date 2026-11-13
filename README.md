@@ -12,6 +12,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
 - Show hidden files (Ctrl+H)
+- **Analyze view** (Ctrl+3, or the pie button): how much disk space every folder and sub-folder uses, as a tree with usage bars, biggest first. Sizes match `du` exactly (space on disk, hard links counted once; symlinks and other drives aren't followed). Folders appear while it measures; opening a folder inside what's been measured is instant. Right-click to open, trash (sizes update at once) or scan again
 - Live updates when files change on disk
 - Fast with big folders: 20,000 files load in about 0.2 s (Nautilus needs several times longer just to gather its file information)
 
@@ -60,7 +61,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 | Home folder | Alt+Home |
 | Type a path | Ctrl+L |
 | Search (this folder and sub-folders) | Ctrl+F |
-| Grid / list view | Ctrl+1 / Ctrl+2 |
+| Grid / list / analyze disk usage | Ctrl+1 / Ctrl+2 / Ctrl+3 |
 | Show hidden files | Ctrl+H |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |
 | Move to Trash / Delete permanently | Delete / Shift+Delete |
