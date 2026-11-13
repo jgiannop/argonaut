@@ -21,6 +21,8 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.cpp
     src/Trash.h
     src/Trash.cpp
+    src/Bookmarks.h
+    src/Bookmarks.cpp
     src/FileJob.h
     src/FileJob.cpp
     src/FileOperations.h

@@ -15,3 +15,8 @@ set_tests_properties(directorymodel PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KAFTILOUS_TRASH_HOME_ONLY=1"
     TIMEOUT 300
 )
+
+qt_add_executable(tst_bookmarks tst_bookmarks.cpp)
+target_link_libraries(tst_bookmarks PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME bookmarks COMMAND tst_bookmarks)
+set_tests_properties(bookmarks PROPERTIES TIMEOUT 60)
