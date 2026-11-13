@@ -189,8 +189,9 @@ bool TerminalWidget::start(const QString &directory)
         return false;
     if (pid == 0) {
         // Child: becomes the shell.
-        if (::chdir(dir.constData()) != 0)
-            (void)::chdir("/");
+        if (::chdir(dir.constData()) != 0 && ::chdir("/") != 0) {
+            // nowhere to go: the shell starts wherever we are
+        }
         for (int fd = 3; fd < 1024; ++fd)
             ::close(fd);
         ::execve(shell.constData(), argv, envp.data());

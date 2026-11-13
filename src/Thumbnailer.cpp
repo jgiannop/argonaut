@@ -159,7 +159,11 @@ QImage runProgram(const Thumbnailer::Program &program, const QString &path, cons
     process.setStandardOutputFile(QProcess::nullDevice());
     process.setStandardInputFile(QProcess::nullDevice());
 #if defined(Q_OS_UNIX)
-    process.setChildProcessModifier([] { (void)::nice(10); }); // don't compete with the user
+    process.setChildProcessModifier([] {
+        if (::nice(10) == -1) {
+            // not lowered: runs at normal priority
+        }
+    }); // don't compete with the user
 #endif
     if (sandbox) {
         const QString home = QDir::homePath();

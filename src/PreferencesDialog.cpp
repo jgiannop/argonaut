@@ -1,11 +1,13 @@
 #include "PreferencesDialog.h"
 
+#include "DefaultFileManager.h"
 #include "Theme.h"
 #include "Thumbnailer.h"
 
 #include <QApplication>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QPushButton>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -159,7 +161,58 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addWidget(thumbsHint);
     layout->addSpacing(6);
     layout->addWidget(thumbs);
+
+    // Default file manager: Kaftilous or Nautilus, switchable both ways.
+    layout->addSpacing(18);
+    auto *defaultHeading = new QLabel(tr("Default File Manager"), this);
+    defaultHeading->setObjectName("prefHeading");
+    auto *defaultHint = new QLabel(this);
+    defaultHint->setObjectName("prefHint");
+    defaultHint->setWordWrap(true);
+    auto *defaultButton = new QPushButton(this);
+    defaultButton->setObjectName("prefButton");
+    defaultButton->setCursor(Qt::PointingHandCursor);
+    auto *defaultRow = new QHBoxLayout;
+    defaultRow->addWidget(defaultButton);
+    defaultRow->addStretch();
+    auto refresh = [defaultHint, defaultButton] {
+        const bool installed = !DefaultFileManager::installedDesktopFile().isEmpty();
+        const bool ours = installed && DefaultFileManager::isKaftilousDefault();
+        if (!installed) {
+            defaultHint->setText(tr("Install Kaftilous (cmake --install) to make it the file manager "
+                                    "for folders and “Show in folder”."));
+            defaultButton->setText(tr("Make Kaftilous the Default"));
+            defaultButton->setEnabled(false);
+        } else if (ours) {
+            defaultHint->setText(tr("Kaftilous opens your folders, also from other apps, Super+E and "
+                                    "“Show in folder”. You can always go back (or run "
+                                    "“kaftilous --restore-nautilus” in a terminal)."));
+            defaultButton->setText(tr("Use Nautilus Again"));
+            defaultButton->setEnabled(true);
+        } else {
+            defaultHint->setText(tr("Another file manager opens your folders now. Kaftilous can take "
+                                    "over folders, Super+E and “Show in folder”; Nautilus stays "
+                                    "installed and you can switch back at any time."));
+            defaultButton->setText(tr("Make Kaftilous the Default"));
+            defaultButton->setEnabled(true);
+        }
+    };
+    refresh();
+    connect(defaultButton, &QPushButton::clicked, this, [this, refresh, defaultHint] {
+        QString error;
+        const bool ok = DefaultFileManager::isKaftilousDefault()
+                            ? DefaultFileManager::restorePrevious(&error)
+                            : DefaultFileManager::makeDefault(&error);
+        refresh();
+        if (!ok)
+            defaultHint->setText(error);
+        adjustSize();
+    });
+    layout->addWidget(defaultHeading);
+    layout->addWidget(defaultHint);
+    layout->addSpacing(6);
+    layout->addLayout(defaultRow);
 #endif
 
-    setFixedSize(sizeHint());
+    setFixedWidth(sizeHint().width()); // height follows the text (it changes when switching)
 }

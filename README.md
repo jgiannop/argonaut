@@ -113,6 +113,30 @@ ctest --preset debug      # run the tests
 
 For an optimized build, use `release` instead of `debug`.
 
+## Installing (Linux)
+
+Kaftilous installs for your user only, in `~/.local`: no `sudo`, nothing outside your home folder.
+
+```bash
+cmake --preset release
+cmake --build build/release
+cmake --install build/release      # ~/.local/bin/kaftilous, menu entry, icon
+```
+
+It then appears in the app grid as **Kaftilous**. To uninstall: `cmake --build build/release --target uninstall`.
+
+### Using it instead of Nautilus
+
+Open **Preferences → Default File Manager → Make Kaftilous the Default**, or run `kaftilous --make-default`. Kaftilous then opens:
+- folders opened from other apps, desktop icons, Super+E and "Open containing folder" (it becomes the default app for folders);
+- "Show in folder" from Firefox, Chrome and others (it answers `org.freedesktop.FileManager1` on D-Bus).
+
+To go back: **Preferences → Use Nautilus Again**, or `kaftilous --restore-nautilus`, which works from any terminal even if Kaftilous itself won't start. Nautilus is never removed or changed; switching only points these two hooks at one or the other, and the previous file manager is remembered.
+
+Notes:
+- If Nautilus is already running in the background, "Show in folder" keeps going to it until it stops (`nautilus -q`, or log out and in once).
+- The dock's **Files** icon still starts Nautilus: right-click it → *Unpin*, then right-click Kaftilous → *Pin to Dash*.
+
 ## Developing in VS Code
 
 Open the folder in VS Code and install the recommended extensions when asked (C/C++, CMake Tools, Qt). Pick the **Debug** preset, then press **F7** to build or **F5** to run with the debugger. Tests appear in the Testing panel.

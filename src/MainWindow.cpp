@@ -288,6 +288,10 @@ QListWidget#appList::item:hover:!selected { background: @hover; }
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
+QPushButton#prefButton { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+    padding: 7px 16px; }
+QPushButton#prefButton:hover { background: @hover; }
+QPushButton#prefButton:disabled { color: @dim; }
 QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid transparent;
     border-radius: 12px; padding: 8px 8px 6px 8px; }
 QToolButton#themeCard:hover { background: @hover; }
@@ -1494,6 +1498,33 @@ void MainWindow::syncSidebarSelection()
 }
 
 // ----------------------------------------------------------- navigation ---
+
+void MainWindow::openFolders(const QStringList &folders)
+{
+    if (folders.isEmpty())
+        return;
+    navigateTo(folders.first());
+    for (int i = 1; i < folders.size(); ++i)
+        openTab(folders.at(i), false);
+}
+
+void MainWindow::showItems(const QStringList &items)
+{
+    QStringList dirs;
+    QHash<QString, QStringList> byDir;
+    for (const QString &item : items) {
+        const QString dir = QFileInfo(item).absolutePath();
+        if (!byDir.contains(dir))
+            dirs << dir;
+        byDir[dir] << QDir::cleanPath(item);
+    }
+    if (dirs.isEmpty())
+        return;
+    if (navigateTo(dirs.first()))
+        selectPaths(byDir.value(dirs.first())); // applied once the folder is listed
+    for (int i = 1; i < dirs.size(); ++i)
+        openTab(dirs.at(i), false);
+}
 
 bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 {

@@ -63,3 +63,5 @@ enum class Glyph {
 };
 
 QIcon glyphIcon(Glyph glyph, const QColor &color);
+// Kaftilous's own icon (the same drawing as data/kaftilous.svg), for windows.
+QIcon applicationIcon();

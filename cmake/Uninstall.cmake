@@ -1,0 +1,11 @@
+# Removes exactly what `cmake --install` installed (listed in install_manifest.txt).
+if(NOT EXISTS "${MANIFEST}")
+    message(FATAL_ERROR "Nothing to uninstall: ${MANIFEST} not found (install first).")
+endif()
+file(STRINGS "${MANIFEST}" files)
+foreach(file IN LISTS files)
+    if(EXISTS "${file}" OR IS_SYMLINK "${file}")
+        message(STATUS "Removing ${file}")
+        file(REMOVE "${file}")
+    endif()
+endforeach()
