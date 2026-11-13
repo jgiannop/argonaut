@@ -4,6 +4,7 @@
 
 #include "Bookmarks.h"
 #include "ConflictDialog.h"
+#include "CompressDialog.h"
 #include "ContentType.h"
 #include "DirectoryModel.h"
 #include "FileFilterProxy.h"
@@ -30,6 +31,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -579,6 +581,24 @@ void MainWindow::setupActions()
         (new PropertiesDialog(paths, this))->show();
     });
 
+    m_compressAct = new QAction(tr("Compress…"), this);
+    connect(m_compressAct, &QAction::triggered, this, &MainWindow::compressSelection);
+    m_extractHereAct = new QAction(tr("Extract Here"), this);
+    connect(m_extractHereAct, &QAction::triggered, this, [this] {
+        const QStringList archives = selectedArchives();
+        if (!archives.isEmpty())
+            m_ops->extract(archives, m_current);
+    });
+    m_extractToAct = new QAction(tr("Extract to…"), this);
+    connect(m_extractToAct, &QAction::triggered, this, [this] {
+        const QStringList archives = selectedArchives();
+        if (archives.isEmpty())
+            return;
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Extract to"), m_current);
+        if (!dir.isEmpty())
+            m_ops->extract(archives, QDir::fromNativeSeparators(dir));
+    });
+
     m_bookmarkAct = new QAction(tr("Bookmark This Folder"), this);
     m_bookmarkAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     connect(m_bookmarkAct, &QAction::triggered, this, &MainWindow::toggleBookmark);
@@ -609,7 +629,8 @@ void MainWindow::setupActions()
                 m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
-                m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct});
+                m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
+                m_extractHereAct, m_extractToAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -1905,6 +1926,14 @@ void MainWindow::updateEditActions()
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
     m_renameAct->setEnabled(!inTrash && m_view && selectedViewIndexes().size() == 1);
+    const bool archives = FileJob::archivesSupported();
+    m_compressAct->setVisible(archives);
+    m_compressAct->setEnabled(archives && writable && hasSelection);
+    const bool extractable = archives && !inTrash && hasSelection && !selectedArchives().isEmpty();
+    m_extractHereAct->setVisible(archives);
+    m_extractToAct->setVisible(archives);
+    m_extractHereAct->setEnabled(extractable && writable);
+    m_extractToAct->setEnabled(extractable);
     m_undoAct->setEnabled(m_ops->canUndo());
     m_undoAct->setText(m_ops->undoText());
 }
@@ -1957,6 +1986,14 @@ void MainWindow::showContextMenu(const QPoint &pos)
             menu->addAction(m_openInNewTabAct);
         if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
             menu->addAction(m_openTerminalHereAct);
+        if (FileJob::archivesSupported()) {
+            menu->addSeparator();
+            if (m_extractHereAct->isEnabled() || m_extractToAct->isEnabled()) {
+                menu->addAction(m_extractHereAct);
+                menu->addAction(m_extractToAct);
+            }
+            menu->addAction(m_compressAct);
+        }
         menu->addSeparator();
         menu->addAction(m_renameAct);
         menu->addSeparator();
@@ -1986,6 +2023,34 @@ void MainWindow::showContextMenu(const QPoint &pos)
     menu->popup(m_view->viewport()->mapToGlobal(pos));
 }
 
+QStringList MainWindow::selectedArchives() const
+{
+    QStringList archives;
+    for (const QModelIndex &index : selectedViewIndexes()) {
+        ContentType::Result r;
+        r.nameMime = index.data(DirectoryModel::NameMimeRole).toString();
+        r.contentMime = index.data(DirectoryModel::ContentMimeRole).toString();
+        r.verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+        // The real type: a ".zip" that is really 7z still extracts; a
+        // program named ".zip" doesn't.
+        if (r.verdict == ContentType::Verdict::Dangerous || m_model->isDir(toSource(index))
+            || !FileOperations::isArchive(ContentType::effectiveMime(r)))
+            return {};
+        archives << m_model->filePath(toSource(index));
+    }
+    return archives;
+}
+
+void MainWindow::compressSelection()
+{
+    const QStringList paths = selectedPaths();
+    if (paths.isEmpty() || !FileJob::archivesSupported())
+        return;
+    CompressDialog dialog(paths, m_current, this);
+    if (dialog.exec() == QDialog::Accepted)
+        m_ops->compress(paths, m_current, dialog.archiveName(), dialog.format());
+}
+
 void MainWindow::onJobFinished(FileJob *job)
 {
     const QList<TransferResult> results = job->results();
@@ -2005,6 +2070,11 @@ void MainWindow::onJobFinished(FileJob *job)
         m_toast->showMessage(text, tr("Undo"), [this] { m_ops->undo(); });
     } else if (job->kind() == FileJob::Kind::Delete && done > 0) {
         showMessage(done == 1 ? tr("1 item deleted") : tr("%1 items deleted").arg(done));
+    } else if (job->kind() == FileJob::Kind::Extract && done > 0) {
+        showMessage(done == 1 ? tr("Extracted “%1”").arg(QFileInfo(results.first().target).fileName())
+                              : tr("%1 archives extracted").arg(done));
+    } else if (job->kind() == FileJob::Kind::Compress && done > 0) {
+        showMessage(tr("Created “%1”").arg(QFileInfo(results.first().target).fileName()));
     } else if (job->kind() == FileJob::Kind::Restore && done > 0) {
         const QFileInfo where(results.first().target);
         showMessage(done == 1 ? tr("“%1” restored to “%2”")
@@ -2131,6 +2201,12 @@ QWidget *MainWindow::buildMenuBar()
     file->addAction(m_openAct);
     file->addAction(m_propertiesAct);
     file->addSeparator();
+    if (FileJob::archivesSupported()) {
+        file->addAction(m_compressAct);
+        file->addAction(m_extractHereAct);
+        file->addAction(m_extractToAct);
+        file->addSeparator();
+    }
     if (Trash::isSupported()) {
         file->addAction(m_emptyTrashAct);
         file->addSeparator();

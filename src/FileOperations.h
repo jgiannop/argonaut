@@ -30,6 +30,12 @@ public:
     FileJob *restore(const QStringList &pathsInTrash);
     // Delete everything in every trash folder (callers confirm first).
     FileJob *emptyTrash();
+    // Archives (if built with libarchive). Both are undoable: undo trashes
+    // what was created.
+    FileJob *extract(const QStringList &archives, const QString &targetDir);
+    FileJob *compress(const QStringList &paths, const QString &targetDir, const QString &archiveName,
+                      FileJob::ArchiveFormat format);
+    static bool isArchive(const QString &mimeType);
 
     // Record an action done outside a job so it can be undone like one:
     // Move (e.g. a rename) moves back; Copy (e.g. "New Folder") trashes the
@@ -73,4 +79,5 @@ private:
     QList<UndoEntry> m_undo;
     QThreadPool m_pool;
     bool m_askOnConflict = false;
+    FileJob::ArchiveFormat m_pendingFormat = FileJob::ArchiveFormat::Zip;
 };

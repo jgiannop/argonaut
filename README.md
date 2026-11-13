@@ -18,10 +18,18 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Copy, cut and paste, which also work with other file managers' clipboards
 - Drag and drop: same drive moves, another drive copies, Ctrl copies, Shift moves
 - Progress for long operations, with time left and cancel
-- Undo (Ctrl+Z) for copy, move, trash, rename and new items
+- Undo (Ctrl+Z) for copy, move, trash, rename, new items, extract and compress
 - Never overwrites: name clashes become "name (copy)"
 - New Folder, New File, Rename (F2)
 - USB sticks: Kaftilous says "done" only after the data is really written to the drive
+
+**Archives** (with libarchive)
+- Right-click → **Extract Here** / **Extract to…** for zip, 7z, tar.gz/xz/bz2/zst, rar, iso, deb, plain .gz/.xz and more
+- Smart like Nautilus: one item inside comes out as is; several go into a folder named after the archive
+- Safe: never overwrites, and entries that try to escape the folder (`../`, absolute paths, symlink tricks) are skipped and reported
+- Uses the real type: a `.zip` that is really 7z still extracts; a program named `.zip` is never treated as an archive
+- **Compress…** any selection to .zip, .tar.xz, .tar.gz or .7z
+- Progress, cancel (nothing half-finished is left behind) and Undo, like copying
 
 **Real file types: safer than trusting names**
 
@@ -74,11 +82,12 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 - CMake 3.21 or newer, and Ninja
 - Qt 6.4 or newer (Widgets; Test for the tests)
 - Optional: **libvterm** for the embedded terminal (Linux/macOS). Without it, Kaftilous builds without the terminal.
+- Optional: **libarchive** for Compress / Extract. Without it, those menu items are hidden.
 
 ### Linux (Ubuntu / Debian)
 
 ```bash
-sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev
+sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev libarchive-dev
 ```
 
 ### Windows and macOS

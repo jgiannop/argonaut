@@ -118,6 +118,14 @@ bool needsSafeWrites(const QString &dir)
 #endif
 }
 
+#if !defined(KAFTILOUS_ARCHIVES)
+// Built without libarchive: no archive support.
+bool FileJob::archivesSupported() { return false; }
+QString FileJob::archiveSuffix(ArchiveFormat) { return {}; }
+void FileJob::runExtract() { addError(tr("Archives aren't supported in this build.")); }
+void FileJob::runCompress() { addError(tr("Archives aren't supported in this build.")); }
+#endif
+
 QString uniqueTargetPath(const QString &dir, const QString &name, bool isDir)
 {
     const QString first = dir + '/' + name;
@@ -193,6 +201,10 @@ void FileJob::run()
         runTrash();
     else if (m_kind == Kind::Delete)
         runDelete();
+    else if (m_kind == Kind::Extract)
+        runExtract();
+    else if (m_kind == Kind::Compress)
+        runCompress();
     else
         runTransfers();
     notify(true);

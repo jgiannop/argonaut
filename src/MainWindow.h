@@ -132,6 +132,8 @@ private:
 
     // File operations
     QStringList selectedPaths() const;
+    QStringList selectedArchives() const; // empty unless every selected item is an archive
+    void compressSelection();
     void openSelection();
     void copySelection(bool cut);
     void paste();
@@ -265,6 +267,9 @@ private:
     QAction *m_openInNewTabAct = nullptr;
 
     QAction *m_propertiesAct = nullptr; // Ctrl+I / Alt+Enter
+    QAction *m_compressAct = nullptr;     // archives (when built with libarchive)
+    QAction *m_extractHereAct = nullptr;
+    QAction *m_extractToAct = nullptr;
     QAction *m_bookmarkAct = nullptr;   // Ctrl+D: bookmark / unbookmark this folder
     QTimer *m_sidebarRefresh = nullptr; // debounces drive/bookmark changes
     int m_mountsFd = -1;                // /proc/self/mounts (Linux): POLLPRI on change

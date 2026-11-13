@@ -39,7 +39,12 @@ class FileJob : public QObject
 public:
     // Restore: out of the Trash (removes the .trashinfo, recreates the folder).
     // Delete: permanently, no undo.
-    enum class Kind { Copy, Move, Trash, Restore, Delete };
+    // Extract: each source archive into targetDir (needs libarchive).
+    // Compress: all sources into one archive targetDir/targetName.
+    enum class Kind { Copy, Move, Trash, Restore, Delete, Extract, Compress };
+    enum class ArchiveFormat { Zip, TarGz, TarXz, SevenZip };
+    static bool archivesSupported();
+    static QString archiveSuffix(ArchiveFormat format); // ".zip", ".tar.xz"…
 
     struct Progress
     {
@@ -73,6 +78,7 @@ public:
     // Ask (via conflict()) when the destination name is taken. Off: always
     // KeepBoth without asking (used by tests and non-interactive callers).
     void setInteractive(bool interactive) { m_interactive = interactive; }
+    void setArchiveFormat(ArchiveFormat format) { m_archiveFormat = format; }
     // Answer the question conflict() asked (GUI thread).
     void resolveConflict(const Resolution &resolution);
 
@@ -100,6 +106,8 @@ private:
     void run();
     void runTrash();
     void runDelete();
+    void runExtract();  // FileJobArchive.cpp
+    void runCompress(); // FileJobArchive.cpp
     void runTransfers();
     bool transferItem(const QString &source, const QString &dir, const QString &name,
                       qint64 bytes, bool topLevel);
@@ -125,6 +133,7 @@ private:
     QElapsedTimer m_notifyTimer; // worker thread only
     bool m_safeWrites = false;   // worker thread only: current target is removable
     bool m_interactive = false;
+    ArchiveFormat m_archiveFormat = ArchiveFormat::Zip;
     std::optional<ConflictAction> m_fileChoice;   // "apply to all", worker thread only
     std::optional<ConflictAction> m_folderChoice;
     QMutex m_askMutex;

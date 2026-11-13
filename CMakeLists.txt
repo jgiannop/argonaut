@@ -36,6 +36,20 @@ qt_add_library(kaftilous_core STATIC
 target_include_directories(kaftilous_core PUBLIC src)
 target_link_libraries(kaftilous_core PUBLIC Qt6::Widgets)
 
+# Compress / Extract: needs libarchive (optional, like the terminal).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBARCHIVE IMPORTED_TARGET libarchive)
+endif()
+if(LIBARCHIVE_FOUND)
+    target_sources(kaftilous_core PRIVATE src/FileJobArchive.cpp)
+    target_compile_definitions(kaftilous_core PUBLIC KAFTILOUS_ARCHIVES=1)
+    target_link_libraries(kaftilous_core PUBLIC PkgConfig::LIBARCHIVE)
+    message(STATUS "Compress / Extract: enabled (libarchive ${LIBARCHIVE_VERSION})")
+else()
+    message(STATUS "Compress / Extract: disabled (install libarchive-dev to enable)")
+endif()
+
 qt_add_executable(kaftilous
     src/main.cpp
     src/MainWindow.h
@@ -63,6 +77,8 @@ qt_add_executable(kaftilous
     src/OpenWithDialog.h
     src/OpenWithDialog.cpp
     src/PropertiesDialog.h
+    src/CompressDialog.cpp
+    src/CompressDialog.h
     src/PropertiesDialog.cpp
 )
 
