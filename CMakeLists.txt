@@ -14,16 +14,18 @@ if(BUILD_TESTING)
 endif()
 qt_standard_project_setup()
 
-# File operations engine (copy/move/trash/undo, clipboard), shared by the
-# app and the tests.
-qt_add_library(kaftilous_fileops STATIC
+# Non-GUI core shared by the app and the tests: the folder model and the
+# file operations engine (copy/move/trash/undo, clipboard).
+qt_add_library(kaftilous_core STATIC
+    src/DirectoryModel.h
+    src/DirectoryModel.cpp
     src/FileJob.h
     src/FileJob.cpp
     src/FileOperations.h
     src/FileOperations.cpp
 )
-target_include_directories(kaftilous_fileops PUBLIC src)
-target_link_libraries(kaftilous_fileops PUBLIC Qt6::Widgets)
+target_include_directories(kaftilous_core PUBLIC src)
+target_link_libraries(kaftilous_core PUBLIC Qt6::Widgets)
 
 qt_add_executable(kaftilous
     src/main.cpp
@@ -49,7 +51,7 @@ qt_add_executable(kaftilous
     src/Toast.cpp
 )
 
-target_link_libraries(kaftilous PRIVATE kaftilous_fileops Qt6::Widgets)
+target_link_libraries(kaftilous PRIVATE kaftilous_core Qt6::Widgets)
 
 # Windows: no console window. macOS: build a .app bundle.
 set_target_properties(kaftilous PROPERTIES

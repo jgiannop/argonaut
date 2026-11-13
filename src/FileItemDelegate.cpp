@@ -1,11 +1,9 @@
 #include "FileItemDelegate.h"
 
+#include "DirectoryModel.h"
 #include "Thumbnailer.h"
 
 #include <QAbstractItemView>
-#include <QAbstractProxyModel>
-#include <QFileSystemModel>
-#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QTextLayout>
@@ -16,19 +14,9 @@ namespace {
 constexpr int GridCellWidth = 118;
 constexpr int GridMaxLines = 3;
 constexpr int GridPad = 6;
-constexpr int ListInfoWidth = 230;
+constexpr int ListInset = 6;   // gap between the row highlight and the view edge
+constexpr int ListTextPad = 10;
 } // namespace
-
-// The view may show the file model through proxies (search filter); find
-// the QFileSystemModel and the matching index in it.
-static const QFileSystemModel *fileModel(const QModelIndex &index, QModelIndex *source)
-{
-    QModelIndex i = index;
-    while (auto *proxy = qobject_cast<const QAbstractProxyModel *>(i.model()))
-        i = proxy->mapToSource(i);
-    *source = i;
-    return qobject_cast<const QFileSystemModel *>(i.model());
-}
 
 FileItemDelegate::FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent)
     : QStyledItemDelegate(parent)
@@ -63,20 +51,23 @@ QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics
         const int width = qMax(cell.width(), 190);
         return QRect(cell.center().x() - width / 2 + 1, top, width, height);
     }
-    const QRect row = itemRect.adjusted(6, 1, -6, -1);
-    const int left = row.left() + 10 + ListIconSize + 12 - 6;
-    const int right = row.right() - 12 - ListInfoWidth - 6;
-    return QRect(left, row.center().y() - height / 2 + 1, qMax(120, right - left), height);
+    // List: `itemRect` is the Name cell; the field covers the name part.
+    const int left = itemRect.left() + ListInset + 10 + ListIconSize + 12 - 6;
+    return QRect(left, itemRect.center().y() - height / 2 + 1,
+                 qMax(120, itemRect.right() - 4 - left), height);
 }
 
-QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &) const
+QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     if (m_grid)
         return gridCellSize(option.fontMetrics);
-    int width = 400;
-    if (auto *view = qobject_cast<const QAbstractItemView *>(option.widget))
-        width = view->viewport()->width();
-    return QSize(width, qMax(36, option.fontMetrics.height() + 14));
+    const int height = qMax(36, option.fontMetrics.height() + 14);
+    // Width matters only for "fit column to contents".
+    const QString text = index.data().toString();
+    int width = option.fontMetrics.horizontalAdvance(text) + 2 * ListTextPad;
+    if (index.column() == 0)
+        width += ListInset + 10 + ListIconSize + 12;
+    return QSize(width, height);
 }
 
 void FileItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -128,45 +119,47 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     }
 }
 
+// List (table) mode: each column is painted separately, but the hover /
+// selection highlight is one rounded bar across the whole row: inner cells
+// extend it past their edges and clip, so only the row's ends are rounded.
 void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &option,
                                  const QModelIndex &index) const
 {
-    const QRect row = option.rect.adjusted(6, 1, -6, -1);
+    const int column = index.column();
+    const int lastColumn = index.model()->columnCount(index.parent()) - 1;
     const bool selected = option.state & QStyle::State_Selected;
     const bool hovered = option.state & QStyle::State_MouseOver;
     if (selected || hovered) {
-        QPainterPath bg;
-        bg.addRoundedRect(QRectF(row), 6, 6);
-        painter->fillPath(bg, selected ? m_theme.itemSelected : m_theme.hover);
-    }
-
-    const QRect iconRect(row.left() + 10, row.center().y() - ListIconSize / 2 + 1, ListIconSize,
-                         ListIconSize);
-    paintIcon(painter, iconRect, index);
-
-    // Secondary info: size (files) and modification date.
-    QString info;
-    QModelIndex source;
-    if (auto *model = fileModel(index, &source)) {
-        const QFileInfo fi = model->fileInfo(source);
-        const QLocale locale;
-        const QString date = locale.toString(fi.lastModified(), QLocale::ShortFormat);
-        info = fi.isDir() ? date : locale.formattedDataSize(fi.size()) + "    " + date;
+        QRectF bar = QRectF(option.rect).adjusted(0, 1, 0, -1);
+        bar.setLeft(column == 0 ? bar.left() + ListInset : bar.left() - 12);
+        bar.setRight(column == lastColumn ? bar.right() - ListInset : bar.right() + 12);
+        QPainterPath path;
+        path.addRoundedRect(bar, 6, 6);
+        painter->save();
+        painter->setClipRect(option.rect);
+        painter->fillPath(path, selected ? m_theme.itemSelected : m_theme.hover);
+        painter->restore();
     }
 
     const QFontMetrics &fm = option.fontMetrics;
-    const int nameLeft = iconRect.right() + 12;
-    const int infoLeft = row.right() - 12 - ListInfoWidth;
-    const QRect nameRect(nameLeft, row.top(), qMax(0, infoLeft - nameLeft - 12), row.height());
-    const QRect infoRect(infoLeft, row.top(), ListInfoWidth, row.height());
-
     painter->setFont(option.font);
-    painter->setPen(m_theme.fg);
-    painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
-                      fm.elidedText(option.text, Qt::ElideMiddle, nameRect.width()));
+    if (column == 0) {
+        const QRect iconRect(option.rect.left() + ListInset + 10,
+                             option.rect.center().y() - ListIconSize / 2 + 1, ListIconSize,
+                             ListIconSize);
+        paintIcon(painter, iconRect, index);
+        const int left = iconRect.right() + 12;
+        const QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
+                             option.rect.height());
+        painter->setPen(m_theme.fg);
+        painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          fm.elidedText(option.text, Qt::ElideMiddle, nameRect.width()));
+        return;
+    }
+    const QRect textRect = option.rect.adjusted(ListTextPad, 0, -ListTextPad, 0);
     painter->setPen(m_theme.dimFg);
-    painter->drawText(infoRect, Qt::AlignRight | Qt::AlignVCenter,
-                      fm.elidedText(info, Qt::ElideLeft, infoRect.width()));
+    painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                      fm.elidedText(option.text, Qt::ElideRight, textRect.width()));
 }
 
 // Draw `pm` (already at its final size) centred in `rect`, snapped to whole
@@ -217,10 +210,11 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
 {
     const qreal dpr = painter->device()->devicePixelRatioF();
 
-    if (m_thumbnailer) {
-        QModelIndex source;
-        if (auto *model = fileModel(index, &source)) {
-            const QPixmap thumb = m_thumbnailer->thumbnail(model->fileInfo(source));
+    if (m_thumbnailer && !index.data(DirectoryModel::IsDirRole).toBool()) {
+        {
+            const QPixmap thumb =
+                m_thumbnailer->thumbnail(index.data(DirectoryModel::PathRole).toString(),
+                                         index.data(DirectoryModel::ModifiedRole).toDateTime());
             if (!thumb.isNull()) {
                 // cacheKey() changes whenever the thumbnail is replaced.
                 const QString key = QStringLiteral("%1:%2x%3@%4")

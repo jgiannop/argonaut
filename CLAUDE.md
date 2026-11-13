@@ -33,10 +33,10 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 
 ## Architecture
 
-- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The file-operations engine (`FileJob`, `FileOperations`) is the static library `kaftilous_fileops`, which both the app and `tests/` link against. Keep it free of GUI widgets so it stays testable.
+- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
 - The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:
   - `Theme` (`src/Theme.{h,cpp}`) holds the light and dark colour tokens, chosen from `QApplication::palette()`. Use the application palette, not the widget palette: our own style sheet changes widget palettes.
-  - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons still come from `QFileSystemModel` / the OS.
+  - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons come from the OS through `QFileIconProvider` (cached per mime type by `DirectoryModel`).
   - Light/dark preference (`ThemeMode`, set in `PreferencesDialog`) is saved with `QSettings` under `appearance/theme`. `applyThemeMode()` replaces `QApplication`'s palette with a built light or dark palette. "System" keeps or restores the platform palette that was captured at startup, so startup in System mode never calls `setPalette`. `main.cpp` applies the saved mode before creating the window.
   - `MainWindow::applyTheme()` builds one window-wide style sheet (`styleSheetFor`, using `@token` placeholders) and re-creates every themed icon. It runs again on `ApplicationPaletteChange`. Anything with a themed icon must be updated there.
 - Window chrome: on Linux and Windows the window is frameless (client-side decorations). Set `KAFTILOUS_NATIVE_DECORATIONS=1` to turn that off; macOS always uses the native frame.
@@ -44,12 +44,21 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - Edge resizing is handled by an event filter on the `QWindow` (`MainWindow::eventFilter` → `startSystemResize`).
   - The window buttons only exist when `m_csd` is true.
 - Main view:
-  - There is one `QFileSystemModel` with `setRootPath("")`, shared by a single `QListView`. Changing folder only calls `setRootIndex`. Folder loading is asynchronous: anything that needs a folder's contents must wait for `directoryLoaded`.
-  - Grid/list is the same view switched between `IconMode` and `ListMode` (`setGridMode`). Grid cell size comes from `FileItemDelegate::gridCellSize`.
+  - `DirectoryModel` is a flat table model (Name/Size/Type/Modified) of one folder. Don't go back to `QFileSystemModel`, which was ~5x slower on big folders and couldn't keep folders-first natural order.
+    - `setPath()` lists the folder on a worker thread, using a generation counter to drop stale results. Big folders arrive in batches (the first after 15 ms). `loaded` fires when the listing is complete.
+    - Each entry is stat-ed once while listing, so painting never touches the disk. Mime type, icon and type name are worked out from the name on demand and cached.
+    - Sorting is done by the model: folders first (even when descending), then the sort column, then natural case-insensitive order (`QCollatorSortKey`). `resort()` keeps persistent indexes.
+    - It watches only the open folder: inotify on Linux, so saved files (`IN_CLOSE_WRITE`) update too, and `QFileSystemWatcher` elsewhere. Changes are rescanned (debounced) and applied as minimal row inserts, removes and updates. More than 500 changes trigger a reset instead. `folderGone` fires if the folder disappears.
+    - Sub-folder item counts ("12 items") are computed in the background.
+    - Invariant: `m_rowByName` is rebuilt **before** `endInsertRows`/`endRemoveRows`, because listeners such as paste-highlight call `indexForPath` from those signals.
+  - There are two views in a `QStackedWidget`: `m_iconView` (QListView, IconMode) for the grid and `m_detailView` (QTreeView with columns and sortable headers) for the list. They share the proxy model and **one selection model**. `m_view` points at the visible one.
+    - Each view has its own `FileItemDelegate` (grid / list), because delegates cache sizes.
+    - The table selects whole rows, so use `selectedViewIndexes()` (column 0 only) instead of `selectedIndexes()`.
+    - Overlays (floating bar, progress card, toast) are children of `m_viewStack`.
   - `FileItemDelegate` paints every item itself: wrapped, middle-elided names, rounded hover/selection, list-mode size/date.
   - `Thumbnailer` loads thumbnails in a thread pool. It reads the freedesktop cache (`~/.cache/thumbnails`) on Linux first, then decodes images with `QImageReader`. It emits `thumbnailReady`, which repaints the viewport.
-  - The view shows `QFileSystemModel` through `FileFilterProxy` (a `QSortFilterProxyModel`). Indexes from the view or selection are **proxy** indexes: convert them with `toSource()` / `toView()` before calling `m_model->filePath`/`isDir`/etc. `FileItemDelegate` resolves through proxies itself.
-  - Search (Ctrl+F) filters only the rows directly inside the current folder (`FileFilterProxy::setQuery`; case-insensitive substring). Don't use `QFileSystemModel::setNameFilters` for this: that model never hides folders the view holds persistent indexes to, so they leaked into results. The model's own filter only handles hidden files.
+  - The views show `DirectoryModel` through `FileFilterProxy` (a `QSortFilterProxyModel`). Indexes from the view or selection are **proxy** indexes: convert them with `toSource()` / `toView()` before calling `m_model->filePath`/`isDir`/etc. `FileItemDelegate` resolves through proxies itself.
+  - Search (Ctrl+F) is a case-insensitive name filter (`FileFilterProxy::setQuery`). The proxy never sorts: `FileFilterProxy::sort` forwards to the model, so header clicks and View → Sort Files both sort `DirectoryModel`. Hidden files are filtered by the model (`setShowHidden`).
 - `navigateTo(path, addToHistory)` is the **only** way to change the current folder. It validates and cleans the path into `m_current` (always with `/` separators; the native form is only for display), leaves search mode, and updates history, `PathBar`, the title, the sidebar selection and the floating bar. Everything that changes folder goes through it: actions, sidebar, breadcrumbs, the typed path, double-click and the command-line argument.
 - `PathBar` shows breadcrumbs. Leading crumbs are hidden when space is short, and it switches to a `QLineEdit` on click or Ctrl+L. It emits `pathActivated`.
 - Sidebar entries are `QListWidgetItem`s with the path in `PathRole` (`Qt::UserRole`). Separator rows have `SeparatorRole` and an empty path.

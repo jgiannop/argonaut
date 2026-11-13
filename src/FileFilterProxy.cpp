@@ -1,21 +1,9 @@
 #include "FileFilterProxy.h"
 
-#include <QFileSystemModel>
-
 FileFilterProxy::FileFilterProxy(QObject *parent)
     : QSortFilterProxyModel(parent)
 {
-    // No sorting here: keep QFileSystemModel's own order.
     setDynamicSortFilter(true);
-}
-
-void FileFilterProxy::setFolder(const QModelIndex &sourceFolder)
-{
-    if (m_folder == sourceFolder)
-        return;
-    m_folder = sourceFolder;
-    if (!m_query.isEmpty())
-        invalidateFilter();
 }
 
 void FileFilterProxy::setQuery(const QString &query)
@@ -26,13 +14,16 @@ void FileFilterProxy::setQuery(const QString &query)
     invalidateFilter();
 }
 
+void FileFilterProxy::sort(int column, Qt::SortOrder order)
+{
+    if (sourceModel())
+        sourceModel()->sort(column, order);
+}
+
 bool FileFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
-    if (m_query.isEmpty() || sourceParent != m_folder)
+    if (m_query.isEmpty() || sourceParent.isValid())
         return true;
-    const QString name = sourceModel()
-                             ->index(sourceRow, 0, sourceParent)
-                             .data(QFileSystemModel::FileNameRole)
-                             .toString();
+    const QString name = sourceModel()->index(sourceRow, 0, sourceParent).data().toString();
     return name.contains(m_query, Qt::CaseInsensitive);
 }
