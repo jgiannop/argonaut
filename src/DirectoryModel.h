@@ -84,6 +84,13 @@ public:
                         int role = Qt::DisplayRole) const override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
 
+    // Dragging out: the selected files as a standard uri-list (plus plain
+    // text paths for terminals and editors). Drops are handled by the
+    // window, not the model.
+    QStringList mimeTypes() const override;
+    QMimeData *mimeData(const QModelIndexList &indexes) const override;
+    Qt::DropActions supportedDragActions() const override;
+
 signals:
     void loaded(const QString &path);     // first complete listing of `path`
     void folderGone(const QString &path); // the open folder was deleted or moved

@@ -32,6 +32,7 @@
 #include <QActionGroup>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -515,6 +516,8 @@ QWidget *MainWindow::buildSidebarPane()
     m_sidebar->setFocusPolicy(Qt::NoFocus);
     m_sidebar->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_sidebar->setTextElideMode(Qt::ElideRight);
+    m_sidebar->viewport()->setAcceptDrops(true); // drop onto places and drives
+    m_sidebar->viewport()->installEventFilter(this);
     connect(m_sidebar, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const QString path = item->data(PathRole).toString();
         if (path.isEmpty() || !navigateTo(path))
@@ -596,6 +599,16 @@ QWidget *MainWindow::buildContentPane()
     m_viewStack = new QStackedWidget(pane);
     m_viewStack->setObjectName("viewStack");
     m_viewStack->installEventFilter(this); // resize -> reposition overlays
+    m_dragScrollTimer = new QTimer(this);
+    m_dragScrollTimer->setInterval(40);
+    connect(m_dragScrollTimer, &QTimer::timeout, this, [this] {
+        if (m_dragScrollStep == 0) {
+            m_dragScrollTimer->stop();
+            return;
+        }
+        QScrollBar *bar = m_view->verticalScrollBar();
+        bar->setValue(bar->value() + m_dragScrollStep);
+    });
 
     // Grid.
     m_iconView = new QListView(m_viewStack);
@@ -1099,6 +1112,23 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 cancelRename();
         }
         return QMainWindow::eventFilter(watched, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::DragEnter:
+    case QEvent::DragMove:
+    case QEvent::DragLeave:
+    case QEvent::Drop:
+        if (isFileViewport(watched))
+            return handleViewDrag(watched == m_iconView->viewport()
+                                      ? static_cast<QAbstractItemView *>(m_iconView)
+                                      : m_detailView,
+                                  event);
+        if (m_sidebar && watched == m_sidebar->viewport())
+            return handleSidebarDrag(event);
+        break;
+    default:
+        break;
     }
 
     // Empty menu bar space behaves like the header bars: drag to move,
@@ -1640,7 +1670,16 @@ void MainWindow::setupFileView(QAbstractItemView *view)
     view->setMouseTracking(true);
     view->viewport()->setAttribute(Qt::WA_Hover);
     view->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-    view->setDragDropMode(QAbstractItemView::NoDragDrop);
+    // Drags start from the view (model provides the uri-list); drops are
+    // intercepted in eventFilter -> handleViewDrag.
+    view->setDragEnabled(true);
+    view->setDragDropMode(QAbstractItemView::DragDrop);
+    view->setDefaultDropAction(Qt::MoveAction);
+    view->setDropIndicatorShown(false);
+    // Qt only delivers drag events to widgets that accept drops; mark the
+    // viewport explicitly so they stop there (where eventFilter handles them)
+    // with viewport-relative positions.
+    view->viewport()->setAcceptDrops(true);
     view->setContextMenuPolicy(Qt::CustomContextMenu);
     // Clicks and keys in the view mean the user is choosing: stop applying a
     // pending "highlight what was pasted" (see eventFilter).
@@ -1685,4 +1724,181 @@ void MainWindow::updateSortActions()
     if (column >= 0 && column < m_sortColumnActs.size())
         m_sortColumnActs.at(column)->setChecked(true);
     (m_model->sortOrder() == Qt::AscendingOrder ? m_sortAscAct : m_sortDescAct)->setChecked(true);
+}
+
+// --------------------------------------------------------- drag & drop ---
+
+namespace {
+
+QStringList localPaths(const QMimeData *mime)
+{
+    QStringList paths;
+    if (!mime || !mime->hasUrls())
+        return paths;
+    for (const QUrl &url : mime->urls()) {
+        if (url.isLocalFile())
+            paths.append(QDir::cleanPath(url.toLocalFile()));
+    }
+    return paths;
+}
+
+} // namespace
+
+QByteArray MainWindow::deviceOf(const QString &path) const
+{
+    const QFileInfo info(path);
+    const QString dir = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+    auto it = m_deviceCache.constFind(dir);
+    if (it == m_deviceCache.constEnd())
+        it = m_deviceCache.insert(dir, QStorageInfo(dir).device());
+    return *it;
+}
+
+// Like Nautilus: same drive moves, another drive copies; Ctrl forces copy,
+// Shift forces move. Returns IgnoreAction for drops that make no sense.
+Qt::DropAction MainWindow::dropActionFor(const QStringList &sources, const QString &targetDir,
+                                         Qt::KeyboardModifiers modifiers,
+                                         Qt::DropActions possible) const
+{
+    if (sources.isEmpty() || targetDir.isEmpty() || !QFileInfo(targetDir).isWritable())
+        return Qt::IgnoreAction;
+    bool allAlreadyThere = true;
+    for (const QString &source : sources) {
+        if (targetDir == source || targetDir.startsWith(source + QLatin1Char('/')))
+            return Qt::IgnoreAction; // a folder into itself
+        if (QFileInfo(source).absolutePath() != targetDir)
+            allAlreadyThere = false;
+    }
+
+    Qt::DropAction action;
+    if (modifiers & Qt::ControlModifier)
+        action = Qt::CopyAction;
+    else if (modifiers & Qt::ShiftModifier)
+        action = Qt::MoveAction;
+    else
+        action = deviceOf(sources.first()) == deviceOf(targetDir) ? Qt::MoveAction
+                                                                   : Qt::CopyAction;
+    if (action == Qt::MoveAction && allAlreadyThere)
+        return Qt::IgnoreAction; // nothing would change
+    if (!(possible & action))
+        action = (possible & Qt::CopyAction) ? Qt::CopyAction : Qt::IgnoreAction;
+    return action;
+}
+
+void MainWindow::setDropTarget(const QModelIndex &viewIndex)
+{
+    m_gridDelegate->setDropTarget(viewIndex);
+    m_listDelegate->setDropTarget(viewIndex);
+    m_view->viewport()->update();
+}
+
+bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
+{
+    if (event->type() == QEvent::DragLeave) {
+        setDropTarget({});
+        m_dragScrollTimer->stop();
+        return true;
+    }
+    auto *drop = static_cast<QDropEvent *>(event); // DragEnter/DragMove derive from it
+    const QStringList sources = localPaths(drop->mimeData());
+    if (sources.isEmpty()) {
+        drop->ignore();
+        return true;
+    }
+
+    // Over a folder (that isn't being dragged itself): drop into it.
+    // Anywhere else: drop into the open folder.
+    const QPoint pos = drop->position().toPoint();
+    QModelIndex target = view->indexAt(pos);
+    QString targetDir = m_current;
+    if (target.isValid()) {
+        const QModelIndex source = toSource(target);
+        const QString path = m_model->filePath(source);
+        if (m_model->isDir(source) && !sources.contains(path))
+            targetDir = path;
+        else
+            target = QModelIndex();
+    }
+    const Qt::DropAction action =
+        dropActionFor(sources, targetDir, drop->modifiers(), drop->possibleActions());
+
+    if (event->type() == QEvent::Drop) {
+        setDropTarget({});
+        m_dragScrollTimer->stop();
+        if (action == Qt::IgnoreAction) {
+            drop->ignore();
+            return true;
+        }
+        drop->setDropAction(action);
+        drop->accept();
+        if (action == Qt::MoveAction)
+            m_ops->move(sources, targetDir);
+        else
+            m_ops->copy(sources, targetDir);
+        return true;
+    }
+
+    // DragEnter / DragMove: feedback only.
+    setDropTarget(action == Qt::IgnoreAction ? QModelIndex() : target.siblingAtColumn(0));
+    const int edge = 32;
+    const int height = view->viewport()->height();
+    m_dragScrollStep = pos.y() < edge ? -20 : (pos.y() > height - edge ? 20 : 0);
+    if (m_dragScrollStep != 0 && !m_dragScrollTimer->isActive())
+        m_dragScrollTimer->start();
+    if (action == Qt::IgnoreAction) {
+        // Still accept the enter, so we keep getting move events.
+        if (event->type() == QEvent::DragEnter)
+            drop->acceptProposedAction();
+        else
+            drop->ignore();
+        return true;
+    }
+    drop->setDropAction(action);
+    drop->accept();
+    return true;
+}
+
+// Dropping onto a sidebar place or drive copies/moves into it.
+bool MainWindow::handleSidebarDrag(QEvent *event)
+{
+    if (event->type() == QEvent::DragLeave) {
+        syncSidebarSelection();
+        return true;
+    }
+    auto *drop = static_cast<QDropEvent *>(event);
+    const QStringList sources = localPaths(drop->mimeData());
+    QListWidgetItem *item = m_sidebar->itemAt(drop->position().toPoint());
+    const QString targetDir = item ? QDir::cleanPath(item->data(PathRole).toString()) : QString();
+    const Qt::DropAction action =
+        targetDir.isEmpty()
+            ? Qt::IgnoreAction
+            : dropActionFor(sources, targetDir, drop->modifiers(), drop->possibleActions());
+
+    if (event->type() == QEvent::Drop) {
+        syncSidebarSelection();
+        if (action == Qt::IgnoreAction) {
+            drop->ignore();
+            return true;
+        }
+        drop->setDropAction(action);
+        drop->accept();
+        if (action == Qt::MoveAction)
+            m_ops->move(sources, targetDir);
+        else
+            m_ops->copy(sources, targetDir);
+        return true;
+    }
+
+    if (action == Qt::IgnoreAction) {
+        syncSidebarSelection();
+        if (event->type() == QEvent::DragEnter && !sources.isEmpty())
+            drop->acceptProposedAction();
+        else
+            drop->ignore();
+        return true;
+    }
+    m_sidebar->setCurrentItem(item); // highlight the place under the cursor
+    drop->setDropAction(action);
+    drop->accept();
+    return true;
 }

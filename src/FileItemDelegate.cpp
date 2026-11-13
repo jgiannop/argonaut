@@ -98,13 +98,18 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     const int textTop = iconRect.bottom() + 1 + GridPad;
     const int tileBottom = textTop + int(lines.size()) * fm.lineSpacing() + GridPad;
 
-    const bool selected = option.state & QStyle::State_Selected;
+    const bool dropHere = m_dropTarget.isValid() && m_dropTarget.row() == index.row();
+    const bool selected = (option.state & QStyle::State_Selected) || dropHere;
     const bool hovered = option.state & QStyle::State_MouseOver;
     if (selected || hovered) {
         QPainterPath tile;
         tile.addRoundedRect(QRectF(cell.left(), cell.top(), cell.width(), tileBottom - cell.top()),
                             8, 8);
         painter->fillPath(tile, selected ? m_theme.itemSelected : m_theme.hover);
+        if (dropHere) {
+            painter->setPen(QPen(m_theme.accent, 2));
+            painter->drawPath(tile);
+        }
     }
 
     paintIcon(painter, iconRect, index);
@@ -127,7 +132,8 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
 {
     const int column = index.column();
     const int lastColumn = index.model()->columnCount(index.parent()) - 1;
-    const bool selected = option.state & QStyle::State_Selected;
+    const bool dropHere = m_dropTarget.isValid() && m_dropTarget.row() == index.row();
+    const bool selected = (option.state & QStyle::State_Selected) || dropHere;
     const bool hovered = option.state & QStyle::State_MouseOver;
     if (selected || hovered) {
         QRectF bar = QRectF(option.rect).adjusted(0, 1, 0, -1);
@@ -138,6 +144,10 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
         painter->save();
         painter->setClipRect(option.rect);
         painter->fillPath(path, selected ? m_theme.itemSelected : m_theme.hover);
+        if (dropHere) {
+            painter->setPen(QPen(m_theme.accent, 2));
+            painter->drawPath(path);
+        }
         painter->restore();
     }
 

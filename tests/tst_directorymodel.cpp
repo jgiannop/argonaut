@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QMimeData>
+#include <QUrl>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -47,6 +49,7 @@ private slots:
     void itemCounts();
     void pathsAndColumns();
     void folderGone();
+    void dragData();
     void bigFolder();
 
 private:
@@ -225,6 +228,24 @@ void TestDirectoryModel::bigFolder()
     QCOMPARE(m_model->index(0, 0).data().toString(), QStringLiteral("f0.txt"));
     QCOMPARE(m_model->index(10, 0).data().toString(), QStringLiteral("f10.txt"));
     QCOMPARE(m_model->index(count - 1, 0).data().toString(), QStringLiteral("f19999.txt"));
+}
+
+// Dragging out: one URL per item even when every column is selected.
+void TestDirectoryModel::dragData()
+{
+    touch(m_dir + "/a.txt");
+    touch(m_dir + "/b.txt");
+    QVERIFY(load(m_dir));
+    QModelIndexList cells;
+    for (int row = 0; row < m_model->rowCount(); ++row)
+        for (int col = 0; col < m_model->columnCount(); ++col)
+            cells.append(m_model->index(row, col));
+    QVERIFY(m_model->flags(cells.first()) & Qt::ItemIsDragEnabled);
+    std::unique_ptr<QMimeData> data(m_model->mimeData(cells));
+    QVERIFY(data);
+    QCOMPARE(data->urls(), QList<QUrl>({QUrl::fromLocalFile(m_dir + "/a.txt"),
+                                        QUrl::fromLocalFile(m_dir + "/b.txt")}));
+    QVERIFY(data->text().contains("a.txt"));
 }
 
 QTEST_GUILESS_MAIN(TestDirectoryModel)
