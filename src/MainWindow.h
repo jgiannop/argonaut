@@ -15,6 +15,7 @@ class FileItemDelegate;
 class FileJob;
 class FileOperations;
 class OperationsPanel;
+class TerminalWidget;
 class Toast;
 class PathBar;
 class Thumbnailer;
@@ -96,9 +97,19 @@ private:
     void copySelection(bool cut);
     void paste();
     void trashSelection();
+    void deleteSelection(); // permanently, after confirming
+    void restoreSelection();
+    void emptyTrash();
+    bool confirmPermanentDelete(const QStringList &paths, bool wholeTrash);
+    void performDrop(const QStringList &sources, const QString &targetDir, Qt::DropAction action);
     void updateEditActions();
     void showContextMenu(const QPoint &pos);
     void createNewItem(bool folder);
+
+    // Embedded terminal (bottom panel). Built only with libvterm.
+    QWidget *buildTerminalPanel();
+    void showTerminal(const QString &directory);
+    void hideTerminal();
 
     // Inline rename (F2, and right after New Folder / New File).
     void renameSelection();
@@ -188,6 +199,23 @@ private:
     QList<QAction *> m_sortColumnActs; // by DirectoryModel::Column
     QAction *m_sortAscAct = nullptr;
     QAction *m_sortDescAct = nullptr;
+
+    QAction *m_deleteAct = nullptr;     // Delete Permanently…
+    QAction *m_restoreAct = nullptr;    // Restore From Trash
+    QAction *m_emptyTrashAct = nullptr; // Empty Trash…
+    QWidget *m_trashBar = nullptr;      // shown above the files in the Trash
+    QToolButton *m_trashRestoreButton = nullptr;
+    QToolButton *m_trashEmptyButton = nullptr;
+    QAction *m_terminalAct = nullptr;        // null if built without the terminal
+    QAction *m_openTerminalHereAct = nullptr;
+    QString m_contextFolder; // folder the context menu's "Open in Terminal" uses
+    QSplitter *m_contentSplitter = nullptr;  // file views above, terminal below
+    QWidget *m_terminalPanel = nullptr;
+    TerminalWidget *m_terminal = nullptr;
+    QLabel *m_terminalTitle = nullptr;
+    QToolButton *m_terminalButton = nullptr;
+    QToolButton *m_terminalCloseButton = nullptr;
+    bool m_terminalSized = false;
 
     QMenuBar *m_menuBar = nullptr;
     QPoint m_menuPressPos; // dragging the window by empty menu bar space

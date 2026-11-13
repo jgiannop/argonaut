@@ -20,9 +20,9 @@ cmake --build build/debug       # build
 
 In VS Code, CMake Tools is set to use the presets. F7 builds and F5 debugs with gdb (`.vscode/launch.json` runs the `CMake: build` task first).
 
-Linux dependencies: `cmake ninja-build qt6-base-dev qt6-tools-dev designer-qt6 qt6-wayland`.
+Linux dependencies: `cmake ninja-build qt6-base-dev qt6-tools-dev designer-qt6 qt6-wayland libvterm-dev`. `libvterm-dev` is optional: without it, CMake prints "Embedded terminal: disabled" and the app builds without the terminal panel, with all terminal code behind `#if defined(KAFTILOUS_TERMINAL)`. If you add the terminal sources to a stale build directory and the linker reports missing `TerminalWidget` vtable/metaObject symbols, delete `build/debug/kaftilous_autogen` and rebuild.
 
-Tests (Qt Test + CTest, in `tests/`; they run headless and sandbox `HOME`/the trash):
+Tests (Qt Test + CTest, in `tests/`). They run headless and sandbox `HOME` and the trash. **`KAFTILOUS_TRASH_HOME_ONLY=1` must be set for anything that runs trash code in tests:** without it, `Trash::filesDirs()` also finds the `.Trash-<uid>` folders on real mounted drives, and Empty Trash would delete them. `tst_fileoperations` sets it in `main()` and `tests/CMakeLists.txt` sets it for ctest.
 
 ```bash
 ctest --preset debug                                    # all tests
@@ -33,7 +33,7 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 
 ## Architecture
 
-- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
+- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`), the Trash helpers (`Trash`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
 - The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:
   - `Theme` (`src/Theme.{h,cpp}`) holds the light and dark colour tokens, chosen from `QApplication::palette()`. Use the application palette, not the widget palette: our own style sheet changes widget palettes.
   - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons come from the OS through `QFileIconProvider` (cached per mime type by `DirectoryModel`).
@@ -83,6 +83,19 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - The target is the folder under the cursor (highlighted through `FileItemDelegate::setDropTarget`), otherwise the open folder.
   - `dropActionFor` decides like Nautilus: same device (cached `QStorageInfo::device`) moves, another device copies, Ctrl copies, Shift moves. It refuses drops into the item itself, drops where the items already are, and drops into read-only folders.
   - Drops go through `FileOperations`, so they get progress, undo and USB safety.
+- Embedded terminal (`TerminalWidget`, Unix only): a bottom panel in `m_contentSplitter` under the file views. Ctrl+` toggles it; it is also in View → Terminal, the header button and the context menu's "Open in Terminal".
+  - It runs `$SHELL` on a pty (`forkpty`). Everything the child needs is prepared **before** the fork: argv, envp (TERM=xterm-256color) and the directory bytes, because only async-signal-safe calls are allowed in the child of a multi-threaded process.
+  - libvterm does the emulation (screen, alt-screen, scrollback through `sb_pushline`/`sb_popline`). Painting is cell by cell with QPainter; colours come from the theme plus the GNOME Console ANSI palette.
+  - Keys: `event()` accepts every `ShortcutOverride`, so the terminal gets Ctrl+C, Delete and so on instead of the window's actions. The exceptions are `setPassthroughShortcuts` (the toggle). `focusNextPrevChild` returns false so Tab reaches the shell, and composed text arrives through `inputMethodEvent`.
+  - Following the folder: `showTerminal(dir)` starts a shell in `dir`, or calls `changeDirectory(dir)`. That only types `^E^U cd -- 'dir'` when the shell is idle (`tcgetpgrp(pty) == shell pid`), never into a running program.
+  - `exit` emits `finished`, which closes the panel; opening it again starts a fresh shell.
+- Trash (Linux/BSD, freedesktop spec; `src/Trash.{h,cpp}`):
+  - The home trash is `~/.local/share/Trash/{files,info}`. Other drives have `<root>/.Trash-<uid>` or `.Trash/<uid>`, whose `.trashinfo` `Path=` may be relative to the drive root.
+  - The sidebar's Trash opens `Trash::homeFilesDir()`. `DirectoryModel` then switches to trash mode (`isTrash()`): it lists **all** trash folders merged (`m_dirs`) and keys rows by **full path** (`m_rowByPath`), because names can repeat across folders. In trash mode the Type and Modified columns become Original Location and Deleted.
+  - `FileJob::Kind::Restore` recreates the original folder if it's missing and removes the `.trashinfo`; it never overwrites. `Kind::Delete` is permanent (Shift+Delete, Delete inside the Trash, Empty Trash) and is always confirmed first by `confirmPermanentDelete`.
+  - Restore and Delete are user actions but aren't undoable (`startJob(..., recordUndo=false, userAction=true)`).
+  - Drops onto the Trash (its sidebar entry or the view) go to `m_ops->trash()` (`performDrop`).
+  - The path bar and window title show "Trash" instead of the real path.
 - Menu bar (File/Edit/View/Go/Help, `buildMenuBar`): it sits inside the frameless window's root layout, except on macOS, where it uses the global menu bar. Its empty space drags and maximises the window like the header bars. Every command is a `QAction` member, added to the window with `addActions` so its shortcut works everywhere, and reused in the menus and the context menu. Enablement is updated in `updateEditActions()`.
 - New Folder / New File create "New Folder", "New Folder 2"… then open the inline rename field (`m_pendingRename` → `startRename` once the item appears).
   - Rename (F2) is a `QLineEdit` over the item (`FileItemDelegate::nameEditorRect`), repositioned whenever the viewport paints.

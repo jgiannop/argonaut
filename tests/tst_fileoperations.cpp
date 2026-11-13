@@ -4,6 +4,7 @@
 // into it, so "move to trash" uses a throwaway trash, never the real one.
 
 #include "FileOperations.h"
+#include "Trash.h"
 
 #include <QApplication>
 #include <QDir>
@@ -15,6 +16,8 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
+
+#include <unistd.h>
 
 namespace {
 
@@ -85,6 +88,11 @@ private slots:
     void undoCopyTrashesCopies();
     void clipboardRoundTrip();
     void safeWritesDetection();
+    void restoreFromTrash();
+    void restoreRecreatesMissingFolder();
+    void deletePermanently();
+    void emptyTrash();
+    void trashInfoOnOtherDrives();
     void safeWritesCopyAndMove();
 
 private:
@@ -400,6 +408,110 @@ void TestFileOperations::safeWritesCopyAndMove()
     qunsetenv("KAFTILOUS_SAFE_WRITES");
 }
 
+void TestFileOperations::restoreFromTrash()
+{
+    writeFile(m_dir + "/docs/report.txt", 100);
+    QString inTrash;
+    QVERIFY(QFile::moveToTrash(m_dir + "/docs/report.txt", &inTrash));
+    QVERIFY(Trash::filesDirOf(inTrash) == Trash::homeFilesDir());
+    const Trash::Info info = Trash::info(inTrash);
+    QVERIFY(info.valid);
+    QCOMPARE(info.originalPath, m_dir + "/docs/report.txt");
+    QVERIFY(info.deletionDate.isValid());
+
+    // Something new now has the original name: restoring must not overwrite it.
+    writeFile(m_dir + "/docs/report.txt", 7);
+    m_ops->restore({inTrash});
+    const Outcome o = waitForJob();
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    QVERIFY(o.userAction);
+    QCOMPARE(QFileInfo(m_dir + "/docs/report.txt").size(), 7);
+    QCOMPARE(QFileInfo(m_dir + "/docs/report (copy).txt").size(), 100);
+    QVERIFY(!exists(inTrash));
+    QVERIFY(!QFile::exists(Trash::infoPathFor(inTrash))); // record removed too
+}
+
+void TestFileOperations::restoreRecreatesMissingFolder()
+{
+    writeFile(m_dir + "/gone/deep/file.txt", 10);
+    QString inTrash;
+    QVERIFY(QFile::moveToTrash(m_dir + "/gone/deep/file.txt", &inTrash));
+    QVERIFY(QDir(m_dir + "/gone").removeRecursively());
+    m_ops->restore({inTrash});
+    const Outcome o = waitForJob();
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    QCOMPARE(QFileInfo(m_dir + "/gone/deep/file.txt").size(), 10);
+}
+
+void TestFileOperations::deletePermanently()
+{
+    writeFile(m_dir + "/a.txt", 10);
+    writeFile(m_dir + "/folder/sub/b.txt", 10);
+    m_ops->deletePermanently({m_dir + "/a.txt", m_dir + "/folder"});
+    const Outcome o = waitForJob();
+    QVERIFY(o.errors.isEmpty());
+    QCOMPARE(o.kind, FileJob::Kind::Delete);
+    QVERIFY(!exists(m_dir + "/a.txt"));
+    QVERIFY(!exists(m_dir + "/folder"));
+    QVERIFY(!m_ops->canUndo()); // there is no undo for this
+
+    // Deleting an item that's in the Trash also drops its record.
+    writeFile(m_dir + "/c.txt", 10);
+    QString inTrash;
+    QVERIFY(QFile::moveToTrash(m_dir + "/c.txt", &inTrash));
+    const QString record = Trash::infoPathFor(inTrash);
+    QVERIFY(QFile::exists(record));
+    m_ops->deletePermanently({inTrash});
+    waitForJob();
+    QVERIFY(!exists(inTrash));
+    QVERIFY(!QFile::exists(record));
+}
+
+void TestFileOperations::emptyTrash()
+{
+    // Safety: the only trash this test may ever see is the sandbox's.
+    const QStringList dirs = Trash::filesDirs();
+    QCOMPARE(dirs.size(), 1);
+    QVERIFY2(dirs.first().startsWith(m_sandbox), qPrintable(dirs.first()));
+
+    writeFile(m_dir + "/x.txt", 10);
+    writeFile(m_dir + "/y/z.txt", 10);
+    QVERIFY(QFile::moveToTrash(m_dir + "/x.txt"));
+    QVERIFY(QFile::moveToTrash(m_dir + "/y"));
+    // A stray record whose item is already gone.
+    const QString infoDir = QFileInfo(Trash::homeFilesDir()).absolutePath() + "/info";
+    writeFile(infoDir + "/orphan.trashinfo", 5);
+
+    m_ops->emptyTrash();
+    const Outcome o = waitForJob();
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    QVERIFY(QDir(Trash::homeFilesDir()).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden));
+    QVERIFY(QDir(infoDir).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden));
+}
+
+// Drives other than home have their own ".Trash-<uid>" with paths stored
+// relative to the drive's top folder. (Only reads files the test creates.)
+void TestFileOperations::trashInfoOnOtherDrives()
+{
+    const QString uid = QString::number(::getuid());
+    const QString files = m_dir + "/drive/.Trash-" + uid + "/files";
+    writeFile(files + "/photo.jpg", 10);
+    QDir().mkpath(m_dir + "/drive/.Trash-" + uid + "/info");
+    {
+        QFile f(m_dir + "/drive/.Trash-" + uid + "/info/photo.jpg.trashinfo");
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("[Trash Info]\nPath=Pictures/My%20photo.jpg\nDeletionDate=2024-05-06T07:08:09\n");
+    }
+    QVERIFY(Trash::isFilesDir(files));
+    QCOMPARE(Trash::filesDirOf(files + "/photo.jpg"), files);
+    const Trash::Info info = Trash::info(files + "/photo.jpg");
+    QVERIFY(info.valid);
+    QCOMPARE(info.originalPath, m_dir + "/drive/Pictures/My photo.jpg");
+    QCOMPARE(info.deletionDate, QDateTime(QDate(2024, 5, 6), QTime(7, 8, 9)));
+    QVERIFY(!Trash::isFilesDir(m_dir + "/drive/files"));
+    QVERIFY(Trash::filesDirOf(m_dir + "/drive/other").isEmpty());
+}
+
 int main(int argc, char **argv)
 {
     QTemporaryDir sandbox;
@@ -408,6 +520,8 @@ int main(int argc, char **argv)
     // Must happen before QApplication / QStandardPaths are used.
     qputenv("HOME", QFile::encodeName(sandbox.path() + "/home"));
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
+    // Never look at (or empty) the trash folders of real mounted drives.
+    qputenv("KAFTILOUS_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QDir().mkpath(sandbox.path() + "/home");

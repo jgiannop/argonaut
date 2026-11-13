@@ -24,6 +24,12 @@ public:
     FileJob *copy(const QStringList &paths, const QString &targetDir);
     FileJob *move(const QStringList &paths, const QString &targetDir);
     FileJob *trash(const QStringList &paths);
+    // Permanently, no undo (callers confirm first).
+    FileJob *deletePermanently(const QStringList &paths);
+    // Items in a trash "files" folder back to where they were deleted from.
+    FileJob *restore(const QStringList &pathsInTrash);
+    // Delete everything in every trash folder (callers confirm first).
+    FileJob *emptyTrash();
 
     // Record an action done outside a job so it can be undone like one:
     // Move (e.g. a rename) moves back; Copy (e.g. "New Folder") trashes the
@@ -55,7 +61,8 @@ private:
         QString label; // custom Undo text, e.g. "Undo Rename"
     };
 
-    FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo);
+    FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
+                      bool userAction);
 
     QList<FileJob *> m_active;
     QList<UndoEntry> m_undo;

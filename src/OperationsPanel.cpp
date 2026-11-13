@@ -45,6 +45,9 @@ QString titleFor(const FileJob *job)
     case FileJob::Kind::Restore:
         return n == 1 ? OperationsPanel::tr("Restoring “%1” from the Trash").arg(item)
                       : OperationsPanel::tr("Restoring %n items from the Trash", nullptr, n);
+    case FileJob::Kind::Delete:
+        return n == 1 ? OperationsPanel::tr("Deleting “%1”").arg(item)
+                      : OperationsPanel::tr("Deleting %n items", nullptr, n);
     }
     return {};
 }
@@ -157,7 +160,7 @@ void OperationsPanel::updateJob(FileJob *job)
     }
 
     const QLocale locale;
-    if (job->kind() == FileJob::Kind::Trash) {
+    if (job->kind() == FileJob::Kind::Trash || job->kind() == FileJob::Kind::Delete) {
         row.bar->setRange(0, qMax(1, p.itemsTotal));
         row.bar->setValue(p.itemsDone);
         row.detail->setText(tr("%1 of %2 items").arg(p.itemsDone).arg(p.itemsTotal));

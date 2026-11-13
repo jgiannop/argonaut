@@ -21,6 +21,7 @@ struct FileEntry
     FileEntry(QString n, QCollatorSortKey k) : name(std::move(n)), key(std::move(k)) {}
 
     QString name;
+    QString dir;              // folder that contains it
     QCollatorSortKey key;     // natural, case-insensitive order ("file2" < "file10")
     mutable QString mimeName; // from the name, computed on demand
     qint64 size = 0;
@@ -29,6 +30,10 @@ struct FileEntry
     bool isDir = false;
     bool isSymLink = false;
     bool isHidden = false;
+    // Trash view only (from .trashinfo):
+    QString originalPath;
+    qint64 deleted = 0; // ms since epoch
+    QString path() const { return dir.endsWith(QLatin1Char('/')) ? dir + name : dir + QLatin1Char('/') + name; }
 };
 
 // Flat, sortable model of one folder's contents (replaces QFileSystemModel,
@@ -51,6 +56,7 @@ public:
         SizeRole,                    // qint64 (files)
         ModifiedRole,                // QDateTime
         FileNameRole,                // QString
+        OriginalPathRole,            // QString, Trash view only
     };
 
     explicit DirectoryModel(QObject *parent = nullptr);
@@ -61,6 +67,9 @@ public:
     void setPath(const QString &path);
     QString path() const { return m_path; }
     bool isLoading() const { return m_loading; }
+    // Showing the Trash: all trash folders merged, with "Original Location"
+    // and "Deleted" instead of "Type" and "Modified".
+    bool isTrash() const { return m_trash; }
     // Re-read the folder soon (changes are also picked up automatically).
     void refresh();
 
@@ -98,7 +107,7 @@ signals:
 private:
     using Entries = std::vector<FileEntry>;
 
-    void watch(const QString &path);
+    void watch(const QStringList &dirs);
     void folderChanged();
     void startScan(bool initial);
     void scheduleRescan();
@@ -112,15 +121,17 @@ private:
     void resort(); // re-sort with layoutChanged, keeping persistent indexes
     void rebuildIndex();
     bool isShown(const FileEntry &e) const { return m_showHidden || !e.isHidden; }
-    QString joinPath(const QString &name) const;
+
     const QString &mimeFor(const FileEntry &e) const;
     QIcon iconFor(const FileEntry &e) const;
     QString typeFor(const FileEntry &e) const;
 
     QString m_path;
+    QStringList m_dirs; // folders listed: just m_path, or every trash folder
+    bool m_trash = false;
     Entries m_rows;   // shown entries, sorted
     Entries m_hidden; // hidden entries while they aren't shown
-    QHash<QString, int> m_rowByName;
+    QHash<QString, int> m_rowByPath; // full path -> row
 
     int m_sortColumn = NameColumn;
     Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
@@ -136,7 +147,7 @@ private:
     QFileSystemWatcher *m_watcher = nullptr; // other platforms
     QSocketNotifier *m_inotifyNotifier = nullptr;
     int m_inotifyFd = -1;
-    int m_watchId = -1;
+    QList<int> m_watchIds;
     QTimer m_rescanTimer;
     QThreadPool m_pool;
 
