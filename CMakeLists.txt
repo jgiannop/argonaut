@@ -8,7 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(CTest) # adds the BUILD_TESTING option (ON by default)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Xml)
 if(BUILD_TESTING)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
 endif()
@@ -20,6 +20,10 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/DiskUsageModel.cpp
+    src/RecentFiles.h
+    src/RecentFiles.cpp
+    src/Starred.h
+    src/Starred.cpp
     src/Thumbnailer.h
     src/Thumbnailer.cpp
     src/DiskUsageModel.h
@@ -38,7 +42,7 @@ qt_add_library(kaftilous_core STATIC
     src/FileOperations.cpp
 )
 target_include_directories(kaftilous_core PUBLIC src)
-target_link_libraries(kaftilous_core PUBLIC Qt6::Widgets)
+target_link_libraries(kaftilous_core PUBLIC Qt6::Widgets Qt6::Xml)
 
 # Compress / Extract: needs libarchive (optional, like the terminal).
 find_package(PkgConfig QUIET)

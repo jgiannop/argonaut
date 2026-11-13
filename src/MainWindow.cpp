@@ -17,6 +17,8 @@
 #include "OperationsPanel.h"
 #include "PathBar.h"
 #include "PreferencesDialog.h"
+#include "RecentFiles.h"
+#include "Starred.h"
 #include "PropertiesDialog.h"
 #include "Thumbnailer.h"
 #if defined(KAFTILOUS_TERMINAL)
@@ -650,6 +652,26 @@ void MainWindow::setupActions()
     m_undoAct = new QAction(tr("Undo"), this);
     m_undoAct->setShortcut(QKeySequence::Undo);
     connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
+    m_starAct = new QAction(tr("Star"), this);
+    connect(m_starAct, &QAction::triggered, this, [this] {
+        const QStringList paths = selectedPaths();
+        if (paths.isEmpty())
+            return;
+        // Unstar only if everything selected is starred already.
+        bool all = true;
+        for (const QString &p : paths)
+            all = all && Starred::instance().isStarred(p);
+        Starred::instance().setStarred(paths, !all);
+        showMessage(all ? (paths.size() == 1 ? tr("Unstarred") : tr("%1 items unstarred").arg(paths.size()))
+                        : (paths.size() == 1 ? tr("Starred") : tr("%1 items starred").arg(paths.size())));
+    });
+    m_removeRecentAct = new QAction(tr("Remove from Recent"), this);
+    connect(m_removeRecentAct, &QAction::triggered, this, [this] {
+        const QStringList paths = selectedPaths();
+        if (!paths.isEmpty() && RecentFiles::remove(paths))
+            m_model->refresh(); // also picked up by the watcher; this is just sooner
+    });
+
     m_redoAct = new QAction(tr("Redo"), this);
     m_redoAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), QKeySequence(Qt::CTRL | Qt::Key_Y)});
     connect(m_redoAct, &QAction::triggered, m_ops, &FileOperations::redo);
@@ -678,7 +700,7 @@ void MainWindow::setupActions()
                 m_zoomResetAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
-                m_extractHereAct, m_extractToAct, m_openLocationAct});
+                m_extractHereAct, m_extractToAct, m_openLocationAct, m_starAct, m_removeRecentAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -1228,6 +1250,8 @@ void MainWindow::populateSidebar()
         {QStandardPaths::PicturesLocation, QT_TR_NOOP("Pictures"), Glyph::Pictures},
         {QStandardPaths::MoviesLocation, QT_TR_NOOP("Videos"), Glyph::Videos},
     };
+    addItem(tr("Recent"), DirectoryModel::recentPath(), Glyph::Recent, PlaceItem)->setToolTip(tr("Recently used files"));
+    addItem(tr("Starred"), DirectoryModel::starredPath(), Glyph::Star, PlaceItem)->setToolTip(tr("Starred files and folders"));
     QStringList shown;
     for (const auto &p : places) {
         const QString path = QDir::cleanPath(QStandardPaths::writableLocation(p.loc));
@@ -1341,7 +1365,7 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
 // Ctrl+D: add the open folder to the bookmarks, or remove it.
 void MainWindow::toggleBookmark()
 {
-    if (m_current.isEmpty() || m_model->isTrash())
+    if (m_current.isEmpty() || m_model->isTrash() || m_model->isVirtual())
         return;
     if (Bookmarks::contains(m_current)) {
         Bookmarks::remove(m_current);
@@ -1357,7 +1381,7 @@ void MainWindow::updateBookmarkAction()
 {
     const bool marked = Bookmarks::contains(m_current);
     m_bookmarkAct->setText(marked ? tr("Remove Bookmark") : tr("Bookmark This Folder"));
-    m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash());
+    m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash() && !m_model->isVirtual());
 }
 
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
@@ -1444,8 +1468,8 @@ void MainWindow::saveSettings()
         m_terminalHeight = m_terminalPanel->height();
     settings.setValue("window/terminalHeight", m_terminalHeight);
     settings.setValue("view/listHeader", m_detailView->header()->saveState());
-    settings.setValue("view/sortColumn", m_model->sortColumn());
-    settings.setValue("view/sortOrder", int(m_model->sortOrder()));
+    settings.setValue("view/sortColumn", m_recentSort ? m_sortColumnBefore : m_model->sortColumn());
+    settings.setValue("view/sortOrder", int(m_recentSort ? m_sortOrderBefore : m_model->sortOrder()));
     settings.setValue("view/showHidden", m_showHidden);
     settings.setValue("view/sidebar", m_sidebarAct->isChecked());
     settings.setValue("view/grid", m_grid);
@@ -1460,7 +1484,7 @@ void MainWindow::syncSidebarSelection()
     for (int i = 0; i < m_sidebar->count(); ++i) {
         QListWidgetItem *item = m_sidebar->item(i);
         const QString path = item->data(PathRole).toString();
-        if (!path.isEmpty() && QDir::cleanPath(path) == m_current) {
+        if (!path.isEmpty() && (path == m_current || QDir::cleanPath(path) == m_current)) {
             m_sidebar->setCurrentItem(item);
             return;
         }
@@ -1473,17 +1497,19 @@ void MainWindow::syncSidebarSelection()
 
 bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 {
+    // Recent and Starred aren't folders: lists of items from anywhere.
+    const bool place = DirectoryModel::isVirtualPath(path);
     const QFileInfo info(path);
-    if (!info.exists() || !info.isDir()) {
+    if (!place && (!info.exists() || !info.isDir())) {
         showMessage(tr("Folder not found: %1").arg(path));
         return false;
     }
-    if (!info.isReadable() || !info.isExecutable()) {
+    if (!place && (!info.isReadable() || !info.isExecutable())) {
         showMessage(tr("You don't have permission to open “%1”").arg(info.fileName()));
         return false;
     }
 
-    const QString clean = QDir::cleanPath(info.absoluteFilePath());
+    const QString clean = place ? path : QDir::cleanPath(info.absoluteFilePath());
     if (clean == m_current)
         return true;
 
@@ -1506,13 +1532,28 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 
     m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
     m_model->setPath(clean);
-    if (m_analyzing)
+    // Recent: newest first. The folder sort comes back when leaving it.
+    const bool recent = DirectoryModel::placeOf(clean) == DirectoryModel::Place::Recent;
+    if (recent && !m_recentSort) {
+        m_sortColumnBefore = m_model->sortColumn();
+        m_sortOrderBefore = m_model->sortOrder();
+        m_recentSort = true;
+        sortBy(DirectoryModel::ModifiedColumn, Qt::DescendingOrder);
+    } else if (!recent && m_recentSort) {
+        m_recentSort = false;
+        sortBy(m_sortColumnBefore, m_sortOrderBefore);
+    }
+    if (m_analyzing && place)
+        setGridMode(m_grid); // Analyze measures folders
+    else if (m_analyzing)
         m_usageModel->setRoot(clean); // instant if it's inside what was measured
     m_trashBar->setVisible(m_model->isTrash());
     m_view->scrollToTop();
     m_pathBar->setPath(clean);
 
-    const QString title = m_model->isTrash()        ? tr("Trash")
+    const QString title = m_model->place() == DirectoryModel::Place::Recent  ? tr("Recent")
+                          : m_model->place() == DirectoryModel::Place::Starred ? tr("Starred")
+                          : m_model->isTrash()                                 ? tr("Trash")
                           : info.fileName().isEmpty() ? QDir::toNativeSeparators(clean)
                                                       : info.fileName();
     setWindowTitle(tr("%1 — Kaftilous").arg(title));
@@ -1571,7 +1612,11 @@ void MainWindow::updateActions()
 {
     m_backAct->setEnabled(!m_backHistory.isEmpty());
     m_forwardAct->setEnabled(!m_forwardHistory.isEmpty());
-    m_upAct->setEnabled(!m_current.isEmpty() && !QDir(m_current).isRoot());
+    const bool place = DirectoryModel::isVirtualPath(m_current);
+    m_upAct->setEnabled(!place && !m_current.isEmpty() && !QDir(m_current).isRoot());
+    m_analyzeAct->setEnabled(!place);
+    if (m_analyzeButton)
+        m_analyzeButton->setEnabled(!place);
     m_backButton->setEnabled(m_backAct->isEnabled());
     m_forwardButton->setEnabled(m_forwardAct->isEnabled());
 }
@@ -2339,7 +2384,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
             if (!files.isEmpty())
                 menu->addMenu(openWithMenu(files));
         }
-        if (m_model->isSearch() && selectedViewIndexes().size() == 1)
+        if ((m_model->isSearch() || m_model->isVirtual()) && selectedViewIndexes().size() == 1)
             menu->addAction(m_openLocationAct);
         if (m_model->isDir(toSource(index)))
             menu->addAction(m_openInNewTabAct);
@@ -2353,6 +2398,14 @@ void MainWindow::showContextMenu(const QPoint &pos)
             }
             menu->addAction(m_compressAct);
         }
+        menu->addSeparator();
+        bool allStarred = true;
+        for (const QString &p : selectedPaths())
+            allStarred = allStarred && Starred::instance().isStarred(p);
+        m_starAct->setText(allStarred ? tr("Unstar") : tr("Star"));
+        menu->addAction(m_starAct);
+        if (m_model->place() == DirectoryModel::Place::Recent)
+            menu->addAction(m_removeRecentAct);
         menu->addSeparator();
         menu->addAction(m_renameAct);
         menu->addSeparator();
@@ -2432,9 +2485,10 @@ void MainWindow::onJobFinished(FileJob *job)
         case FileJob::Kind::Delete:
             m_usageModel->removePath(r.source);
             break;
-        case FileJob::Kind::Move:
+        case FileJob::Kind::Move: // also moves its star (and those of what's inside)
             m_usageModel->removePath(r.source, DiskUsageModel::sizeOnDisk(r.target));
             m_usageModel->addPath(r.target);
+            Starred::instance().renamed(r.source, r.target);
             break;
         case FileJob::Kind::Copy:
         case FileJob::Kind::Restore:
@@ -2812,6 +2866,7 @@ bool MainWindow::commitRename()
         return false;
     }
 
+    Starred::instance().renamed(m_renamePath, target);
     m_ops->recordUndo(FileJob::Kind::Move, {{m_renamePath, target}}, tr("Rename"));
     cancelRename();
     selectPaths({target});
@@ -3137,8 +3192,10 @@ QWidget *MainWindow::buildTerminalPanel()
 
 // Show the terminal in `directory`: start a shell there, or `cd` the running
 // one (only if it's idle at the prompt, never under a running program).
-void MainWindow::showTerminal(const QString &directory)
+void MainWindow::showTerminal(const QString &folder)
 {
+    // Recent / Starred aren't folders: the shell starts at home.
+    const QString directory = DirectoryModel::isVirtualPath(folder) ? QDir::homePath() : folder;
     if (!m_terminal->isRunning()) {
         if (!m_terminal->start(directory)) {
             showMessage(tr("Couldn't start a terminal"));
@@ -3417,6 +3474,13 @@ void MainWindow::typeAheadFind()
 
 // ----------------------------------------------------------- open with ---
 
+void MainWindow::rememberOpened(const QStringList &files)
+{
+    static const QMimeDatabase db;
+    for (const QString &file : files)
+        RecentFiles::add(file, db.mimeTypeForFile(file, QMimeDatabase::MatchExtension).name());
+}
+
 QMenu *MainWindow::openWithMenu(const QStringList &files)
 {
     QMenu *menu = makeMenu();
@@ -3435,7 +3499,7 @@ QMenu *MainWindow::openWithMenu(const QStringList &files)
                                                          ? tr("%1 (default)").arg(app.name)
                                                          : app.name);
         connect(act, &QAction::triggered, this, [this, app, files] {
-            if (OpenWith::launch(app, files))
+            if (OpenWith::launch(app, files) && (rememberOpened(files), true))
                 showMessage(tr("Opening with %1").arg(app.name));
             else
                 showMessage(tr("Couldn't start %1").arg(app.name));
@@ -3460,7 +3524,7 @@ void MainWindow::openWithOther(const QStringList &files)
         return;
     if (dialog.makeDefault())
         OpenWith::setDefault(mime, app);
-    if (OpenWith::launch(app, files))
+    if (OpenWith::launch(app, files) && (rememberOpened(files), true))
         showMessage(tr("Opening with %1").arg(app.name));
     else
         showMessage(tr("Couldn't start %1").arg(app.name));
@@ -3478,6 +3542,8 @@ void MainWindow::openFile(const QString &path)
         ContentType::Cache::instance().store(path, info.size(), mtime, result);
     }
 
+    if (result.verdict != ContentType::Verdict::Dangerous)
+        rememberOpened({path});
     if (result.verdict == ContentType::Verdict::Dangerous) {
         QMessageBox box(QMessageBox::Warning, tr("This file is a program in disguise"),
                         tr("“%1” is named like a document, but it is really a program.")
@@ -3534,6 +3600,7 @@ void MainWindow::fixExtension(const QString &path)
         showMessage(tr("Couldn't rename “%1”").arg(info.fileName()));
         return;
     }
+    Starred::instance().renamed(path, target);
     m_ops->recordUndo(FileJob::Kind::Move, {{path, target}}, tr("Rename"));
     selectPaths({target});
     showMessage(tr("Renamed to “%1”").arg(QFileInfo(target).fileName()));

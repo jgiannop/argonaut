@@ -3,6 +3,8 @@
 #include "Format.h"
 
 #include "FileJob.h"
+#include "RecentFiles.h"
+#include "Starred.h"
 #include "Trash.h"
 
 #include <QCollator>
@@ -75,6 +77,13 @@ DirectoryModel::DirectoryModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
     m_pool.setMaxThreadCount(2); // one listing + one item-counting job
+    // Stars changed: the Starred place lists again; elsewhere only the ★ badges change.
+    connect(&Starred::instance(), &Starred::changed, this, [this] {
+        if (m_place == Place::Starred)
+            scheduleRescan();
+        else if (!m_rows.empty())
+            emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {StarredRole});
+    });
     m_contentPool.setMaxThreadCount(1); // reading file heads: one disk stream
     m_contentTimer.setSingleShot(true);
     m_contentTimer.setInterval(30); // batch requests from painting
@@ -158,7 +167,9 @@ void DirectoryModel::watch(const QStringList &dirs)
 
 void DirectoryModel::folderChanged()
 {
-    if (!QFileInfo(m_path).isDir())
+    if (isVirtual())
+        scheduleRescan(); // the list's file changed (or something next to it)
+    else if (!QFileInfo(m_path).isDir())
         emit folderGone(m_path);
     else
         scheduleRescan();
@@ -166,10 +177,29 @@ void DirectoryModel::folderChanged()
 
 // ------------------------------------------------------------- loading ---
 
+DirectoryModel::Place DirectoryModel::placeOf(const QString &path)
+{
+    if (path == recentPath())
+        return Place::Recent;
+    if (path == starredPath())
+        return Place::Starred;
+    return Place::Folder;
+}
+
 void DirectoryModel::setPath(const QString &path)
 {
     m_path = path;
     m_query.clear();
+    m_place = placeOf(path);
+    if (isVirtual()) {
+        // Watch the folder of the list's file: it's rewritten atomically.
+        m_trash = false;
+        const QString list = m_place == Place::Recent ? RecentFiles::filePath() : Starred::instance().filePath();
+        m_dirs = {QFileInfo(list).absolutePath()};
+        QDir().mkpath(m_dirs.first());
+        relist();
+        return;
+    }
     m_trash = Trash::isFilesDir(path);
     m_dirs = m_trash ? Trash::filesDirs() : QStringList{path};
     if (!m_dirs.contains(path))
@@ -253,7 +283,8 @@ void DirectoryModel::relist()
     m_wanted.clear();
     m_queued.clear();
     m_contentPool.clear();
-    m_thorough = m_trash || (!needsSafeWrites(path) && !isNetworkFilesystem(path));
+    m_thorough = isVirtual() ? false // items from anywhere, USB sticks included: only what's on screen
+                             : m_trash || (!needsSafeWrites(path) && !isNetworkFilesystem(path));
     if (isSearch())
         m_thorough = false; // results can be anywhere below: check only what's on screen
 
@@ -283,7 +314,13 @@ void DirectoryModel::startScan(bool initial)
                                          : QStringList();
     const bool search = !words.isEmpty();
     const bool showHidden = m_showHidden;
-    m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden] {
+    const Place place = m_place;
+    QList<RecentFiles::Item> listed; // Starred: read here, on the GUI thread
+    if (place == Place::Starred) {
+        for (const QString &p : Starred::instance().paths())
+            listed.append({p, 0});
+    }
+    m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed] {
         const QCollator collator = naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
@@ -306,6 +343,27 @@ void DirectoryModel::startScan(bool initial)
             sinceSend.restart();
             interval = BatchIntervalMs;
         };
+
+        // Recent / Starred: the listed items that still exist.
+        if (place != Place::Folder) {
+            const QList<RecentFiles::Item> items = place == Place::Recent ? RecentFiles::read() : listed;
+            for (const RecentFiles::Item &item : items) {
+                if (m_generation != generation)
+                    return;
+                const QFileInfo fi(item.path);
+                if (!fi.exists() || (search && !matchesSearch(fi.fileName(), words)))
+                    continue;
+                FileEntry e = makeEntry(fi, collator);
+                e.setDir(fi.absolutePath());
+                e.used = item.used;
+                e.isHidden = false; // you used or starred it: show it
+                batch.push_back(std::move(e));
+                if (initial && sinceSend.elapsed() > interval)
+                    send(false);
+            }
+            send(true);
+            return;
+        }
 
         // Search: breadth first, so results near the folder come first. It
         // doesn't follow symlinks or enter other drives (or /proc), and
@@ -625,7 +683,7 @@ void DirectoryModel::sort(int column, Qt::SortOrder order)
 // the natural name order as a tie-breaker.
 bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
 {
-    if (a.isDir != b.isDir)
+    if (a.isDir != b.isDir && m_place != Place::Recent) // Recent is in order of use
         return a.isDir;
     int c = 0;
     switch (m_sortColumn) {
@@ -633,7 +691,7 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
         c = a.isDir ? compare3(a.childCount, b.childCount) : compare3(a.size, b.size);
         break;
     case TypeColumn:
-        if (isSearch())
+        if (isSearch() || isVirtual())
             c = a.dir.compare(b.dir, Qt::CaseInsensitive);
         else if (m_trash)
             c = a.originalPath.compare(b.originalPath, Qt::CaseInsensitive);
@@ -641,7 +699,9 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
             c = mimeFor(a).compare(mimeFor(b));
         break;
     case ModifiedColumn:
-        c = m_trash ? compare3(a.deleted, b.deleted) : compare3(a.mtime, b.mtime);
+        c = m_trash ? compare3(a.deleted, b.deleted)
+            : m_place == Place::Recent ? compare3(a.used, b.used)
+                                       : compare3(a.mtime, b.mtime);
         break;
     default:
         break;
@@ -797,9 +857,9 @@ QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, in
     case SizeColumn:
         return tr("Size");
     case TypeColumn:
-        return isSearch() ? tr("Location") : m_trash ? tr("Original Location") : tr("Type");
+        return isSearch() || isVirtual() ? tr("Location") : m_trash ? tr("Original Location") : tr("Type");
     case ModifiedColumn:
-        return m_trash ? tr("Deleted") : tr("Modified");
+        return m_trash ? tr("Deleted") : m_place == Place::Recent ? tr("Last Used") : tr("Modified");
     }
     return {};
 }
@@ -826,7 +886,7 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             return formatSize(e.size);
         case TypeColumn:
-            if (isSearch() && !m_trash)
+            if ((isSearch() || isVirtual()) && !m_trash)
                 return searchLocation(e);
             if (m_trash) {
                 // Folder it came from, with ~ for home (like Nautilus).
@@ -838,7 +898,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             return typeFor(e);
         case ModifiedColumn: {
-            const QDateTime when = QDateTime::fromMSecsSinceEpoch(m_trash ? e.deleted : e.mtime);
+            const QDateTime when = QDateTime::fromMSecsSinceEpoch(
+                m_trash ? e.deleted : m_place == Place::Recent && e.used > 0 ? e.used : e.mtime);
             const QLocale locale;
             if (when.date() == QDate::currentDate())
                 return locale.toString(when.time(), QLocale::ShortFormat);
@@ -862,12 +923,14 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return int(e.verdict);
     case NameMimeRole:
         return nameMimeFor(e);
+    case StarredRole:
+        return Starred::instance().isStarred(e.path());
     case ContentMimeRole:
         return e.contentMime;
     case Qt::ToolTipRole:
         if (index.column() == NameColumn) {
             QString tip = e.isDir ? QString() : ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
-            if (isSearch() && !m_trash) // the grid has no Location column
+            if ((isSearch() || isVirtual()) && !m_trash) // the grid has no Location column
                 tip = tr("In %1").arg(searchLocation(e)) + (tip.isEmpty() ? QString() : QLatin1Char('\n') + tip);
             return tip.isEmpty() ? QVariant() : tip;
         }
@@ -937,6 +1000,13 @@ QIcon DirectoryModel::iconFor(const FileEntry &e) const
 // or the folder's own name for items directly in it.
 QString DirectoryModel::searchLocation(const FileEntry &e) const
 {
+    if (isVirtual()) { // the folder it's in, with ~ for home (like Nautilus)
+        const QString home = QDir::homePath();
+        QString where = e.dir;
+        if (where == home || where.startsWith(home + QLatin1Char('/')))
+            where = QLatin1Char('~') + where.mid(home.size());
+        return QDir::toNativeSeparators(where);
+    }
     if (e.dir == m_path)
         return QFileInfo(m_path).fileName().isEmpty() ? QDir::toNativeSeparators(m_path)
                                                       : QFileInfo(m_path).fileName();

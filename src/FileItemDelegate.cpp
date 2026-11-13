@@ -138,6 +138,7 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
 
     paintIcon(painter, iconRect, index);
     paintContentBadge(painter, iconRect, index);
+    paintStarBadge(painter, iconRect, index);
 
     painter->setPen(m_theme.fg);
     painter->setFont(option.font);
@@ -184,6 +185,7 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
                              m_iconSize);
         paintIcon(painter, iconRect, index);
         paintContentBadge(painter, iconRect, index);
+        paintStarBadge(painter, iconRect, index);
         const int left = iconRect.right() + 12;
         const QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
                              option.rect.height());
@@ -290,6 +292,35 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
 
 // "!" in a circle at the icon's corner when the content doesn't match the
 // name: amber for a mismatch, red for a program in disguise.
+// A small gold star on the icon's top-right corner for starred items.
+void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const
+{
+    if (!index.data(DirectoryModel::StarredRole).toBool())
+        return;
+    const qreal d = qBound(11, iconRect.width() * 3 / 8, 20);
+    const QPointF c(iconRect.right() - d / 2 + 3, iconRect.top() + d / 2 - 2);
+    QPainterPath star;
+    for (int i = 0; i < 10; ++i) {
+        const qreal r = (i % 2 == 0 ? d / 2 : d / 4.6);
+        const qreal a = -M_PI / 2 + i * M_PI / 5;
+        const QPointF pt(c.x() + r * std::cos(a), c.y() + r * std::sin(a));
+        if (i == 0)
+            star.moveTo(pt);
+        else
+            star.lineTo(pt);
+    }
+    star.closeSubpath();
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(QPen(m_theme.window, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); // ring
+    painter->setBrush(Qt::NoBrush);
+    painter->drawPath(star);
+    painter->setPen(QPen(QColor("#c88800"), 0.8));
+    painter->setBrush(QColor("#f6c915"));
+    painter->drawPath(star);
+    painter->restore();
+}
+
 void FileItemDelegate::paintContentBadge(QPainter *painter, const QRect &iconRect,
                                          const QModelIndex &index) const
 {

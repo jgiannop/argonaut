@@ -51,6 +51,7 @@ private:
     void paintIcon(QPainter *painter, const QRect &rect, const QModelIndex &index) const;
     QPixmap renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const;
     void paintContentBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
+    void paintStarBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     QStringList wrappedName(const QString &name, const QStyleOptionViewItem &option,
                             int width) const;
 

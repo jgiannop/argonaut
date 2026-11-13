@@ -50,3 +50,8 @@ qt_add_executable(tst_thumbnailer tst_thumbnailer.cpp)
 target_link_libraries(tst_thumbnailer PRIVATE kaftilous_core Qt6::Test)
 add_test(NAME thumbnailer COMMAND tst_thumbnailer)
 set_tests_properties(thumbnailer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+
+qt_add_executable(tst_places tst_places.cpp)
+target_link_libraries(tst_places PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME places COMMAND tst_places)
+set_tests_properties(places PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
