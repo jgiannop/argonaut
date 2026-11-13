@@ -19,6 +19,8 @@ qt_standard_project_setup()
 qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
+    src/DiskUsageModel.cpp
+    src/DiskUsageModel.h
     src/Format.h
     src/ContentType.h
     src/ContentType.cpp
@@ -78,6 +80,8 @@ qt_add_executable(kaftilous
     src/OpenWithDialog.cpp
     src/PropertiesDialog.h
     src/CompressDialog.cpp
+    src/UsageDelegate.cpp
+    src/UsageDelegate.h
     src/CompressDialog.h
     src/PropertiesDialog.cpp
 )

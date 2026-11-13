@@ -11,6 +11,7 @@
 #include <QString>
 
 class DirectoryModel;
+class DiskUsageModel;
 class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
@@ -106,6 +107,11 @@ private:
     void goUp();
     void openIndex(const QModelIndex &index);
     void setGridMode(bool grid);
+    // The Analyze view: disk usage of the open folder's sub-folders, as a
+    // tree (DiskUsageModel). File actions are off while it shows.
+    void setAnalyzeMode(bool on);
+    void showAnalyzeMenu(const QPoint &pos);
+    QString selectedAnalyzePath() const;
     void setShowHidden(bool show);
     void setSearchActive(bool active);
     void updateFilter();
@@ -194,6 +200,11 @@ private:
     QAbstractItemView *m_view = nullptr; // the visible one of the two below
     QListView *m_iconView = nullptr;      // grid
     QTreeView *m_detailView = nullptr;    // list with columns
+    QTreeView *m_analyzeView = nullptr;   // Analyze: folder sizes as a tree
+    DiskUsageModel *m_usageModel = nullptr;
+    QAction *m_analyzeAct = nullptr;      // Ctrl+3
+    QToolButton *m_analyzeButton = nullptr;
+    bool m_analyzing = false;
     QStackedWidget *m_viewStack = nullptr;
     QListWidget *m_sidebar = nullptr;
     QWidget *m_root = nullptr;
