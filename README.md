@@ -10,7 +10,8 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Grid view with thumbnails, and a list view with sortable **Name / Size / Type / Modified** columns
 - Folders first, in natural order ("file2" before "file10"); sort by name, size, type or date
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
-- Search the current folder (Ctrl+F), show hidden files (Ctrl+H)
+- Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
+- Show hidden files (Ctrl+H)
 - Live updates when files change on disk
 - Fast with big folders: 20,000 files load in about 0.2 s (Nautilus needs several times longer just to gather its file information)
 
@@ -58,7 +59,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 | Back / Forward / Up | Alt+← / Alt+→ / Alt+↑ |
 | Home folder | Alt+Home |
 | Type a path | Ctrl+L |
-| Search this folder | Ctrl+F |
+| Search (this folder and sub-folders) | Ctrl+F |
 | Grid / list view | Ctrl+1 / Ctrl+2 |
 | Show hidden files | Ctrl+H |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |

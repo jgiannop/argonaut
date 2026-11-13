@@ -66,6 +66,7 @@
 #include <QStorageInfo>
 #include <QStyledItemDelegate>
 #include <QTabBar>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QTreeView>
 #include <QToolButton>
@@ -494,6 +495,16 @@ void MainWindow::setupActions()
     m_reopenTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
     connect(m_reopenTabAct, &QAction::triggered, this, &MainWindow::reopenClosedTab);
 
+    m_openLocationAct = new QAction(tr("Open Item Location"), this);
+    connect(m_openLocationAct, &QAction::triggered, this, [this] {
+        const QStringList paths = selectedPaths();
+        if (paths.isEmpty())
+            return;
+        const QString item = paths.first();
+        if (navigateTo(QFileInfo(item).absolutePath()))
+            selectPaths({item});
+    });
+
     m_openInNewTabAct = new QAction(tr("Open in New Tab"), this);
     connect(m_openInNewTabAct, &QAction::triggered, this, [this] {
         for (const QModelIndex &index : selectedViewIndexes()) {
@@ -630,7 +641,7 @@ void MainWindow::setupActions()
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
-                m_extractHereAct, m_extractToAct});
+                m_extractHereAct, m_extractToAct, m_openLocationAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -688,6 +699,16 @@ void MainWindow::setupUi()
     // New files may reach the view a little after a paste finishes.
     connect(m_proxy, &QAbstractItemModel::rowsInserted, this,
             &MainWindow::applyPendingSelection);
+    // "Searching… 12 found" as results arrive.
+    for (auto signal : {&QAbstractItemModel::rowsInserted, &QAbstractItemModel::rowsRemoved})
+        connect(m_model, signal, this, [this] {
+            if (m_model->isSearch())
+                updateFloatingBar();
+        });
+    connect(m_model, &QAbstractItemModel::modelReset, this, [this] {
+        if (m_model->isSearch())
+            updateFloatingBar();
+    });
 
     m_thumbnailer = new Thumbnailer(this);
 
@@ -808,9 +829,16 @@ QWidget *MainWindow::buildContentPane()
     m_searchEdit = new QLineEdit(header);
     m_searchEdit->setObjectName("searchEdit");
     m_searchEdit->setFixedHeight(32);
-    m_searchEdit->setPlaceholderText(tr("Search current folder"));
+    m_searchEdit->setPlaceholderText(tr("Search this folder and its sub-folders"));
     m_searchEdit->installEventFilter(this);
     connect(m_searchEdit, &QLineEdit::textChanged, this, &MainWindow::updateFilter);
+    m_searchTimer = new QTimer(this);
+    m_searchTimer->setSingleShot(true);
+    m_searchTimer->setInterval(150);
+    connect(m_searchTimer, &QTimer::timeout, this, [this] {
+        m_model->setSearch(m_searchEdit->text().simplified());
+        updateFloatingBar();
+    });
 
     m_locationStack = new QStackedWidget(header);
     m_locationStack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -1333,7 +1361,14 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     if (clean == m_current)
         return true;
 
-    setSearchActive(false);
+    {
+        // Leaving search here must not re-list the old folder: setPath()
+        // below ends the search anyway.
+        const QSignalBlocker blocker(m_searchEdit);
+        if (m_searchTimer)
+            m_searchTimer->stop();
+        setSearchActive(false);
+    }
     cancelRename();
     m_pendingSelection.clear();
     m_pendingRename.clear();
@@ -1467,12 +1502,22 @@ void MainWindow::setSearchActive(bool active)
     }
 }
 
-// Search = filter the current folder by name (case-insensitive substring),
-// done by FileFilterProxy. The model filter only handles hidden files.
+// Search = every item in this folder and below whose name has all the
+// typed words (DirectoryModel::setSearch). Typing is debounced a little so
+// each key doesn't start a new walk; clearing is immediate.
 void MainWindow::updateFilter()
 {
     m_model->setShowHidden(m_showHidden);
-    m_proxy->setQuery(m_searchEdit ? m_searchEdit->text().trimmed() : QString());
+    const QString query = m_searchEdit ? m_searchEdit->text().simplified() : QString();
+    if (query.isEmpty() || !m_searchTimer) {
+        if (m_searchTimer)
+            m_searchTimer->stop();
+        m_model->setSearch(query);
+    } else {
+        m_searchTimer->start();
+    }
+    if (m_view) // not during setupUi
+        updateFloatingBar();
 }
 
 QModelIndex MainWindow::toSource(const QModelIndex &viewIndex) const
@@ -1517,6 +1562,15 @@ void MainWindow::updateFloatingBar()
             if (bytes > 0)
                 text += QStringLiteral(" (%1)").arg(formatSize(bytes));
         }
+    }
+    if (text.isEmpty() && m_model->isSearch()) {
+        const int found = m_model->rowCount();
+        if (m_model->isLoading())
+            text = found == 0 ? tr("Searching…") : tr("Searching… %n found", nullptr, found);
+        else if (m_model->searchTruncated())
+            text = tr("Showing the first %n results", nullptr, found);
+        else
+            text = found == 0 ? tr("No results") : tr("%n results", nullptr, found);
     }
 
     if (text.isEmpty()) {
@@ -1982,6 +2036,8 @@ void MainWindow::showContextMenu(const QPoint &pos)
             if (!files.isEmpty())
                 menu->addMenu(openWithMenu(files));
         }
+        if (m_model->isSearch() && selectedViewIndexes().size() == 1)
+            menu->addAction(m_openLocationAct);
         if (m_model->isDir(toSource(index)))
             menu->addAction(m_openInNewTabAct);
         if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
@@ -2057,6 +2113,9 @@ void MainWindow::onJobFinished(FileJob *job)
     const QStringList errors = job->errors();
     const int done = int(results.size());
     const bool userAction = job->property(FileOperations::UserActionProperty).toBool();
+    // Results can be in sub-folders, which aren't watched: search again.
+    if (m_model->isSearch())
+        m_model->refresh();
 
     if (job->isCanceled()) {
         showMessage(tr("Canceled"));

@@ -201,6 +201,8 @@ private:
     QStackedWidget *m_locationStack = nullptr;
     PathBar *m_pathBar = nullptr;
     QLineEdit *m_searchEdit = nullptr;
+    QTimer *m_searchTimer = nullptr;     // debounces typing before searching sub-folders
+    QAction *m_openLocationAct = nullptr; // search results: open the folder that holds it
     QLabel *m_titleLabel = nullptr;
     QLabel *m_floatingBar = nullptr;
     QTimer *m_messageTimer = nullptr;
