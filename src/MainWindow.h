@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 
+#include <QElapsedTimer>
 #include <QMainWindow>
 #include <QStack>
 #include <QString>
@@ -73,6 +74,10 @@ private:
     void showContextMenu(const QPoint &pos);
     void onJobFinished(FileJob *job);
 
+    // Highlight `paths` (in the current folder) once the model has them.
+    void selectPaths(const QStringList &paths);
+    void applyPendingSelection();
+
     void updateFloatingBar();
     void showMessage(const QString &text);
     void positionFloatingBar();
@@ -134,4 +139,8 @@ private:
     QStack<QString> m_backHistory;
     QStack<QString> m_forwardHistory;
     QString m_current;
+
+    QStringList m_pendingSelection;
+    QElapsedTimer m_pendingSince;
+    bool m_applyingSelection = false;
 };
