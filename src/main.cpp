@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Theme.h"
 
 #include <QApplication>
 #include <QDir>
@@ -11,6 +12,10 @@ int main(int argc, char *argv[])
     QApplication::setStyle("Fusion");
     QApplication::setApplicationName("Kaftilous");
     QApplication::setApplicationVersion("0.1.0");
+    QApplication::setOrganizationName("Kaftilous"); // QSettings location
+
+    // Light / dark / follow system, from Preferences.
+    applyThemeMode(savedThemeMode());
 
     MainWindow window;
 

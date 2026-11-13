@@ -7,6 +7,10 @@
 #include <QString>
 
 class FileItemDelegate;
+class FileJob;
+class FileOperations;
+class OperationsPanel;
+class Toast;
 class PathBar;
 class Thumbnailer;
 class QAction;
@@ -34,6 +38,7 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -58,6 +63,16 @@ private:
     void updateFilter();
     void updateActions();
 
+    // File operations
+    QStringList selectedPaths() const;
+    void openSelection();
+    void copySelection(bool cut);
+    void paste();
+    void trashSelection();
+    void updateEditActions();
+    void showContextMenu(const QPoint &pos);
+    void onJobFinished(FileJob *job);
+
     void updateFloatingBar();
     void showMessage(const QString &text);
     void positionFloatingBar();
@@ -74,6 +89,9 @@ private:
     bool m_showHidden = false;
     bool m_resizeCursor = false;
 
+    FileOperations *m_ops = nullptr;
+    OperationsPanel *m_opsPanel = nullptr;
+    Toast *m_toast = nullptr;
     QFileSystemModel *m_model = nullptr;
     Thumbnailer *m_thumbnailer = nullptr;
     FileItemDelegate *m_delegate = nullptr;
@@ -104,7 +122,14 @@ private:
     QAction *m_hiddenAct = nullptr;
     QAction *m_searchAct = nullptr;
     QAction *m_copyLocationAct = nullptr;
+    QAction *m_prefsAct = nullptr;
     QAction *m_aboutAct = nullptr;
+    QAction *m_openAct = nullptr;
+    QAction *m_cutAct = nullptr;
+    QAction *m_copyAct = nullptr;
+    QAction *m_pasteAct = nullptr;
+    QAction *m_trashAct = nullptr;
+    QAction *m_undoAct = nullptr;
 
     QStack<QString> m_backHistory;
     QStack<QString> m_forwardHistory;

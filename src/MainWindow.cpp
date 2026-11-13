@@ -1,13 +1,18 @@
 #include "MainWindow.h"
 
 #include "FileItemDelegate.h"
+#include "FileOperations.h"
 #include "HeaderBar.h"
+#include "OperationsPanel.h"
 #include "PathBar.h"
+#include "PreferencesDialog.h"
 #include "Thumbnailer.h"
+#include "Toast.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -25,7 +30,9 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QPainter>
+#include <QPointer>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardPaths>
@@ -132,6 +139,25 @@ QMenu::item { padding: 7px 24px 7px 28px; border-radius: 6px; }
 QMenu::item:selected { background: @hover; }
 QMenu::item:disabled { color: @dim; }
 QMenu::separator { height: 1px; background: @border; margin: 5px 6px; }
+
+QFrame#opsPanel { background: @popup; border: 1px solid @border; border-radius: 12px; }
+QLabel#opsTitle { color: @fg; }
+QLabel#opsDetail { color: @dim; }
+QProgressBar#opsProgress { background: @pathBg; border: none; border-radius: 3px; }
+QProgressBar#opsProgress::chunk { background: @accent; border-radius: 3px; }
+QFrame#toast { background: @popup; border: 1px solid @border; border-radius: 20px; }
+QLabel#toastText { color: @fg; }
+QToolButton#toastAction { background: @button; color: @fg; border: none; border-radius: 14px;
+    padding: 5px 14px; font-weight: bold; }
+QToolButton#toastAction:hover { background: @buttonHover; }
+
+QDialog#preferences { background: @window; }
+QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
+QLabel#prefHint { color: @dim; }
+QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid transparent;
+    border-radius: 12px; padding: 8px 8px 6px 8px; }
+QToolButton#themeCard:hover { background: @hover; }
+QToolButton#themeCard:checked { border-color: @accent; }
 )");
     const QList<std::pair<const char *, QColor>> tokens = {
         {"@outline", t.outline},   {"@sidebar", t.sidebar},       {"@window", t.window},
@@ -161,6 +187,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     resize(1150, 720);
     setWindowTitle("Kaftilous");
+
+    m_ops = new FileOperations(this);
+    connect(m_ops, &FileOperations::jobFinished, this, &MainWindow::onJobFinished);
+    connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
+    connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
+            &MainWindow::updateEditActions);
 
     setupActions();
     setupUi();
@@ -224,6 +256,42 @@ void MainWindow::setupActions()
         showMessage(tr("Location copied"));
     });
 
+    m_prefsAct = new QAction(tr("Preferences"), this);
+    m_prefsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+    connect(m_prefsAct, &QAction::triggered, this, [this] {
+        static QPointer<PreferencesDialog> dialog;
+        if (!dialog) {
+            dialog = new PreferencesDialog(this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        dialog->show();
+        dialog->raise();
+        dialog->activateWindow();
+    });
+
+    m_openAct = new QAction(tr("Open"), this);
+    connect(m_openAct, &QAction::triggered, this, &MainWindow::openSelection);
+
+    m_cutAct = new QAction(tr("Cut"), this);
+    m_cutAct->setShortcut(QKeySequence::Cut);
+    connect(m_cutAct, &QAction::triggered, this, [this] { copySelection(true); });
+
+    m_copyAct = new QAction(tr("Copy"), this);
+    m_copyAct->setShortcut(QKeySequence::Copy);
+    connect(m_copyAct, &QAction::triggered, this, [this] { copySelection(false); });
+
+    m_pasteAct = new QAction(tr("Paste"), this);
+    m_pasteAct->setShortcut(QKeySequence::Paste);
+    connect(m_pasteAct, &QAction::triggered, this, &MainWindow::paste);
+
+    m_trashAct = new QAction(tr("Move to Trash"), this);
+    m_trashAct->setShortcut(QKeySequence::Delete);
+    connect(m_trashAct, &QAction::triggered, this, &MainWindow::trashSelection);
+
+    m_undoAct = new QAction(tr("Undo"), this);
+    m_undoAct->setShortcut(QKeySequence::Undo);
+    connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
+
     m_aboutAct = new QAction(tr("About Kaftilous"), this);
     connect(m_aboutAct, &QAction::triggered, this, [this] {
         QMessageBox::about(this, tr("About Kaftilous"),
@@ -232,7 +300,8 @@ void MainWindow::setupActions()
     });
 
     addActions({m_backAct, m_forwardAct, m_upAct, homeAct, locationAct, m_hiddenAct, m_searchAct,
-                gridAct, listAct});
+                gridAct, listAct, m_prefsAct, m_cutAct, m_copyAct, m_pasteAct, m_trashAct,
+                m_undoAct});
 }
 
 QToolButton *MainWindow::makeButton(const QString &toolTip, const char *objectName)
@@ -314,8 +383,11 @@ QWidget *MainWindow::buildSidebarPane()
     m_menuButton = makeButton(tr("Main menu"));
     m_menuButton->setPopupMode(QToolButton::InstantPopup);
     QMenu *mainMenu = makeMenu();
+    mainMenu->addAction(m_undoAct);
+    mainMenu->addSeparator();
     mainMenu->addAction(m_hiddenAct);
     mainMenu->addSeparator();
+    mainMenu->addAction(m_prefsAct);
     mainMenu->addAction(m_aboutAct);
     m_menuButton->setMenu(mainMenu);
 
@@ -364,6 +436,8 @@ QWidget *MainWindow::buildContentPane()
     m_pathBar = new PathBar(header);
     connect(m_pathBar, &PathBar::pathActivated, this, [this](const QString &p) { navigateTo(p); });
     QMenu *folderMenu = makeMenu();
+    folderMenu->addAction(m_pasteAct);
+    folderMenu->addSeparator();
     folderMenu->addAction(m_copyLocationAct);
     folderMenu->addSeparator();
     folderMenu->addAction(m_hiddenAct);
@@ -420,6 +494,10 @@ QWidget *MainWindow::buildContentPane()
     connect(m_view, &QListView::activated, this, &MainWindow::openIndex);
     connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
             &MainWindow::updateFloatingBar);
+    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            &MainWindow::updateEditActions);
+    m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_view, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
     connect(m_thumbnailer, &Thumbnailer::thumbnailReady, m_view->viewport(),
             qOverload<>(&QWidget::update));
     layout->addWidget(m_view, 1);
@@ -434,6 +512,13 @@ QWidget *MainWindow::buildContentPane()
         m_message.clear();
         updateFloatingBar();
     });
+
+    m_opsPanel = new OperationsPanel(m_ops, m_view);
+    m_toast = new Toast(m_view);
+    connect(m_opsPanel, &OperationsPanel::layoutChanged, this, [this] {
+        m_toast->setAvoidRect(m_opsPanel->isVisible() ? m_opsPanel->geometry() : QRect());
+    });
+    updateEditActions();
 
     setGridMode(true);
     return pane;
@@ -466,6 +551,8 @@ void MainWindow::applyTheme(bool force)
     static_cast<SidebarDelegate *>(m_sidebar->itemDelegate())->lineColor = m_theme.border;
     m_pathBar->setTheme(m_theme);
     m_delegate->setTheme(m_theme);
+    m_opsPanel->setTheme(m_theme);
+    m_toast->setTheme(m_theme);
     m_view->viewport()->update();
 
     populateSidebar();
@@ -475,7 +562,11 @@ void MainWindow::applyTheme(bool force)
 void MainWindow::changeEvent(QEvent *event)
 {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::ApplicationPaletteChange)
+    // Widgets with a style sheet get PaletteChange rather than
+    // ApplicationPaletteChange. applyTheme() reads the application palette
+    // and returns early if light/dark didn't change, so this can't loop.
+    if (event->type() == QEvent::ApplicationPaletteChange
+        || event->type() == QEvent::PaletteChange)
         applyTheme();
     else if (event->type() == QEvent::WindowStateChange)
         updateWindowState();
@@ -842,6 +933,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     } else if (watched == m_view && event->type() == QEvent::Resize) {
         if (m_floatingBar->isVisible())
             positionFloatingBar();
+        if (m_opsPanel->isVisible()) {
+            m_opsPanel->reposition();
+            m_toast->setAvoidRect(m_opsPanel->geometry());
+        }
+        if (m_toast->isVisible())
+            m_toast->reposition();
     } else if (watched == m_searchEdit && event->type() == QEvent::KeyPress) {
         if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
             setSearchActive(false);
@@ -849,4 +946,157 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// ------------------------------------------------------ file operations ---
+
+QStringList MainWindow::selectedPaths() const
+{
+    QStringList paths;
+    for (const QModelIndex &index : m_view->selectionModel()->selectedIndexes())
+        paths.append(m_model->filePath(index));
+    return paths;
+}
+
+void MainWindow::openSelection()
+{
+    const QModelIndexList selected = m_view->selectionModel()->selectedIndexes();
+    if (selected.size() == 1) {
+        openIndex(selected.first());
+        return;
+    }
+    for (const QModelIndex &index : selected) {
+        if (!m_model->isDir(index))
+            QDesktopServices::openUrl(QUrl::fromLocalFile(m_model->filePath(index)));
+    }
+}
+
+void MainWindow::copySelection(bool cut)
+{
+    const QStringList paths = selectedPaths();
+    if (paths.isEmpty())
+        return;
+    FileOperations::setClipboardFiles(paths, cut);
+    const int n = int(paths.size());
+    if (cut)
+        showMessage(n == 1 ? tr("“%1” will be moved when you paste").arg(QFileInfo(paths.first()).fileName())
+                           : tr("%1 items will be moved when you paste").arg(n));
+    else
+        showMessage(n == 1 ? tr("“%1” copied").arg(QFileInfo(paths.first()).fileName())
+                           : tr("%1 items copied").arg(n));
+}
+
+void MainWindow::paste()
+{
+    QStringList paths;
+    bool cut = false;
+    if (!FileOperations::clipboardFiles(&paths, &cut)) {
+        showMessage(tr("There is nothing to paste"));
+        return;
+    }
+    if (cut) {
+        m_ops->move(paths, m_current);
+        QApplication::clipboard()->clear(); // a cut is pasted only once
+    } else {
+        m_ops->copy(paths, m_current);
+    }
+}
+
+void MainWindow::trashSelection()
+{
+    const QStringList paths = selectedPaths();
+    if (!paths.isEmpty())
+        m_ops->trash(paths);
+}
+
+void MainWindow::updateEditActions()
+{
+    const bool hasSelection = m_view && m_view->selectionModel()->hasSelection();
+    for (QAction *action : {m_openAct, m_cutAct, m_copyAct, m_trashAct})
+        action->setEnabled(hasSelection);
+    m_pasteAct->setEnabled(FileOperations::clipboardHasFiles());
+    m_undoAct->setEnabled(m_ops->canUndo());
+    m_undoAct->setText(m_ops->undoText());
+}
+
+void MainWindow::showContextMenu(const QPoint &pos)
+{
+    const QModelIndex index = m_view->indexAt(pos);
+    QItemSelectionModel *selection = m_view->selectionModel();
+    if (index.isValid() && !selection->isSelected(index))
+        selection->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect);
+    else if (!index.isValid())
+        selection->clearSelection();
+    updateEditActions();
+
+    QMenu *menu = makeMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (index.isValid()) {
+        menu->addAction(m_openAct);
+        menu->addSeparator();
+        menu->addAction(m_cutAct);
+        menu->addAction(m_copyAct);
+        menu->addSeparator();
+        menu->addAction(m_trashAct);
+    } else {
+        menu->addAction(m_pasteAct);
+        menu->addAction(m_undoAct);
+        menu->addSeparator();
+        menu->addAction(m_copyLocationAct);
+        menu->addAction(m_hiddenAct);
+    }
+    menu->popup(m_view->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::onJobFinished(FileJob *job)
+{
+    const QList<TransferResult> results = job->results();
+    const QStringList errors = job->errors();
+    const int done = int(results.size());
+    const bool userAction = job->property(FileOperations::UserActionProperty).toBool();
+
+    if (job->isCanceled()) {
+        showMessage(tr("Canceled"));
+    } else if (!userAction) {
+        if (done > 0)
+            showMessage(tr("Undone"));
+    } else if (job->kind() == FileJob::Kind::Trash && done > 0) {
+        const QString text =
+            done == 1 ? tr("“%1” moved to the Trash").arg(QFileInfo(results.first().source).fileName())
+                      : tr("%n items moved to the Trash", nullptr, done);
+        m_toast->showMessage(text, tr("Undo"), [this] { m_ops->undo(); });
+    } else if (done > 0) {
+        const bool copied = job->kind() == FileJob::Kind::Copy;
+        if (done == 1)
+            showMessage(copied ? tr("1 item copied") : tr("1 item moved"));
+        else
+            showMessage(copied ? tr("%1 items copied").arg(done) : tr("%1 items moved").arg(done));
+    }
+
+    if (!errors.isEmpty()) {
+        QString text = errors.mid(0, 10).join('\n');
+        if (errors.size() > 10)
+            text += '\n' + tr("…and %n more", nullptr, int(errors.size() - 10));
+        QMessageBox::warning(this, tr("Some items couldn't be processed"), text);
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (!m_ops->activeJobs().isEmpty()) {
+        QMessageBox box(QMessageBox::Question, tr("Cancel file operations?"),
+                        tr("Files are still being copied or moved. Closing now will cancel "
+                           "them; items already finished are kept."),
+                        QMessageBox::NoButton, this);
+        QPushButton *keep = box.addButton(tr("Keep Working"), QMessageBox::RejectRole);
+        box.addButton(tr("Cancel and Close"), QMessageBox::AcceptRole);
+        box.setDefaultButton(keep);
+        box.exec();
+        if (box.clickedButton() == keep) {
+            event->ignore();
+            return;
+        }
+        m_ops->cancelAll();
+    }
+    QMainWindow::closeEvent(event);
 }

@@ -1,11 +1,99 @@
 #include "Theme.h"
 
+#include <QApplication>
 #include <QIconEngine>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QSettings>
 
 #include <initializer_list>
+
+namespace {
+
+constexpr auto ThemeKey = "appearance/theme";
+
+// The platform's own palette, captured the first time we touch the
+// palette (before we ever replace it).
+const QPalette &systemPalette()
+{
+    static const QPalette palette = QApplication::palette();
+    return palette;
+}
+
+QPalette buildPalette(bool dark, const QColor &accent)
+{
+    const QColor window = dark ? QColor("#242424") : QColor("#fafafa");
+    const QColor base = dark ? QColor("#1e1e1e") : QColor("#ffffff");
+    const QColor text = dark ? QColor("#ffffff") : QColor("#303030");
+    const QColor button = dark ? QColor("#303030") : QColor("#f0f0f0");
+    const QColor disabled = dark ? QColor("#7f7f7f") : QColor("#a0a0a0");
+
+    QPalette p;
+    p.setColor(QPalette::Window, window);
+    p.setColor(QPalette::WindowText, text);
+    p.setColor(QPalette::Base, base);
+    p.setColor(QPalette::AlternateBase, dark ? QColor("#2a2a2a") : QColor("#f4f4f4"));
+    p.setColor(QPalette::Text, text);
+    p.setColor(QPalette::Button, button);
+    p.setColor(QPalette::ButtonText, text);
+    p.setColor(QPalette::BrightText, dark ? QColor("#ff7b63") : QColor("#c01c28"));
+    p.setColor(QPalette::ToolTipBase, dark ? QColor("#383838") : QColor("#ffffff"));
+    p.setColor(QPalette::ToolTipText, text);
+    p.setColor(QPalette::PlaceholderText, dark ? QColor(255, 255, 255, 128) : QColor(0, 0, 0, 110));
+    p.setColor(QPalette::Highlight, accent);
+    p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    p.setColor(QPalette::Link, dark ? QColor("#78aeed") : QColor("#1c71d8"));
+    // Fusion's bevel shades
+    p.setColor(QPalette::Light, button.lighter(130));
+    p.setColor(QPalette::Midlight, button.lighter(115));
+    p.setColor(QPalette::Mid, button.darker(130));
+    p.setColor(QPalette::Dark, button.darker(160));
+    p.setColor(QPalette::Shadow, QColor(0, 0, 0, dark ? 160 : 90));
+    for (QPalette::ColorRole role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        p.setColor(QPalette::Disabled, role, disabled);
+    return p;
+}
+
+} // namespace
+
+ThemeMode savedThemeMode()
+{
+    const QString value = QSettings().value(ThemeKey, "system").toString();
+    if (value == "light")
+        return ThemeMode::Light;
+    if (value == "dark")
+        return ThemeMode::Dark;
+    return ThemeMode::System;
+}
+
+void applyThemeMode(ThemeMode mode)
+{
+    const QPalette &system = systemPalette();
+    if (mode == ThemeMode::System) {
+        // Leave the palette untouched at startup so Qt keeps following the
+        // platform; only restore it if we replaced it earlier.
+        if (QApplication::palette() != system)
+            QApplication::setPalette(system);
+        return;
+    }
+    QApplication::setPalette(
+        buildPalette(mode == ThemeMode::Dark, system.color(QPalette::Highlight)));
+}
+
+void setThemeMode(ThemeMode mode)
+{
+    const char *value = mode == ThemeMode::Light ? "light"
+                        : mode == ThemeMode::Dark ? "dark"
+                                                  : "system";
+    QSettings().setValue(ThemeKey, QString::fromLatin1(value));
+    applyThemeMode(mode);
+}
+
+Theme themeFor(bool dark)
+{
+    return Theme::fromPalette(buildPalette(dark, systemPalette().color(QPalette::Highlight)));
+}
 
 Theme Theme::fromPalette(const QPalette &palette)
 {

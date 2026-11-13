@@ -31,6 +31,18 @@ struct Theme
     static Theme fromPalette(const QPalette &palette);
 };
 
+// Light/dark preference. "System" keeps the platform palette.
+enum class ThemeMode { System, Light, Dark };
+
+ThemeMode savedThemeMode();
+// Apply `mode` to the whole application (sets QApplication's palette,
+// which sends ApplicationPaletteChange to every widget).
+void applyThemeMode(ThemeMode mode);
+// Apply and remember for the next start.
+void setThemeMode(ThemeMode mode);
+// Tokens for a forced light or dark theme (for previews).
+Theme themeFor(bool dark);
+
 // "rgba(r, g, b, a)" for use in Qt style sheets.
 QString cssColor(const QColor &color);
 

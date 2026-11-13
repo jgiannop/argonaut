@@ -1,0 +1,360 @@
+#include "FileJob.h"
+
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
+#include <QMutexLocker>
+#include <QThreadPool>
+
+namespace {
+
+constexpr qint64 ChunkSize = 1 << 20; // 1 MiB
+constexpr qint64 NotifyIntervalMs = 80;
+
+bool pathExists(const QString &path)
+{
+    const QFileInfo info(path);
+    return info.exists() || info.isSymLink(); // broken symlinks count too
+}
+
+// Remove a file, symlink or whole folder (never follows symlinks).
+bool removeTree(const QString &path)
+{
+    const QFileInfo info(path);
+    if (info.isDir() && !info.isSymLink())
+        return QDir(path).removeRecursively();
+    return QFile::remove(path);
+}
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
+// After restoring ".../Trash/files/NAME", drop ".../Trash/info/NAME.trashinfo".
+void removeTrashInfo(const QString &pathInTrash)
+{
+    const QFileInfo info(pathInTrash);
+    if (info.dir().dirName() != QLatin1String("files"))
+        return;
+    QFile::remove(QDir::cleanPath(info.dir().absolutePath() + "/../info/" + info.fileName()
+                                  + ".trashinfo"));
+}
+#endif
+
+} // namespace
+
+QString uniqueTargetPath(const QString &dir, const QString &name, bool isDir)
+{
+    const QString first = dir + '/' + name;
+    if (!pathExists(first))
+        return first;
+
+    QString base = name;
+    QString ext;
+    if (!isDir) {
+        const int dot = name.lastIndexOf('.');
+        if (dot > 0) {
+            base = name.left(dot);
+            ext = name.mid(dot);
+            if (base.endsWith(QLatin1String(".tar"))) {
+                base.chop(4);
+                ext.prepend(QLatin1String(".tar"));
+            }
+        }
+    }
+    for (int i = 1;; ++i) {
+        const QString candidate = i == 1 ? QStringLiteral("%1 (copy)%2").arg(base, ext)
+                                         : QStringLiteral("%1 (copy %2)%3").arg(base).arg(i).arg(ext);
+        const QString path = dir + '/' + candidate;
+        if (!pathExists(path))
+            return path;
+    }
+}
+
+FileJob::FileJob(Kind kind, QList<Transfer> transfers, QObject *parent)
+    : QObject(parent)
+    , m_kind(kind)
+    , m_transfers(std::move(transfers))
+{
+    m_progress.itemsTotal = int(m_transfers.size());
+}
+
+void FileJob::start(QThreadPool *pool)
+{
+    m_elapsed.start();
+    pool->start([this] { run(); });
+}
+
+FileJob::Progress FileJob::progress() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_progress;
+}
+
+QList<TransferResult> FileJob::results() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_results;
+}
+
+QStringList FileJob::errors() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_errors;
+}
+
+// ------------------------------------------------------- worker thread ---
+
+void FileJob::run()
+{
+    m_notifyTimer.start();
+    if (m_kind == Kind::Trash)
+        runTrash();
+    else
+        runTransfers();
+    notify(true);
+    emit finished();
+}
+
+void FileJob::runTrash()
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.measuring = false;
+    }
+    for (const Transfer &t : m_transfers) {
+        if (isCanceled())
+            break;
+        const QString name = QFileInfo(t.source).fileName();
+        setCurrent(name);
+        QString pathInTrash;
+        if (QFile::moveToTrash(t.source, &pathInTrash))
+            addResult(t.source, pathInTrash);
+        else
+            addError(tr("Couldn't move “%1” to the Trash.").arg(name));
+        itemDone();
+    }
+}
+
+void FileJob::runTransfers()
+{
+    // 1. Measure, so progress can show bytes.
+    QList<qint64> sizes;
+    qint64 total = 0;
+    for (const Transfer &t : m_transfers) {
+        if (isCanceled())
+            return;
+        const qint64 size = treeSize(t.source);
+        sizes.append(size);
+        total += size;
+    }
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.bytesTotal = total;
+        m_progress.measuring = false;
+    }
+    notify(true);
+
+    // 2. Transfer.
+    for (int i = 0; i < m_transfers.size(); ++i) {
+        if (isCanceled())
+            break;
+        const Transfer &t = m_transfers.at(i);
+        const QFileInfo srcInfo(t.source);
+        const QString name = t.targetName.isEmpty() ? srcInfo.fileName() : t.targetName;
+        if (!srcInfo.exists() && !srcInfo.isSymLink()) {
+            addError(tr("“%1” no longer exists.").arg(name));
+            itemDone();
+            continue;
+        }
+
+        const QString src = QDir::cleanPath(srcInfo.absoluteFilePath());
+        const QString dir = QDir::cleanPath(t.targetDir);
+        if (!QFileInfo(dir).isDir()) {
+            addError(tr("The destination folder “%1” doesn't exist.")
+                         .arg(QDir::toNativeSeparators(dir)));
+            itemDone();
+            continue;
+        }
+        const bool isRealDir = srcInfo.isDir() && !srcInfo.isSymLink();
+        if (isRealDir && (dir == src || dir.startsWith(src + '/'))) {
+            addError(tr("Can't put the folder “%1” inside itself.").arg(name));
+            itemDone();
+            continue;
+        }
+        if (m_kind != Kind::Copy && QDir::cleanPath(dir + '/' + name) == src) {
+            addBytes(sizes.at(i)); // moving onto itself: nothing to do
+            itemDone();
+            continue;
+        }
+
+        const QString target = uniqueTargetPath(dir, name, isRealDir);
+        setCurrent(name);
+
+        bool ok = false;
+        if (m_kind == Kind::Copy) {
+            ok = copyTree(src, target);
+        } else if (QDir().rename(src, target)) {
+            // Same filesystem: instant.
+            addBytes(sizes.at(i));
+            ok = true;
+        } else {
+            // Different filesystem: copy, and delete the original only once
+            // the copy is complete.
+            ok = copyTree(src, target);
+            if (ok && !removeTree(src))
+                addError(tr("“%1” was copied but the original couldn't be removed.").arg(name));
+        }
+
+        if (ok) {
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
+            if (m_kind == Kind::Restore)
+                removeTrashInfo(src);
+#endif
+            addResult(src, target);
+        } else if (pathExists(target)) {
+            removeTree(target); // incomplete copy: it didn't exist before
+        }
+        itemDone();
+    }
+}
+
+bool FileJob::copyTree(const QString &source, const QString &target)
+{
+    if (isCanceled())
+        return false;
+    const QFileInfo info(source);
+
+    if (info.isSymbolicLink()) {
+        if (!QFile::link(info.symLinkTarget(), target)) {
+            addError(tr("Couldn't copy the link “%1”.").arg(info.fileName()));
+            return false;
+        }
+        return true;
+    }
+
+    if (info.isDir()) {
+        if (!QDir().mkdir(target)) {
+            addError(tr("Couldn't create the folder “%1”.").arg(QFileInfo(target).fileName()));
+            return false;
+        }
+        const QFileInfoList entries = QDir(source).entryInfoList(
+            QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+        for (const QFileInfo &entry : entries) {
+            if (!copyTree(entry.absoluteFilePath(), target + '/' + entry.fileName()))
+                return false;
+        }
+        QFile::setPermissions(target, info.permissions());
+        return true;
+    }
+
+    return copyFile(source, target, info);
+}
+
+bool FileJob::copyFile(const QString &source, const QString &target, const QFileInfo &info)
+{
+    QFile in(source);
+    if (!in.open(QIODevice::ReadOnly)) {
+        addError(tr("Couldn't read “%1”: %2").arg(info.fileName(), in.errorString()));
+        return false;
+    }
+    QFile out(target);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        addError(tr("Couldn't create “%1”: %2")
+                     .arg(QFileInfo(target).fileName(), out.errorString()));
+        return false;
+    }
+
+    QByteArray buffer(ChunkSize, Qt::Uninitialized);
+    while (true) {
+        if (isCanceled()) {
+            out.close();
+            out.remove();
+            return false;
+        }
+        const qint64 n = in.read(buffer.data(), buffer.size());
+        if (n == 0)
+            break;
+        if (n < 0 || out.write(buffer.constData(), n) != n) {
+            addError(tr("Couldn't copy “%1”: %2")
+                         .arg(info.fileName(), n < 0 ? in.errorString() : out.errorString()));
+            out.close();
+            out.remove();
+            return false;
+        }
+        addBytes(n);
+    }
+
+    // Flush first: writing buffered data on close() would reset the date.
+    out.flush();
+    out.setFileTime(info.lastModified(), QFileDevice::FileModificationTime);
+    out.close();
+    QFile::setPermissions(target, info.permissions());
+    return true;
+}
+
+qint64 FileJob::treeSize(const QString &path)
+{
+    const QFileInfo info(path);
+    if (info.isSymLink())
+        return 0;
+    if (!info.isDir())
+        return info.size();
+    qint64 total = 0;
+    QDirIterator it(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        if (isCanceled())
+            return total;
+        it.next();
+        const QFileInfo entry = it.fileInfo();
+        if (entry.isFile() && !entry.isSymLink())
+            total += entry.size();
+    }
+    return total;
+}
+
+void FileJob::addBytes(qint64 bytes)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.bytesDone += bytes;
+    }
+    notify(false);
+}
+
+void FileJob::setCurrent(const QString &name)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.current = name;
+    }
+    notify(false);
+}
+
+void FileJob::itemDone()
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        ++m_progress.itemsDone;
+    }
+    notify(false);
+}
+
+void FileJob::addResult(const QString &source, const QString &target)
+{
+    QMutexLocker lock(&m_mutex);
+    m_results.append({source, target});
+}
+
+void FileJob::addError(const QString &message)
+{
+    QMutexLocker lock(&m_mutex);
+    m_errors.append(message);
+}
+
+void FileJob::notify(bool force)
+{
+    if (!force && m_notifyTimer.elapsed() < NotifyIntervalMs)
+        return;
+    m_notifyTimer.restart();
+    emit progressChanged();
+}

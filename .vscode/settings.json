@@ -12,6 +12,8 @@
 
   // IntelliSense comes from CMake (compile_commands), so Qt headers resolve.
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  // Fallback if no CMake preset is selected yet (created by `cmake --preset debug`).
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
   "C_Cpp.default.cppStandard": "c++17",
   "C_Cpp.clang_format_style": "file",
 
