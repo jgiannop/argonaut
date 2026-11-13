@@ -253,10 +253,7 @@ void DirectoryModel::relist()
     m_wanted.clear();
     m_queued.clear();
     m_contentPool.clear();
-    static const QStringList network = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs",
-                                        "fuse.rclone", "9p", "afs", "davfs", "fuse.gvfsd-fuse"};
-    const QString fs = QString::fromLatin1(QStorageInfo(path).fileSystemType());
-    m_thorough = m_trash || (!needsSafeWrites(path) && !network.contains(fs));
+    m_thorough = m_trash || (!needsSafeWrites(path) && !isNetworkFilesystem(path));
     if (isSearch())
         m_thorough = false; // results can be anywhere below: check only what's on screen
 

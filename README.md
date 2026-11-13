@@ -8,6 +8,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 
 **Browsing**
 - Grid view with thumbnails, and a list view with sortable **Name / Size / Type / Modified** columns
+- Thumbnails for photos, **PDFs, videos, fonts, comics and more**, using the thumbnailers already installed on your system (the same ones Nautilus uses) and sharing their cache. They run **sandboxed** (no network, nothing visible but the one file), two at a time at low priority, only for files on screen, and by default only on the computer's own disks (Preferences)
 - Folders first, in natural order ("file2" before "file10"); sort by name, size, type or date
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location

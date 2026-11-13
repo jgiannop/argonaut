@@ -20,6 +20,8 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/DiskUsageModel.cpp
+    src/Thumbnailer.h
+    src/Thumbnailer.cpp
     src/DiskUsageModel.h
     src/Format.h
     src/ContentType.h
@@ -68,8 +70,6 @@ qt_add_executable(kaftilous
     src/FileFilterProxy.cpp
     src/FileItemDelegate.h
     src/FileItemDelegate.cpp
-    src/Thumbnailer.h
-    src/Thumbnailer.cpp
     src/OperationsPanel.h
     src/OperationsPanel.cpp
     src/Toast.h

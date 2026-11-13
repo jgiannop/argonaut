@@ -151,6 +151,8 @@ private:
 // where copies are flushed to the device before they count as done.
 // KAFTILOUS_SAFE_WRITES=1/0 forces the answer (for tests).
 bool needsSafeWrites(const QString &dir);
+// True if `path` is on a network filesystem (NFS, SMB, sshfs, gvfs…).
+bool isNetworkFilesystem(const QString &path);
 
 // Path in `dir` for `name` that doesn't exist yet: "name", "name (copy)",
 // "name (copy 2)"… keeping the extension (".tar.gz" counts as one).
