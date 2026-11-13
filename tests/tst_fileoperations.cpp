@@ -642,6 +642,7 @@ int main(int argc, char **argv)
     // Must happen before QApplication / QStandardPaths are used.
     qputenv("HOME", QFile::encodeName(sandbox.path() + "/home"));
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     // Never look at (or empty) the trash folders of real mounted drives.
     qputenv("KAFTILOUS_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))

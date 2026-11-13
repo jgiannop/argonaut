@@ -61,6 +61,13 @@ private:
 
     void applyTheme(bool force = false);
     void populateSidebar();
+    void scheduleSidebarRefresh(); // drives or bookmarks changed
+    void showSidebarMenu(const QPoint &pos);
+    void ejectDrive(const QString &root, const QString &name);
+    void toggleBookmark();
+    void updateBookmarkAction();
+    void loadSettings();
+    void saveSettings();
     void syncSidebarSelection();
 
     void goBack();
@@ -212,6 +219,12 @@ private:
     };
     QList<PendingConflict> m_conflicts;
     bool m_conflictOpen = false;
+
+    QAction *m_bookmarkAct = nullptr;   // Ctrl+D: bookmark / unbookmark this folder
+    QTimer *m_sidebarRefresh = nullptr; // debounces drive/bookmark changes
+    int m_mountsFd = -1;                // /proc/self/mounts (Linux): POLLPRI on change
+    QStringList m_lastMounts;           // other platforms: polled
+    int m_terminalHeight = 0;           // remembered between sessions
 
     QAction *m_deleteAct = nullptr;     // Delete Permanently…
     QAction *m_restoreAct = nullptr;    // Restore From Trash

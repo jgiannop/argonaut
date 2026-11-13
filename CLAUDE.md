@@ -22,7 +22,7 @@ In VS Code, CMake Tools is set to use the presets. F7 builds and F5 debugs with 
 
 Linux dependencies: `cmake ninja-build qt6-base-dev qt6-tools-dev designer-qt6 qt6-wayland libvterm-dev`. `libvterm-dev` is optional: without it, CMake prints "Embedded terminal: disabled" and the app builds without the terminal panel, with all terminal code behind `#if defined(KAFTILOUS_TERMINAL)`. If you add the terminal sources to a stale build directory and the linker reports missing `TerminalWidget` vtable/metaObject symbols, delete `build/debug/kaftilous_autogen` and rebuild.
 
-Tests (Qt Test + CTest, in `tests/`). They run headless and sandbox `HOME` and the trash. **`KAFTILOUS_TRASH_HOME_ONLY=1` must be set for anything that runs trash code in tests:** without it, `Trash::filesDirs()` also finds the `.Trash-<uid>` folders on real mounted drives, and Empty Trash would delete them. `tst_fileoperations` sets it in `main()` and `tests/CMakeLists.txt` sets it for ctest.
+Tests (Qt Test + CTest, in `tests/`). They run headless and sandbox `HOME` and the trash. **`KAFTILOUS_TRASH_HOME_ONLY=1` must be set for anything that runs trash code in tests:** without it, `Trash::filesDirs()` also finds the `.Trash-<uid>` folders on real mounted drives, and Empty Trash would delete them. `tst_fileoperations` sets it in `main()` and `tests/CMakeLists.txt` sets it for ctest. Tests also point `HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` at a temporary folder, so the real bookmarks file and settings are never touched. Window-level test programs set `KAFTILOUS_EJECT_PROGRAM` to a fake script, so they never eject a real drive.
 
 ```bash
 ctest --preset debug                                    # all tests
@@ -33,7 +33,7 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 
 ## Architecture
 
-- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`), the Trash helpers (`Trash`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
+- `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`), the Trash and bookmark helpers (`Trash`, `Bookmarks`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
 - The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:
   - `Theme` (`src/Theme.{h,cpp}`) holds the light and dark colour tokens, chosen from `QApplication::palette()`. Use the application palette, not the widget palette: our own style sheet changes widget palettes.
   - `glyphIcon(Glyph, color)` draws every UI icon in code through a custom `QIconEngine`. Don't depend on the system icon theme or the Qt SVG plugin for UI icons. File-type icons come from the OS through `QFileIconProvider` (cached per mime type by `DirectoryModel`).
@@ -102,6 +102,13 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - Restore and Delete are user actions but aren't undoable (`startJob(..., recordUndo=false, userAction=true)`).
   - Drops onto the Trash (its sidebar entry or the view) go to `m_ops->trash()` (`performDrop`).
   - The path bar and window title show "Trash" instead of the real path.
+- Sidebar sections: places + Trash, then bookmarks, then drives. Rows carry `PathRole`, `KindRole` (`PlaceItem`, `BookmarkItem` or `DriveItem`) and `EjectRole`. `populateSidebar()` rebuilds everything; `scheduleSidebarRefresh()` debounces it.
+  - Bookmarks (`src/Bookmarks.{h,cpp}`) live in the GTK file Nautilus uses (`~/.config/gtk-3.0/bookmarks`, written atomically with `QSaveFile`). Lines that aren't local folders, such as `sftp://`, are preserved. Bookmarks that duplicate a place are hidden.
+    - Ctrl+D toggles a bookmark, dropping folders on empty sidebar space adds them, and the sidebar's right-click menu renames or removes them.
+    - The file's folder is watched, so Nautilus's edits appear.
+  - Drives mounted by udisks (`/media`, `/run/media`) get an ⏏ button, painted by `SidebarDelegate` and handled in `eventFilter`. `ejectDrive` runs `gio mount --eject <root>` (`KAFTILOUS_EJECT_PROGRAM` overrides the program). It refuses while a job uses the drive, and leaves the drive first if it's the open folder.
+  - Mount changes come from `POLLPRI` on `/proc/self/mounts` (a `QSocketNotifier` of type Exception) on Linux, and a 3 s poll elsewhere.
+- Settings (`loadSettings` at startup, `saveSettings` in `closeEvent`; `QSettings` keys `window/*` and `view/*`): window geometry, sidebar width, terminal height, list column widths, sort column and order, hidden files, sidebar visibility, and grid or list view.
 - Menu bar (File/Edit/View/Go/Help, `buildMenuBar`): it sits inside the frameless window's root layout, except on macOS, where it uses the global menu bar. Its empty space drags and maximises the window like the header bars. Every command is a `QAction` member, added to the window with `addActions` so its shortcut works everywhere, and reused in the menus and the context menu. Enablement is updated in `updateEditActions()`.
 - New Folder / New File create "New Folder", "New Folder 2"… then open the inline rename field (`m_pendingRename` → `startRename` once the item appears).
   - Rename (F2) is a `QLineEdit` over the item (`FileItemDelegate::nameEditorRect`), repositioned whenever the viewport paints.

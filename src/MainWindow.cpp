@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "Bookmarks.h"
 #include "ConflictDialog.h"
 #include "DirectoryModel.h"
 #include "FileFilterProxy.h"
@@ -40,7 +41,12 @@
 #include <QMimeData>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QFileSystemWatcher>
+#include <QInputDialog>
+#include <QProcess>
 #include <QPushButton>
+#include <QSettings>
+#include <QSocketNotifier>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QPainter>
@@ -57,10 +63,24 @@
 #include <QVBoxLayout>
 #include <QWindow>
 
+#if defined(Q_OS_UNIX)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 constexpr int PathRole = Qt::UserRole;
 constexpr int SeparatorRole = Qt::UserRole + 1;
+constexpr int KindRole = Qt::UserRole + 2;  // SidebarKind
+constexpr int EjectRole = Qt::UserRole + 3; // bool: show an eject button
+enum SidebarKind { PlaceItem, BookmarkItem, DriveItem };
+
+// The eject button's area inside a sidebar row.
+QRect ejectRect(const QRect &row)
+{
+    return QRect(row.right() - 30, row.center().y() - 12, 24, 24);
+}
 constexpr int ResizeMargin = 5;
 
 // Separator rows are drawn as a thin line; other rows are drawn normally so
@@ -71,11 +91,18 @@ public:
     using QStyledItemDelegate::QStyledItemDelegate;
     QColor lineColor;
 
+    QIcon ejectIcon;
+
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override
     {
         if (!index.data(SeparatorRole).toBool()) {
-            QStyledItemDelegate::paint(painter, option, index);
+            QStyleOptionViewItem opt = option;
+            if (index.data(EjectRole).toBool())
+                opt.rect.setRight(opt.rect.right() - 30); // room for the button
+            QStyledItemDelegate::paint(painter, opt, index);
+            if (index.data(EjectRole).toBool())
+                ejectIcon.paint(painter, ejectRect(option.rect).adjusted(4, 4, -4, -4));
             return;
         }
         const int y = option.rect.center().y();
@@ -253,10 +280,46 @@ MainWindow::MainWindow(QWidget *parent)
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
             &MainWindow::updateEditActions);
 
+    m_sidebarRefresh = new QTimer(this);
+    m_sidebarRefresh->setSingleShot(true);
+    m_sidebarRefresh->setInterval(250);
+    connect(m_sidebarRefresh, &QTimer::timeout, this, [this] {
+        populateSidebar();
+        syncSidebarSelection();
+    });
+
     setupActions();
     setupUi();
     applyTheme(true);
     updateWindowState();
+    loadSettings();
+
+    // The sidebar follows bookmark edits (also Nautilus's) and drives being
+    // plugged in or removed.
+    auto *bookmarksWatcher = new QFileSystemWatcher(this);
+    const QString bookmarksFile = Bookmarks::filePath();
+    QDir().mkpath(QFileInfo(bookmarksFile).absolutePath());
+    bookmarksWatcher->addPath(QFileInfo(bookmarksFile).absolutePath()); // atomic saves replace the file
+    connect(bookmarksWatcher, &QFileSystemWatcher::directoryChanged, this,
+            [this] { scheduleSidebarRefresh(); updateBookmarkAction(); });
+#if defined(Q_OS_LINUX)
+    m_mountsFd = ::open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
+    if (m_mountsFd >= 0) {
+        auto *mounts = new QSocketNotifier(m_mountsFd, QSocketNotifier::Exception, this);
+        connect(mounts, &QSocketNotifier::activated, this, &MainWindow::scheduleSidebarRefresh);
+    }
+#endif
+    if (m_mountsFd < 0) {
+        auto *poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] {
+            QStringList now;
+            for (const QStorageInfo &vol : QStorageInfo::mountedVolumes())
+                now << vol.rootPath();
+            if (now != m_lastMounts)
+                scheduleSidebarRefresh();
+        });
+        poll->start(3000);
+    }
 
     if (m_csd) {
         winId(); // create the native window so we can watch its mouse events
@@ -427,6 +490,10 @@ void MainWindow::setupActions()
     m_trashAct->setShortcut(QKeySequence::Delete);
     connect(m_trashAct, &QAction::triggered, this, &MainWindow::trashSelection);
 
+    m_bookmarkAct = new QAction(tr("Bookmark This Folder"), this);
+    m_bookmarkAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    connect(m_bookmarkAct, &QAction::triggered, this, &MainWindow::toggleBookmark);
+
     m_deleteAct = new QAction(tr("Delete Permanently…"), this);
     m_deleteAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Delete));
     connect(m_deleteAct, &QAction::triggered, this, &MainWindow::deleteSelection);
@@ -452,7 +519,7 @@ void MainWindow::setupActions()
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
-                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct});
+                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -581,6 +648,8 @@ QWidget *MainWindow::buildSidebarPane()
     m_sidebar->setTextElideMode(Qt::ElideRight);
     m_sidebar->viewport()->setAcceptDrops(true); // drop onto places and drives
     m_sidebar->viewport()->installEventFilter(this);
+    m_sidebar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_sidebar, &QWidget::customContextMenuRequested, this, &MainWindow::showSidebarMenu);
     connect(m_sidebar, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const QString path = item->data(PathRole).toString();
         if (path.isEmpty() || !navigateTo(path))
@@ -615,6 +684,7 @@ QWidget *MainWindow::buildContentPane()
     QMenu *folderMenu = makeMenu();
     folderMenu->addAction(m_pasteAct);
     folderMenu->addSeparator();
+    folderMenu->addAction(m_bookmarkAct);
     folderMenu->addAction(m_copyLocationAct);
     folderMenu->addSeparator();
     folderMenu->addAction(m_hiddenAct);
@@ -814,6 +884,8 @@ void MainWindow::applyTheme(bool force)
     }
 
     static_cast<SidebarDelegate *>(m_sidebar->itemDelegate())->lineColor = m_theme.border;
+    static_cast<SidebarDelegate *>(m_sidebar->itemDelegate())->ejectIcon =
+        glyphIcon(Glyph::Eject, m_theme.fg);
     m_pathBar->setTheme(m_theme);
     m_gridDelegate->setTheme(m_theme);
     m_listDelegate->setTheme(m_theme);
@@ -847,13 +919,16 @@ void MainWindow::changeEvent(QEvent *event)
 
 void MainWindow::populateSidebar()
 {
+    const int scroll = m_sidebar->verticalScrollBar()->value();
     m_sidebar->clear();
     const QColor iconColor = m_theme.fg;
 
-    auto addPlace = [&](const QString &name, const QString &path, Glyph glyph) {
+    auto addItem = [&](const QString &name, const QString &path, Glyph glyph, SidebarKind kind) {
         auto *item = new QListWidgetItem(glyphIcon(glyph, iconColor), name, m_sidebar);
         item->setData(PathRole, path);
+        item->setData(KindRole, int(kind));
         item->setToolTip(QDir::toNativeSeparators(path));
+        return item;
     };
     auto addSeparator = [&] {
         auto *sep = new QListWidgetItem(m_sidebar);
@@ -874,13 +949,13 @@ void MainWindow::populateSidebar()
         {QStandardPaths::PicturesLocation, QT_TR_NOOP("Pictures"), Glyph::Pictures},
         {QStandardPaths::MoviesLocation, QT_TR_NOOP("Videos"), Glyph::Videos},
     };
-    QStringList added;
+    QStringList shown;
     for (const auto &p : places) {
-        const QString path = QStandardPaths::writableLocation(p.loc);
-        if (path.isEmpty() || added.contains(path) || !QFileInfo(path).isDir())
+        const QString path = QDir::cleanPath(QStandardPaths::writableLocation(p.loc));
+        if (path.isEmpty() || shown.contains(path) || !QFileInfo(path).isDir())
             continue;
-        added << path;
-        addPlace(tr(p.name), path, p.glyph);
+        shown << path;
+        addItem(tr(p.name), path, p.glyph, PlaceItem);
     }
 
     if (Trash::isSupported()) {
@@ -888,15 +963,31 @@ void MainWindow::populateSidebar()
         const QString trash = Trash::homeFilesDir();
         QDir().mkpath(trash);
         QDir().mkpath(QFileInfo(trash).absolutePath() + QStringLiteral("/info"));
-        addPlace(tr("Trash"), trash, Glyph::Trash);
+        addItem(tr("Trash"), trash, Glyph::Trash, PlaceItem);
+    }
+
+    // Bookmarks (shared with Nautilus). Ones that duplicate a place above,
+    // or whose folder is gone, aren't shown (but stay in the file).
+    bool bookmarkSection = false;
+    for (const Bookmarks::Bookmark &b : Bookmarks::load()) {
+        if (shown.contains(b.path) || !QFileInfo(b.path).isDir())
+            continue;
+        if (!bookmarkSection) {
+            addSeparator();
+            bookmarkSection = true;
+        }
+        shown << b.path;
+        addItem(b.displayName(), b.path, Glyph::Folder, BookmarkItem);
     }
 
     addSeparator();
 
+    m_lastMounts.clear();
     for (const QStorageInfo &vol : QStorageInfo::mountedVolumes()) {
         if (!vol.isValid() || !vol.isReady())
             continue;
         const QString root = vol.rootPath();
+        m_lastMounts << root;
 #if defined(Q_OS_LINUX)
         // Skip system/snap mounts; keep "/" and user-visible drives.
         if (root != "/" && !root.startsWith("/media/") && !root.startsWith("/mnt/")
@@ -907,9 +998,163 @@ void MainWindow::populateSidebar()
             continue;
 #endif
         const bool system = root == QDir::rootPath();
-        addPlace(system ? tr("Computer") : vol.displayName(), root,
-                 system ? Glyph::Drive : Glyph::Removable);
+        QListWidgetItem *item = addItem(system ? tr("Computer") : vol.displayName(), root,
+                                        system ? Glyph::Drive : Glyph::Removable, DriveItem);
+#if defined(Q_OS_LINUX)
+        // Drives mounted by the desktop (udisks) can be ejected.
+        if (root.startsWith("/media/") || root.startsWith("/run/media/")) {
+            item->setData(EjectRole, true);
+            item->setToolTip(QDir::toNativeSeparators(root) + QLatin1Char('\n') + tr("Eject: click ⏏"));
+        }
+#else
+        Q_UNUSED(item)
+#endif
     }
+    m_sidebar->verticalScrollBar()->setValue(scroll);
+}
+
+void MainWindow::scheduleSidebarRefresh()
+{
+    m_sidebarRefresh->start();
+}
+
+void MainWindow::showSidebarMenu(const QPoint &pos)
+{
+    QListWidgetItem *item = m_sidebar->itemAt(pos);
+    if (!item || item->data(SeparatorRole).toBool())
+        return;
+    const QString path = item->data(PathRole).toString();
+    const int kind = item->data(KindRole).toInt();
+
+    QMenu *menu = makeMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->addAction(tr("Open"), this, [this, path] { navigateTo(path); });
+    if (m_openTerminalHereAct) {
+        menu->addAction(tr("Open in Terminal"), this, [this, path] {
+            m_contextFolder = path;
+            m_openTerminalHereAct->trigger();
+        });
+    }
+    if (kind == BookmarkItem) {
+        menu->addSeparator();
+        menu->addAction(tr("Rename…"), this, [this, path, item] {
+            bool ok = false;
+            const QString label = QInputDialog::getText(this, tr("Rename Bookmark"), tr("Name"),
+                                                        QLineEdit::Normal, item->text(), &ok);
+            if (ok)
+                Bookmarks::rename(path, label == QFileInfo(path).fileName() ? QString() : label);
+            scheduleSidebarRefresh();
+        });
+        menu->addAction(tr("Remove from Bookmarks"), this, [this, path] {
+            Bookmarks::remove(path);
+            scheduleSidebarRefresh();
+            updateBookmarkAction();
+        });
+    } else if (kind == DriveItem && item->data(EjectRole).toBool()) {
+        menu->addSeparator();
+        const QString name = item->text();
+        menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Eject"), this,
+                        [this, path, name] { ejectDrive(path, name); });
+    }
+    menu->popup(m_sidebar->viewport()->mapToGlobal(pos));
+}
+
+// Ctrl+D: add the open folder to the bookmarks, or remove it.
+void MainWindow::toggleBookmark()
+{
+    if (m_current.isEmpty() || m_model->isTrash())
+        return;
+    if (Bookmarks::contains(m_current)) {
+        Bookmarks::remove(m_current);
+        showMessage(tr("Removed from bookmarks"));
+    } else if (Bookmarks::add(m_current)) {
+        showMessage(tr("“%1” added to bookmarks").arg(QFileInfo(m_current).fileName()));
+    }
+    scheduleSidebarRefresh();
+    updateBookmarkAction();
+}
+
+void MainWindow::updateBookmarkAction()
+{
+    const bool marked = Bookmarks::contains(m_current);
+    m_bookmarkAct->setText(marked ? tr("Remove Bookmark") : tr("Bookmark This Folder"));
+    m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash());
+}
+
+// Unmount and power off a USB drive (GNOME's own tool does it safely).
+void MainWindow::ejectDrive(const QString &root, const QString &name)
+{
+    for (FileJob *job : m_ops->activeJobs()) {
+        for (const Transfer &t : job->transfers()) {
+            if (t.source.startsWith(root + QLatin1Char('/')) || t.targetDir == root
+                || t.targetDir.startsWith(root + QLatin1Char('/'))) {
+                showMessage(tr("Wait until copying to or from “%1” is finished").arg(name));
+                return;
+            }
+        }
+    }
+    if (m_current == root || m_current.startsWith(root + QLatin1Char('/')))
+        navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
+
+    const QString program = qEnvironmentVariable("KAFTILOUS_EJECT_PROGRAM", QStringLiteral("gio"));
+    auto *process = new QProcess(this);
+    connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
+        if (status == QProcess::NormalExit && code == 0) {
+            showMessage(tr("“%1” can be safely removed").arg(name));
+        } else {
+            QString why = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
+            why = why.section(QLatin1Char('\n'), 0, 0);
+            if (why.contains(QLatin1String("busy"), Qt::CaseInsensitive))
+                why = tr("it's in use by another program or the terminal");
+            showMessage(why.isEmpty() ? tr("Couldn't eject “%1”").arg(name)
+                                      : tr("Couldn't eject “%1”: %2").arg(name, why));
+        }
+        scheduleSidebarRefresh();
+        process->deleteLater();
+    });
+    connect(process, &QProcess::errorOccurred, this, [this, process, name](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            showMessage(tr("Couldn't eject “%1”: the gio tool isn't installed").arg(name));
+            process->deleteLater();
+        }
+    });
+    showMessage(tr("Ejecting “%1”…").arg(name));
+    process->start(program, {QStringLiteral("mount"), QStringLiteral("--eject"), root});
+}
+
+// ------------------------------------------------------------ settings ---
+
+void MainWindow::loadSettings()
+{
+    QSettings settings;
+    if (settings.contains("window/geometry"))
+        restoreGeometry(settings.value("window/geometry").toByteArray());
+    if (settings.contains("window/sidebarSplitter"))
+        m_splitter->restoreState(settings.value("window/sidebarSplitter").toByteArray());
+    m_terminalHeight = settings.value("window/terminalHeight", 0).toInt();
+    if (settings.contains("view/listHeader"))
+        m_detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
+    sortBy(settings.value("view/sortColumn", DirectoryModel::NameColumn).toInt(),
+           Qt::SortOrder(settings.value("view/sortOrder", int(Qt::AscendingOrder)).toInt()));
+    m_hiddenAct->setChecked(settings.value("view/showHidden", false).toBool());
+    m_sidebarAct->setChecked(settings.value("view/sidebar", true).toBool());
+    setGridMode(settings.value("view/grid", true).toBool());
+}
+
+void MainWindow::saveSettings()
+{
+    QSettings settings;
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/sidebarSplitter", m_splitter->saveState());
+    if (m_terminalPanel && m_terminalPanel->isVisible())
+        m_terminalHeight = m_terminalPanel->height();
+    settings.setValue("window/terminalHeight", m_terminalHeight);
+    settings.setValue("view/listHeader", m_detailView->header()->saveState());
+    settings.setValue("view/sortColumn", m_model->sortColumn());
+    settings.setValue("view/sortOrder", int(m_model->sortOrder()));
+    settings.setValue("view/showHidden", m_showHidden);
+    settings.setValue("view/sidebar", m_sidebarAct->isChecked());
+    settings.setValue("view/grid", m_grid);
 }
 
 // Highlight the sidebar entry matching the current folder, like Nautilus.
@@ -968,6 +1213,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     syncSidebarSelection();
     updateActions();
     updateEditActions();
+    updateBookmarkAction();
     updateFloatingBar();
     return true;
 }
@@ -1298,6 +1544,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         default:
             break;
         }
+    } else if (m_sidebar && watched == m_sidebar->viewport()
+               && event->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        QListWidgetItem *item = m_sidebar->itemAt(me->position().toPoint());
+        if (item && me->button() == Qt::LeftButton && item->data(EjectRole).toBool()
+            && ejectRect(m_sidebar->visualItemRect(item)).contains(me->position().toPoint())) {
+            ejectDrive(item->data(PathRole).toString(), item->text());
+            return true; // don't also open it
+        }
     } else if (m_view
                && ((isFileViewport(watched) && event->type() == QEvent::MouseButtonPress)
                    || ((watched == m_iconView || watched == m_detailView)
@@ -1599,6 +1854,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         }
         m_ops->cancelAll();
     }
+    saveSettings();
     QMainWindow::closeEvent(event);
 }
 
@@ -1719,6 +1975,8 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_forwardAct);
     go->addAction(m_upAct);
     go->addAction(m_homeAct);
+    go->addSeparator();
+    go->addAction(m_bookmarkAct);
     go->addSeparator();
     go->addAction(m_locationAct);
     go->addAction(m_searchAct);
@@ -2093,7 +2351,33 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
     auto *drop = static_cast<QDropEvent *>(event);
     const QStringList sources = localPaths(drop->mimeData());
     QListWidgetItem *item = m_sidebar->itemAt(drop->position().toPoint());
-    const QString targetDir = item ? QDir::cleanPath(item->data(PathRole).toString()) : QString();
+
+    // Folders dropped on empty space (or a separator) become bookmarks.
+    if (!item || item->data(SeparatorRole).toBool()) {
+        bool allFolders = !sources.isEmpty();
+        for (const QString &source : sources)
+            allFolders = allFolders && QFileInfo(source).isDir() && Trash::filesDirOf(source).isEmpty();
+        if (!allFolders) {
+            if (event->type() == QEvent::DragEnter && !sources.isEmpty())
+                drop->acceptProposedAction();
+            else
+                drop->ignore();
+            return true;
+        }
+        drop->setDropAction(drop->possibleActions() & Qt::LinkAction ? Qt::LinkAction
+                                                                     : Qt::CopyAction);
+        drop->accept();
+        if (event->type() == QEvent::Drop) {
+            for (const QString &source : sources)
+                Bookmarks::add(source);
+            showMessage(sources.size() == 1 ? tr("“%1” added to bookmarks").arg(QFileInfo(sources.first()).fileName())
+                                            : tr("%1 folders added to bookmarks").arg(sources.size()));
+            scheduleSidebarRefresh();
+            updateBookmarkAction();
+        }
+        return true;
+    }
+    const QString targetDir = QDir::cleanPath(item->data(PathRole).toString());
     const Qt::DropAction action =
         targetDir.isEmpty()
             ? Qt::IgnoreAction
@@ -2194,7 +2478,9 @@ void MainWindow::showTerminal(const QString &directory)
         m_terminalPanel->show();
         if (!m_terminalSized) {
             const int total = m_contentSplitter->height();
-            m_contentSplitter->setSizes({total * 62 / 100, total * 38 / 100});
+            const int height = m_terminalHeight > 80 ? qMin(m_terminalHeight, total - 120)
+                                                     : total * 38 / 100;
+            m_contentSplitter->setSizes({total - height, height});
             m_terminalSized = true;
         }
     }
