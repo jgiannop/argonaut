@@ -8,7 +8,10 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QLocale>
+#include <QMimeData>
 #include <QMimeDatabase>
+#include <QSet>
+#include <QUrl>
 #include <QSocketNotifier>
 
 #include <algorithm>
@@ -559,7 +562,39 @@ Qt::ItemFlags DirectoryModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid())
         return Qt::NoItemFlags;
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemNeverHasChildren;
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemNeverHasChildren
+           | Qt::ItemIsDragEnabled;
+}
+
+QStringList DirectoryModel::mimeTypes() const
+{
+    return {QStringLiteral("text/uri-list")};
+}
+
+QMimeData *DirectoryModel::mimeData(const QModelIndexList &indexes) const
+{
+    QList<QUrl> urls;
+    QStringList paths;
+    QSet<int> rows;
+    for (const QModelIndex &index : indexes) {
+        if (!index.isValid() || rows.contains(index.row()))
+            continue; // the table gives one index per column
+        rows.insert(index.row());
+        const QString path = filePath(index);
+        urls.append(QUrl::fromLocalFile(path));
+        paths.append(QDir::toNativeSeparators(path));
+    }
+    if (urls.isEmpty())
+        return nullptr;
+    auto *data = new QMimeData;
+    data->setUrls(urls);
+    data->setText(paths.join(QLatin1Char('\n')));
+    return data;
+}
+
+Qt::DropActions DirectoryModel::supportedDragActions() const
+{
+    return Qt::CopyAction | Qt::MoveAction | Qt::LinkAction;
 }
 
 QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, int role) const

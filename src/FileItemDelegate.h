@@ -4,6 +4,7 @@
 
 #include <QCache>
 #include <QHash>
+#include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QStringList>
 #include <QStyledItemDelegate>
@@ -26,6 +27,8 @@ public:
 
     void setGridMode(bool grid);
     void setTheme(const Theme &theme);
+    // Folder under a drag in progress: drawn highlighted ("drop here").
+    void setDropTarget(const QModelIndex &index) { m_dropTarget = index; }
     QSize gridCellSize(const QFontMetrics &fm) const;
     // Where the inline rename field goes for an item drawn in `itemRect`.
     QRect nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const;
@@ -47,6 +50,7 @@ private:
     Thumbnailer *m_thumbnailer;
     Theme m_theme;
     bool m_grid = true;
+    QPersistentModelIndex m_dropTarget;
     mutable QHash<QString, QStringList> m_wrapCache;
     // Thumbnails pre-rendered at their on-screen size (cost in KiB).
     mutable QCache<QString, QPixmap> m_thumbCache{32 * 1024};

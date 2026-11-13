@@ -4,6 +4,7 @@
 
 #include <QAbstractItemModel>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QMainWindow>
 #include <QStack>
 #include <QString>
@@ -71,6 +72,15 @@ private:
     void updateActions();
 
     void setupFileView(QAbstractItemView *view);
+
+    // Drag and drop (drops are handled here, not by the views/model).
+    bool handleViewDrag(QAbstractItemView *view, QEvent *event);
+    bool handleSidebarDrag(QEvent *event);
+    Qt::DropAction dropActionFor(const QStringList &sources, const QString &targetDir,
+                                 Qt::KeyboardModifiers modifiers,
+                                 Qt::DropActions possible) const;
+    void setDropTarget(const QModelIndex &viewIndex);
+    QByteArray deviceOf(const QString &path) const;
     QModelIndexList selectedViewIndexes() const; // one index (column 0) per selected item
     bool isFileViewport(const QObject *object) const;
     void sortBy(int column, Qt::SortOrder order);
@@ -183,6 +193,10 @@ private:
     QPoint m_menuPressPos; // dragging the window by empty menu bar space
     bool m_menuPressed = false;
     QWidget *m_sidebarPane = nullptr;
+
+    QTimer *m_dragScrollTimer = nullptr; // auto-scroll near the view's edges
+    int m_dragScrollStep = 0;
+    mutable QHash<QString, QByteArray> m_deviceCache; // folder -> storage device
 
     QLineEdit *m_renameEdit = nullptr;
     QString m_renamePath;

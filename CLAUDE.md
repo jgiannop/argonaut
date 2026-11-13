@@ -73,6 +73,12 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - Undo jobs are marked with the `UserActionProperty` dynamic property set to false, so `MainWindow::onJobFinished` treats them differently.
   - The clipboard uses `text/uri-list` plus the GNOME (`x-special/gnome-copied-files`), KDE (cut flag) and Windows ("Preferred DropEffect") formats, so it works with other file managers.
   - UI: `OperationsPanel` (bottom-left card) appears only for jobs running longer than 400 ms. `Toast` (bottom-centre, with an Undo button for trash) avoids the panel's rectangle.
+- Drag and drop:
+  - Drags start in the views; `DirectoryModel::mimeData` gives one URL per item, plus text paths.
+  - Drops are **not** handled by Qt's view/model logic. `eventFilter` intercepts DragEnter/Move/Leave/Drop on the views' viewports (`handleViewDrag`) and on the sidebar (`handleSidebarDrag`). The viewports have `setAcceptDrops(true)` explicitly, otherwise Qt delivers drag events to the view instead.
+  - The target is the folder under the cursor (highlighted through `FileItemDelegate::setDropTarget`), otherwise the open folder.
+  - `dropActionFor` decides like Nautilus: same device (cached `QStorageInfo::device`) moves, another device copies, Ctrl copies, Shift moves. It refuses drops into the item itself, drops where the items already are, and drops into read-only folders.
+  - Drops go through `FileOperations`, so they get progress, undo and USB safety.
 - Menu bar (File/Edit/View/Go/Help, `buildMenuBar`): it sits inside the frameless window's root layout, except on macOS, where it uses the global menu bar. Its empty space drags and maximises the window like the header bars. Every command is a `QAction` member, added to the window with `addActions` so its shortcut works everywhere, and reused in the menus and the context menu. Enablement is updated in `updateEditActions()`.
 - New Folder / New File create "New Folder", "New Folder 2"… then open the inline rename field (`m_pendingRename` → `startRename` once the item appears).
   - Rename (F2) is a `QLineEdit` over the item (`FileItemDelegate::nameEditorRect`), repositioned whenever the viewport paints.
