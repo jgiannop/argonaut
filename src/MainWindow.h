@@ -74,6 +74,10 @@ private:
     bool typeAheadKey(QKeyEvent *event);
     // Open With: a submenu of the recommended apps, and the full chooser.
     QMenu *openWithMenu(const QStringList &files);
+    // Open a file by what it really is (ContentType), warning about programs
+    // in disguise instead of opening them.
+    void openFile(const QString &path);
+    void fixExtension(const QString &path);
     void openWithOther(const QStringList &files);
     void typeAheadFind();
 

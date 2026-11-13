@@ -20,6 +20,8 @@ qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/Format.h
+    src/ContentType.h
+    src/ContentType.cpp
     src/Trash.h
     src/Trash.cpp
     src/Bookmarks.h

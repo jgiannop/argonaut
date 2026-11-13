@@ -34,6 +34,22 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 ## Architecture
 
 - `qt_standard_project_setup()` turns on AUTOMOC/AUTOUIC. Every new source or header must be listed in `CMakeLists.txt`, or moc won't run on it. The GUI goes in `qt_add_executable(kaftilous ...)`. The folder model (`DirectoryModel`), the Trash, bookmark and Open With helpers (`Trash`, `Bookmarks`, `OpenWith`) and the file-operations engine (`FileJob`, `FileOperations`) are the static library `kaftilous_core`, which both the app and `tests/` link against. Keep it free of window/widget code so it stays testable.
+- Real file types (`src/ContentType.{h,cpp}`, in `kaftilous_core`): this is deliberately **stricter than Nautilus/GIO**, which trust any extension only one type uses.
+  - `inspect()` reads the first 4 KiB and calls `judge(byName, byContent)`. The verdicts are Consistent, Identified (no usable name), Mismatch, and Dangerous (`isProgram(content)` while the name isn't a program).
+  - Rules that prevent false alarms:
+    - Generic or empty content (`application/octet-stream`, `x-zerosize`) is never a mismatch.
+    - Related types (`inherits`, e.g. docx is a zip) agree with each other.
+    - Two text types never count as a mismatch, because sniffing can't tell Markdown from Python.
+  - A read-only scan of a real 749-file Downloads folder gave 0 false alarms and caught 1 real mismatch.
+  - `DirectoryModel` applies cached verdicts while listing (`applyCachedContent`) and reads the rest on `m_contentPool` (1 thread). Reading starts only **after** the listing is done, so it never competes with it.
+  - On local disks every file is checked; on removable and network drives (`m_thorough == false`) only files whose data the views ask for, i.e. the visible ones.
+  - Results go to `ContentType::Cache`: QDataStream at `QStandardPaths::CacheLocation/content-types.bin`, keyed by path, size and mtime, at most 200k entries, saved 3 s after changes and on quit.
+  - The effective type (`mimeFor`) is the content type for Identified, Mismatch and Dangerous. `nameMimeFor` is the name-only type. The roles are `VerdictRole`, `NameMimeRole`, `ContentMimeRole` and `Qt::ToolTipRole`.
+  - UI: `FileItemDelegate::paintContentBadge` (amber for Mismatch, red for Dangerous).
+    - `MainWindow::openFile` warns about Dangerous files and never runs them, and opens Mismatch/Identified files with the default app for the real type.
+    - `fixExtension` ("Rename to …") is undoable, and Properties shows "Name says" against the real type.
+  - Tests set `XDG_CACHE_HOME`; `ContentType::readCount()` lets them prove that a second visit reads nothing.
+- Performance guards in `DirectoryModel`: each batch of a big listing is sorted on its own and **merged** (`resort(sortedPrefix)`), not re-sorted in full. `m_rowByPath` is rebuilt lazily (`rebuildIndex()` only marks it stale; readers call `ensureIndex()`). `FileEntry::fullPath` is built once (`setDir`). Re-run the A/B benchmark if you touch these: 20,000 files should load fully in about 0.2 s.
 - Sizes: always use `formatSize()` (`src/Format.h`). It gives powers of 1000 with kB/MB/GB, like GNOME and drive labels; never call `QLocale::formattedDataSize`'s default, which gives KiB/MiB.
 - Natural name order uses `QCollator` in numeric mode. In the "C"/POSIX locale Qt can't do numeric collation, so `naturalCollator()` uses English rules there; keep that, or `LANG=C` users get "file10" before "file2".
 - The look copies GNOME Files (Nautilus) / libadwaita, but it's built only from Qt, so it looks the same on every platform:

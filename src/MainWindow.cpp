@@ -4,6 +4,7 @@
 
 #include "Bookmarks.h"
 #include "ConflictDialog.h"
+#include "ContentType.h"
 #include "DirectoryModel.h"
 #include "FileFilterProxy.h"
 #include "FileItemDelegate.h"
@@ -253,6 +254,8 @@ QDialog#propertiesDialog { background: @window; }
 QLabel#propLabel { color: @dim; }
 QLabel#propValue { color: @fg; }
 QLabel#propHeading { color: @fg; font-weight: bold; padding-top: 10px; }
+QLabel#propWarning { color: #c88800; font-weight: bold; }
+QLabel#propDanger { color: #e01b24; font-weight: bold; }
 QComboBox#propCombo { background: @pathBg; color: @fg; border: none; border-radius: 6px;
     padding: 5px 10px; }
 QComboBox#propCombo:disabled { color: @dim; }
@@ -1376,7 +1379,7 @@ void MainWindow::openIndex(const QModelIndex &viewIndex)
     if (m_model->isDir(index))
         navigateTo(path);
     else
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        openFile(path);
 }
 
 void MainWindow::updateActions()
@@ -1776,7 +1779,7 @@ void MainWindow::openSelection()
     for (const QModelIndex &index : selected) {
         const QModelIndex source = toSource(index);
         if (!m_model->isDir(source))
-            QDesktopServices::openUrl(QUrl::fromLocalFile(m_model->filePath(source)));
+            openFile(m_model->filePath(source));
     }
 }
 
@@ -1932,6 +1935,15 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
     } else if (index.isValid()) {
         menu->addAction(m_openAct);
+        const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+        if ((verdict == ContentType::Verdict::Mismatch || verdict == ContentType::Verdict::Dangerous)
+            && selectedViewIndexes().size() == 1) {
+            const QString path = m_model->filePath(toSource(index));
+            const QString fixed = ContentType::fixedName(QFileInfo(path).fileName(),
+                                                         index.data(DirectoryModel::ContentMimeRole).toString());
+            if (!fixed.isEmpty())
+                menu->addAction(tr("Rename to “%1”").arg(fixed), this, [this, path] { fixExtension(path); });
+        }
         if (!m_model->isDir(toSource(index)) && OpenWith::isSupported()) {
             QStringList files;
             for (const QString &path : selectedPaths()) {
@@ -2977,4 +2989,77 @@ void MainWindow::openWithOther(const QStringList &files)
         showMessage(tr("Opening with %1").arg(app.name));
     else
         showMessage(tr("Couldn't start %1").arg(app.name));
+}
+
+// ------------------------------------------------------ real file types ---
+
+void MainWindow::openFile(const QString &path)
+{
+    const QFileInfo info(path);
+    const qint64 mtime = info.lastModified().toMSecsSinceEpoch();
+    ContentType::Result result;
+    if (!ContentType::Cache::instance().lookup(path, info.size(), mtime, &result)) {
+        result = ContentType::inspect(path); // one file: well under a millisecond
+        ContentType::Cache::instance().store(path, info.size(), mtime, result);
+    }
+
+    if (result.verdict == ContentType::Verdict::Dangerous) {
+        QMessageBox box(QMessageBox::Warning, tr("This file is a program in disguise"),
+                        tr("“%1” is named like a document, but it is really a program.")
+                            .arg(info.fileName()),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(ContentType::describe(result) + QStringLiteral(".\n\n")
+                               + tr("Files like this are a common way to spread malware. "
+                                    "Kaftilous won't run it."));
+        QPushButton *keep = box.addButton(tr("Don't Open"), QMessageBox::RejectRole);
+        QPushButton *trash = box.addButton(tr("Move to Trash"), QMessageBox::DestructiveRole);
+        QPushButton *asNamed = box.addButton(tr("Open as Named"), QMessageBox::AcceptRole);
+        asNamed->setToolTip(tr("Open with the app for its name, without running it"));
+        box.setDefaultButton(keep);
+        box.exec();
+        if (box.clickedButton() == trash)
+            m_ops->trash({path});
+        else if (box.clickedButton() == asNamed)
+            QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        return;
+    }
+
+    // Named wrongly or not at all: open with the app for what it really is.
+    if ((result.verdict == ContentType::Verdict::Mismatch
+         || result.verdict == ContentType::Verdict::Identified)
+        && OpenWith::isSupported()) {
+        QString defaultId;
+        const QList<OpenWith::App> apps = OpenWith::appsFor(result.contentMime, &defaultId);
+        for (const OpenWith::App &app : apps) {
+            if (app.id == defaultId || defaultId.isEmpty()) {
+                if (OpenWith::launch(app, {path})) {
+                    showMessage(tr("Opening as %1 with %2")
+                                    .arg(QMimeDatabase().mimeTypeForName(result.contentMime).comment(),
+                                         app.name));
+                    return;
+                }
+            }
+        }
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+// Give a mismatched file the extension its content calls for (undoable).
+void MainWindow::fixExtension(const QString &path)
+{
+    const QFileInfo info(path);
+    const ContentType::Result result = ContentType::inspect(path);
+    const QString fixed = ContentType::fixedName(info.fileName(), result.contentMime);
+    if (fixed.isEmpty())
+        return;
+    QString target = info.absolutePath() + QLatin1Char('/') + fixed;
+    if (QFileInfo::exists(target))
+        target = uniqueTargetPath(info.absolutePath(), fixed, false);
+    if (!QDir().rename(path, target)) {
+        showMessage(tr("Couldn't rename “%1”").arg(info.fileName()));
+        return;
+    }
+    m_ops->recordUndo(FileJob::Kind::Move, {{path, target}}, tr("Undo Rename"));
+    selectPaths({target});
+    showMessage(tr("Renamed to “%1”").arg(QFileInfo(target).fileName()));
 }

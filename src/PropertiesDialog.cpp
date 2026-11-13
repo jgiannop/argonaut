@@ -1,5 +1,7 @@
 #include "PropertiesDialog.h"
 
+#include "ContentType.h"
+
 #include "Format.h"
 
 #include <QCheckBox>
@@ -132,7 +134,30 @@ PropertiesDialog::PropertiesDialog(const QStringList &paths, QWidget *parent)
     };
 
     static const QMimeDatabase db;
-    if (single) {
+    if (single && !m_isDir && first.isFile()) {
+        // What the name says vs. what the file really is.
+        const ContentType::Result real = ContentType::inspect(first.absoluteFilePath());
+        const QString named = db.mimeTypeForName(real.nameMime).comment();
+        const QString actual = db.mimeTypeForName(real.contentMime).comment();
+        switch (real.verdict) {
+        case ContentType::Verdict::Mismatch:
+        case ContentType::Verdict::Dangerous: {
+            row(tr("Type"), value(actual, this));
+            row(tr("Name says"), value(named, this));
+            QLabel *warning = value(ContentType::describe(real), this);
+            warning->setObjectName(real.verdict == ContentType::Verdict::Dangerous ? "propDanger"
+                                                                                   : "propWarning");
+            row(QString(), warning);
+            break;
+        }
+        case ContentType::Verdict::Identified:
+            row(tr("Type"), value(tr("%1 (recognised from its content)").arg(actual), this));
+            break;
+        default:
+            row(tr("Type"), value(db.mimeTypeForName(ContentType::effectiveMime(real)).comment(), this));
+            break;
+        }
+    } else if (single) {
         row(tr("Type"), value(m_isDir ? tr("Folder") : db.mimeTypeForFile(first).comment(), this));
         if (first.isSymLink())
             row(tr("Link to"), value(QDir::toNativeSeparators(first.symLinkTarget()), this));

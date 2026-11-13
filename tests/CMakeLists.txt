@@ -25,3 +25,8 @@ qt_add_executable(tst_openwith tst_openwith.cpp)
 target_link_libraries(tst_openwith PRIVATE kaftilous_core Qt6::Test)
 add_test(NAME openwith COMMAND tst_openwith)
 set_tests_properties(openwith PROPERTIES TIMEOUT 60)
+
+qt_add_executable(tst_contenttype tst_contenttype.cpp)
+target_link_libraries(tst_contenttype PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME contenttype COMMAND tst_contenttype)
+set_tests_properties(contenttype PROPERTIES TIMEOUT 60)

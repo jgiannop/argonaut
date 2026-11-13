@@ -53,6 +53,7 @@ private slots:
     void dragData();
     void sizesLikeGnome();
     void naturalOrderInCLocale();
+    void realTypesInBackground();
     void bigFolder();
 
 private:
@@ -278,5 +279,54 @@ void TestDirectoryModel::naturalOrderInCLocale()
     QLocale::setDefault(QLocale::system());
 }
 
-QTEST_GUILESS_MAIN(TestDirectoryModel)
+// Names are shown at once; the real content is checked in the background,
+// remembered, and not read again on the next visit.
+void TestDirectoryModel::realTypesInBackground()
+{
+    {
+        QFile f(m_dir + "/report.pdf");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("<!DOCTYPE html><html><body>Download failed</body></html>\n");
+    }
+    {
+        QFile f(m_dir + "/real.png");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x06\0\0\0", 33));
+    }
+    const int readsBefore = ContentType::readCount();
+    QVERIFY(load(m_dir));
+    const auto verdictOf = [this](const char *name) {
+        return ContentType::Verdict(
+            m_model->indexForPath(m_dir + '/' + name).data(DirectoryModel::VerdictRole).toInt());
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(verdictOf("report.pdf"), ContentType::Verdict::Mismatch, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(verdictOf("real.png"), ContentType::Verdict::Consistent, 5000);
+    const QModelIndex fake = m_model->indexForPath(m_dir + "/report.pdf");
+    QCOMPARE(fake.siblingAtColumn(DirectoryModel::TypeColumn).data().toString(),
+             QStringLiteral("HTML document")); // the real type is shown
+    QVERIFY(fake.data(Qt::ToolTipRole).toString().contains("HTML"));
+    QCOMPARE(ContentType::readCount() - readsBefore, 2);
+
+    // Coming back: answers come from the cache, no file is read.
+    const int readsAfterFirst = ContentType::readCount();
+    DirectoryModel again;
+    QSignalSpy loaded(&again, &DirectoryModel::loaded);
+    again.setPath(m_dir);
+    QVERIFY(loaded.wait(5000));
+    QCOMPARE(ContentType::Verdict(again.indexForPath(m_dir + "/report.pdf")
+                                      .data(DirectoryModel::VerdictRole)
+                                      .toInt()),
+             ContentType::Verdict::Mismatch);
+    QTest::qWait(200);
+    QCOMPARE(ContentType::readCount(), readsAfterFirst);
+}
+
+int main(int argc, char **argv)
+{
+    QTemporaryDir cache;
+    qputenv("XDG_CACHE_HOME", QFile::encodeName(cache.path())); // never the real cache
+    QCoreApplication app(argc, argv);
+    TestDirectoryModel test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_directorymodel.moc"
