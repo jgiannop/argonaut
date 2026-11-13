@@ -50,6 +50,12 @@ QString titleFor(const FileJob *job)
     case FileJob::Kind::Delete:
         return n == 1 ? OperationsPanel::tr("Deleting “%1”").arg(item)
                       : OperationsPanel::tr("Deleting %n items", nullptr, n);
+    case FileJob::Kind::Extract:
+        return n == 1 ? OperationsPanel::tr("Extracting “%1”").arg(item)
+                      : OperationsPanel::tr("Extracting %n archives", nullptr, n);
+    case FileJob::Kind::Compress:
+        return OperationsPanel::tr("Compressing into “%1”")
+            .arg(t.isEmpty() ? QString() : t.first().targetName);
     }
     return {};
 }

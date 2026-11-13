@@ -57,6 +57,39 @@ FileJob *FileOperations::trash(const QStringList &paths)
     return startJob(FileJob::Kind::Trash, transfersInto(paths, QString()), true, true);
 }
 
+FileJob *FileOperations::extract(const QStringList &archives, const QString &targetDir)
+{
+    return startJob(FileJob::Kind::Extract, transfersInto(archives, targetDir), true, true);
+}
+
+FileJob *FileOperations::compress(const QStringList &paths, const QString &targetDir,
+                                  const QString &archiveName, FileJob::ArchiveFormat format)
+{
+    QList<Transfer> transfers;
+    for (const QString &path : paths)
+        transfers.append({path, targetDir, archiveName});
+    // startJob() starts the job at once, so it applies the format from here.
+    if (transfers.isEmpty())
+        return nullptr;
+    m_pendingFormat = format;
+    return startJob(FileJob::Kind::Compress, transfers, true, true);
+}
+
+bool FileOperations::isArchive(const QString &mimeType)
+{
+    static const QStringList archives = {
+        "application/zip", "application/x-tar", "application/x-compressed-tar",
+        "application/x-bzip-compressed-tar", "application/x-bzip2-compressed-tar",
+        "application/x-xz-compressed-tar", "application/x-zstd-compressed-tar",
+        "application/x-lzma-compressed-tar", "application/x-7z-compressed", "application/vnd.rar",
+        "application/x-rar", "application/x-rar-compressed", "application/gzip", "application/x-xz",
+        "application/x-bzip", "application/x-bzip2", "application/zstd", "application/x-cpio",
+        "application/x-iso9660-image", "application/x-cd-image", "application/vnd.debian.binary-package",
+        "application/x-rpm", "application/java-archive", "application/x-lha", "application/x-archive",
+    };
+    return FileJob::archivesSupported() && archives.contains(mimeType);
+}
+
 FileJob *FileOperations::deletePermanently(const QStringList &paths)
 {
     return startJob(FileJob::Kind::Delete, transfersInto(paths, QString()), false, true);
@@ -112,6 +145,7 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
     auto *job = new FileJob(kind, std::move(transfers), this);
     job->setProperty(UserActionProperty, userAction);
     job->setInteractive(m_askOnConflict);
+    job->setArchiveFormat(m_pendingFormat);
     connect(job, &FileJob::conflict, this, [this, job](const QString &source, const QString &existing) {
         emit conflictRaised(job, source, existing);
     });
@@ -160,6 +194,10 @@ QString FileOperations::undoText() const
         return tr("Undo Move (%1)").arg(items);
     case FileJob::Kind::Trash:
         return tr("Undo Move to Trash (%1)").arg(items);
+    case FileJob::Kind::Extract:
+        return tr("Undo Extract");
+    case FileJob::Kind::Compress:
+        return tr("Undo Compress");
     case FileJob::Kind::Restore:
         break;
     }
@@ -185,6 +223,8 @@ void FileOperations::undo()
 
     switch (entry.kind) {
     case FileJob::Kind::Copy:
+    case FileJob::Kind::Extract:
+    case FileJob::Kind::Compress:
         startJob(FileJob::Kind::Trash, transfersInto(copies, QString()), false, false);
         break;
     case FileJob::Kind::Move:

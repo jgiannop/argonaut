@@ -30,3 +30,13 @@ qt_add_executable(tst_contenttype tst_contenttype.cpp)
 target_link_libraries(tst_contenttype PRIVATE kaftilous_core Qt6::Test)
 add_test(NAME contenttype COMMAND tst_contenttype)
 set_tests_properties(contenttype PROPERTIES TIMEOUT 60)
+
+if(LIBARCHIVE_FOUND)
+    qt_add_executable(tst_archives tst_archives.cpp)
+    target_link_libraries(tst_archives PRIVATE kaftilous_core Qt6::Test)
+    add_test(NAME archives COMMAND tst_archives)
+    set_tests_properties(archives PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KAFTILOUS_TRASH_HOME_ONLY=1"
+        TIMEOUT 300
+    )
+endif()
