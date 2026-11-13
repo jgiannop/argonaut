@@ -72,7 +72,7 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
         m_active.removeOne(job);
         const QList<TransferResult> results = job->results();
         if (recordUndo && !results.isEmpty()) {
-            m_undo.append({job->kind(), results});
+            m_undo.append({job->kind(), results, QString()});
             while (m_undo.size() > MaxUndo)
                 m_undo.removeFirst();
             emit undoChanged();
@@ -85,11 +85,24 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
     return job;
 }
 
+void FileOperations::recordUndo(FileJob::Kind kind, const QList<TransferResult> &results,
+                                const QString &label)
+{
+    if (results.isEmpty())
+        return;
+    m_undo.append({kind, results, label});
+    while (m_undo.size() > MaxUndo)
+        m_undo.removeFirst();
+    emit undoChanged();
+}
+
 QString FileOperations::undoText() const
 {
     if (m_undo.isEmpty())
         return tr("Undo");
     const UndoEntry &e = m_undo.last();
+    if (!e.label.isEmpty())
+        return e.label;
     const int n = int(e.results.size());
     const QString items = n == 1 ? tr("1 item") : tr("%1 items").arg(n);
     switch (e.kind) {

@@ -37,6 +37,8 @@ qt_add_executable(kaftilous
     src/PathBar.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
+    src/FileFilterProxy.h
+    src/FileFilterProxy.cpp
     src/FileItemDelegate.h
     src/FileItemDelegate.cpp
     src/Thumbnailer.h

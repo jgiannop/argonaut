@@ -3,6 +3,7 @@
 #include "Thumbnailer.h"
 
 #include <QAbstractItemView>
+#include <QAbstractProxyModel>
 #include <QFileSystemModel>
 #include <QLocale>
 #include <QPainter>
@@ -17,6 +18,17 @@ constexpr int GridMaxLines = 3;
 constexpr int GridPad = 6;
 constexpr int ListInfoWidth = 230;
 } // namespace
+
+// The view may show the file model through proxies (search filter); find
+// the QFileSystemModel and the matching index in it.
+static const QFileSystemModel *fileModel(const QModelIndex &index, QModelIndex *source)
+{
+    QModelIndex i = index;
+    while (auto *proxy = qobject_cast<const QAbstractProxyModel *>(i.model()))
+        i = proxy->mapToSource(i);
+    *source = i;
+    return qobject_cast<const QFileSystemModel *>(i.model());
+}
 
 FileItemDelegate::FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent)
     : QStyledItemDelegate(parent)
@@ -39,6 +51,22 @@ QSize FileItemDelegate::gridCellSize(const QFontMetrics &fm) const
 {
     return QSize(GridCellWidth,
                  GridPad + GridIconSize + GridPad + GridMaxLines * fm.lineSpacing() + 2 * GridPad);
+}
+
+QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const
+{
+    const int height = fm.height() + 12;
+    if (m_grid) {
+        // Under the icon; a bit wider than the cell so names are editable.
+        const QRect cell = itemRect.adjusted(3, 2, -3, -2);
+        const int top = cell.top() + GridPad + GridIconSize + GridPad - 5;
+        const int width = qMax(cell.width(), 190);
+        return QRect(cell.center().x() - width / 2 + 1, top, width, height);
+    }
+    const QRect row = itemRect.adjusted(6, 1, -6, -1);
+    const int left = row.left() + 10 + ListIconSize + 12 - 6;
+    const int right = row.right() - 12 - ListInfoWidth - 6;
+    return QRect(left, row.center().y() - height / 2 + 1, qMax(120, right - left), height);
 }
 
 QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &) const
@@ -118,8 +146,9 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
 
     // Secondary info: size (files) and modification date.
     QString info;
-    if (auto *model = qobject_cast<const QFileSystemModel *>(index.model())) {
-        const QFileInfo fi = model->fileInfo(index);
+    QModelIndex source;
+    if (auto *model = fileModel(index, &source)) {
+        const QFileInfo fi = model->fileInfo(source);
         const QLocale locale;
         const QString date = locale.toString(fi.lastModified(), QLocale::ShortFormat);
         info = fi.isDir() ? date : locale.formattedDataSize(fi.size()) + "    " + date;
@@ -189,8 +218,9 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
     const qreal dpr = painter->device()->devicePixelRatioF();
 
     if (m_thumbnailer) {
-        if (auto *model = qobject_cast<const QFileSystemModel *>(index.model())) {
-            const QPixmap thumb = m_thumbnailer->thumbnail(model->fileInfo(index));
+        QModelIndex source;
+        if (auto *model = fileModel(index, &source)) {
+            const QPixmap thumb = m_thumbnailer->thumbnail(model->fileInfo(source));
             if (!thumb.isNull()) {
                 // cacheKey() changes whenever the thumbnail is replaced.
                 const QString key = QStringLiteral("%1:%2x%3@%4")

@@ -48,7 +48,8 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - Grid/list is the same view switched between `IconMode` and `ListMode` (`setGridMode`). Grid cell size comes from `FileItemDelegate::gridCellSize`.
   - `FileItemDelegate` paints every item itself: wrapped, middle-elided names, rounded hover/selection, list-mode size/date.
   - `Thumbnailer` loads thumbnails in a thread pool. It reads the freedesktop cache (`~/.cache/thumbnails`) on Linux first, then decodes images with `QImageReader`. It emits `thumbnailReady`, which repaints the viewport.
-  - Search (Ctrl+F) only filters the current folder through the model's name filters (`updateFilter`). It drops `QDir::AllDirs` while active so folders are filtered too.
+  - The view shows `QFileSystemModel` through `FileFilterProxy` (a `QSortFilterProxyModel`). Indexes from the view or selection are **proxy** indexes: convert them with `toSource()` / `toView()` before calling `m_model->filePath`/`isDir`/etc. `FileItemDelegate` resolves through proxies itself.
+  - Search (Ctrl+F) filters only the rows directly inside the current folder (`FileFilterProxy::setQuery`; case-insensitive substring). Don't use `QFileSystemModel::setNameFilters` for this: that model never hides folders the view holds persistent indexes to, so they leaked into results. The model's own filter only handles hidden files.
 - `navigateTo(path, addToHistory)` is the **only** way to change the current folder. It validates and cleans the path into `m_current` (always with `/` separators; the native form is only for display), leaves search mode, and updates history, `PathBar`, the title, the sidebar selection and the floating bar. Everything that changes folder goes through it: actions, sidebar, breadcrumbs, the typed path, double-click and the command-line argument.
 - `PathBar` shows breadcrumbs. Leading crumbs are hidden when space is short, and it switches to a `QLineEdit` on click or Ctrl+L. It emits `pathActivated`.
 - Sidebar entries are `QListWidgetItem`s with the path in `PathRole` (`Qt::UserRole`). Separator rows have `SeparatorRole` and an empty path.
@@ -63,4 +64,9 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - Undo jobs are marked with the `UserActionProperty` dynamic property set to false, so `MainWindow::onJobFinished` treats them differently.
   - The clipboard uses `text/uri-list` plus the GNOME (`x-special/gnome-copied-files`), KDE (cut flag) and Windows ("Preferred DropEffect") formats, so it works with other file managers.
   - UI: `OperationsPanel` (bottom-left card) appears only for jobs running longer than 400 ms. `Toast` (bottom-centre, with an Undo button for trash) avoids the panel's rectangle.
+- Menu bar (File/Edit/View/Go/Help, `buildMenuBar`): it sits inside the frameless window's root layout, except on macOS, where it uses the global menu bar. Its empty space drags and maximises the window like the header bars. Every command is a `QAction` member, added to the window with `addActions` so its shortcut works everywhere, and reused in the menus and the context menu. Enablement is updated in `updateEditActions()`.
+- New Folder / New File create "New Folder", "New Folder 2"… then open the inline rename field (`m_pendingRename` → `startRename` once the item appears).
+  - Rename (F2) is a `QLineEdit` over the item (`FileItemDelegate::nameEditorRect`), repositioned whenever the viewport paints.
+  - Enter and Esc are handled in `eventFilter` and must be consumed: QLineEdit passes Enter on, and the view would then open the item.
+  - Renames and new items are put on the undo stack with `FileOperations::recordUndo` (undoing a rename moves it back; undoing a new item trashes it).
 - There is no status bar. `m_floatingBar` (a `QLabel` over the view) shows selection info and temporary messages (`showMessage`).
