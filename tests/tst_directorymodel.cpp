@@ -55,9 +55,15 @@ private slots:
     void naturalOrderInCLocale();
     void realTypesInBackground();
     void bigFolder();
+    void searchMatching();
+    void searchFindsInSubfolders();
+    void searchHiddenAndSymlinks();
+    void searchEndsAndRefreshes();
+    void searchStopsAtLimit();
 
 private:
     bool load(const QString &path);
+    bool search(const QString &query);
 
     QTemporaryDir *m_tmp = nullptr;
     QString m_dir;
@@ -83,6 +89,113 @@ bool TestDirectoryModel::load(const QString &path)
     QSignalSpy loaded(m_model, &DirectoryModel::loaded);
     m_model->setPath(path);
     return loaded.wait(20000);
+}
+
+bool TestDirectoryModel::search(const QString &query)
+{
+    QSignalSpy loaded(m_model, &DirectoryModel::loaded);
+    m_model->setSearch(query);
+    return loaded.wait(20000);
+}
+
+void TestDirectoryModel::searchMatching()
+{
+    auto words = [](const QString &q) {
+        return DirectoryModel::foldForSearch(q).split(' ', Qt::SkipEmptyParts);
+    };
+    QVERIFY(DirectoryModel::matchesSearch("Annual REPORT 2024.pdf", words("report")));
+    QVERIFY(DirectoryModel::matchesSearch("Annual REPORT 2024.pdf", words("2024 annual"))); // any order
+    QVERIFY(!DirectoryModel::matchesSearch("Annual REPORT 2024.pdf", words("report 2023")));
+    QVERIFY(DirectoryModel::matchesSearch("Θάλασσα.jpg", words("θαλασσα")));  // no accents typed
+    QVERIFY(DirectoryModel::matchesSearch("ΘΆΛΑΣΣΑ.jpg", words("θάλασσα")));  // case
+    QVERIFY(DirectoryModel::matchesSearch("Καλοκαίρι.jpg", words("καλοκαιρι")));
+    QVERIFY(DirectoryModel::matchesSearch("Café menu.txt", words("cafe")));
+    QVERIFY(DirectoryModel::matchesSearch("cafe menu.txt", words("Café")));
+    QVERIFY(!DirectoryModel::matchesSearch("compare.png", words("compa x")));
+}
+
+void TestDirectoryModel::searchFindsInSubfolders()
+{
+    touch(m_dir + "/report.txt");
+    touch(m_dir + "/Work/2024/Annual Report.pdf");
+    touch(m_dir + "/Work/notes.txt");
+    QDir().mkpath(m_dir + "/Reports"); // folders match too
+    touch(m_dir + "/Reports/other.txt");
+    QVERIFY(load(m_dir));
+    QVERIFY(search("report"));
+
+    QVERIFY(m_model->isSearch());
+    QCOMPARE(names(*m_model), QStringList({"Reports", "Annual Report.pdf", "report.txt"}));
+    QCOMPARE(m_model->headerData(DirectoryModel::TypeColumn, Qt::Horizontal).toString(),
+             QStringLiteral("Location"));
+    const QModelIndex deep = m_model->indexForPath(m_dir + "/Work/2024/Annual Report.pdf");
+    QVERIFY(deep.isValid());
+    QCOMPARE(m_model->index(deep.row(), DirectoryModel::TypeColumn).data().toString(),
+             QDir::toNativeSeparators("Work/2024"));
+    QVERIFY(m_model->index(deep.row(), 0).data(Qt::ToolTipRole).toString().contains("Work"));
+    QVERIFY(!m_model->searchTruncated());
+
+    QVERIFY(search("annual 2024")); // words are matched against the name only
+    QCOMPARE(names(*m_model), QStringList());
+    QVERIFY(search("annual report"));
+    QCOMPARE(names(*m_model), QStringList({"Annual Report.pdf"}));
+}
+
+void TestDirectoryModel::searchHiddenAndSymlinks()
+{
+    touch(m_dir + "/visible/match.txt");
+    touch(m_dir + "/.config/match.txt");
+    touch(m_dir + "/.match-hidden.txt");
+    // A loop: following it would never end (or find everything twice).
+    QVERIFY(QFile::link(m_dir, m_dir + "/visible/loop"));
+    QVERIFY(load(m_dir));
+    QVERIFY(search("match"));
+    QCOMPARE(names(*m_model), QStringList({"match.txt"}));
+
+    QSignalSpy loaded(m_model, &DirectoryModel::loaded);
+    m_model->setShowHidden(true); // searches again, inside hidden folders too
+    QVERIFY(loaded.wait(20000));
+    QCOMPARE(names(*m_model).size(), 3);
+}
+
+void TestDirectoryModel::searchEndsAndRefreshes()
+{
+    touch(m_dir + "/a.txt");
+    touch(m_dir + "/sub/match.txt");
+    touch(m_dir + "/sub/match2.txt");
+    QVERIFY(load(m_dir));
+    QVERIFY(search("match"));
+    QCOMPARE(names(*m_model).size(), 2);
+
+    // A result removed in a (not watched) sub-folder goes on refresh().
+    QVERIFY(QFile::remove(m_dir + "/sub/match2.txt"));
+    m_model->refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(names(*m_model), QStringList({"match.txt"}), 5000);
+
+    QVERIFY(search(QString())); // cleared: the folder again
+    QVERIFY(!m_model->isSearch());
+    QCOMPARE(names(*m_model), QStringList({"sub", "a.txt"}));
+    QCOMPARE(m_model->headerData(DirectoryModel::TypeColumn, Qt::Horizontal).toString(),
+             QStringLiteral("Type"));
+
+    QVERIFY(search("match"));
+    QVERIFY(load(m_dir + "/sub")); // going elsewhere ends the search
+    QVERIFY(!m_model->isSearch());
+    QCOMPARE(names(*m_model), QStringList({"match.txt"}));
+}
+
+void TestDirectoryModel::searchStopsAtLimit()
+{
+    const int n = DirectoryModel::MaxSearchResults + 50;
+    QDir().mkpath(m_dir + "/many");
+    for (int i = 0; i < n; ++i) {
+        QFile f(m_dir + "/many/hit" + QString::number(i));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+    }
+    QVERIFY(load(m_dir));
+    QVERIFY(search("hit"));
+    QCOMPARE(m_model->rowCount(), DirectoryModel::MaxSearchResults);
+    QVERIFY(m_model->searchTruncated());
 }
 
 void TestDirectoryModel::naturalOrderFoldersFirst()

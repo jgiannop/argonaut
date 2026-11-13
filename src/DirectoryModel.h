@@ -88,6 +88,19 @@ public:
     // Re-read the folder soon (changes are also picked up automatically).
     void refresh();
 
+    // Search: with a query, the model shows every item under path() whose
+    // name contains all its words (ignoring case and accents), found by a
+    // walk on a worker thread. The Type column becomes "Location". An empty
+    // query shows the folder again. setPath() always ends the search.
+    void setSearch(const QString &query);
+    QString searchQuery() const { return m_query; }
+    bool isSearch() const { return !m_query.isEmpty(); }
+    bool searchTruncated() const { return m_searchTruncated; } // hit MaxSearchResults
+    static constexpr int MaxSearchResults = 10000;
+    // Matching, exposed for tests: words = foldForSearch(query).split(' ').
+    static QString foldForSearch(const QString &text);
+    static bool matchesSearch(const QString &name, const QStringList &foldedWords);
+
     void setShowHidden(bool show);
     bool showHidden() const { return m_showHidden; }
 
@@ -122,6 +135,7 @@ signals:
 private:
     using Entries = std::vector<FileEntry>;
 
+    void relist(); // start over (folder or search changed)
     void watch(const QStringList &dirs);
     void folderChanged();
     void startScan(bool initial);
@@ -159,10 +173,13 @@ private:
     void applyContent(quint64 generation, const QList<ContentResult> &results);
     QIcon iconFor(const FileEntry &e) const;
     QString typeFor(const FileEntry &e) const;
+    QString searchLocation(const FileEntry &e) const;
 
     QString m_path;
     QStringList m_dirs; // folders listed: just m_path, or every trash folder
     bool m_trash = false;
+    QString m_query;                 // search (empty: just the folder)
+    bool m_searchTruncated = false;
     Entries m_rows;   // shown entries, sorted
     Entries m_hidden; // hidden entries while they aren't shown
     mutable QHash<QString, int> m_rowByPath; // full path -> row; built lazily

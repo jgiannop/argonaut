@@ -26,6 +26,9 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 #endif
+#if defined(Q_OS_UNIX)
+#include <sys/stat.h>
+#endif
 
 namespace {
 
@@ -165,16 +168,80 @@ void DirectoryModel::folderChanged()
 
 void DirectoryModel::setPath(const QString &path)
 {
-    ++m_generation;
-    m_rescanTimer.stop();
-    m_rescanPending = false;
-
-    beginResetModel();
     m_path = path;
+    m_query.clear();
     m_trash = Trash::isFilesDir(path);
     m_dirs = m_trash ? Trash::filesDirs() : QStringList{path};
     if (!m_dirs.contains(path))
         m_dirs.prepend(path);
+    relist();
+}
+
+void DirectoryModel::setSearch(const QString &query)
+{
+    const QString q = query.simplified();
+    if (q == m_query || m_path.isEmpty())
+        return;
+    m_query = q;
+    relist();
+}
+
+namespace {
+bool isAscii(const QString &s)
+{
+    for (const QChar c : s) {
+        if (c.unicode() >= 0x80)
+            return false;
+    }
+    return true;
+}
+} // namespace
+
+// Lower case without accents: "Θάλασσα" -> "θαλασσα", "Café" -> "cafe".
+QString DirectoryModel::foldForSearch(const QString &text)
+{
+    if (isAscii(text))
+        return text.toLower();
+    const QString decomposed = text.normalized(QString::NormalizationForm_D);
+    QString out;
+    out.reserve(decomposed.size());
+    for (const QChar c : decomposed) {
+        if (c.category() != QChar::Mark_NonSpacing)
+            out.append(c);
+    }
+    return out.toCaseFolded();
+}
+
+bool DirectoryModel::matchesSearch(const QString &name, const QStringList &foldedWords)
+{
+    // Fast path for the common case: no allocation for ASCII names.
+    bool asciiWords = true;
+    for (const QString &w : foldedWords)
+        asciiWords = asciiWords && isAscii(w);
+    if (asciiWords && isAscii(name)) {
+        for (const QString &w : foldedWords) {
+            if (!name.contains(w, Qt::CaseInsensitive))
+                return false;
+        }
+        return true;
+    }
+    const QString folded = foldForSearch(name);
+    for (const QString &w : foldedWords) {
+        if (!folded.contains(w))
+            return false;
+    }
+    return true;
+}
+
+void DirectoryModel::relist()
+{
+    ++m_generation;
+    m_rescanTimer.stop();
+    m_rescanPending = false;
+    m_searchTruncated = false;
+    const QString path = m_path;
+
+    beginResetModel();
     m_rows.clear();
     m_hidden.clear();
     m_rowByPath.clear();
@@ -190,6 +257,8 @@ void DirectoryModel::setPath(const QString &path)
                                         "fuse.rclone", "9p", "afs", "davfs", "fuse.gvfsd-fuse"};
     const QString fs = QString::fromLatin1(QStorageInfo(path).fileSystemType());
     m_thorough = m_trash || (!needsSafeWrites(path) && !network.contains(fs));
+    if (isSearch())
+        m_thorough = false; // results can be anywhere below: check only what's on screen
 
     m_loading = true;
     watch(m_dirs);
@@ -213,16 +282,23 @@ void DirectoryModel::startScan(bool initial)
     const quint64 generation = m_generation;
     const QStringList dirs = m_dirs;
     const bool trash = m_trash;
-    m_pool.start([this, generation, dirs, trash, initial] {
+    const QStringList words = isSearch() ? foldForSearch(m_query).split(QLatin1Char(' '), Qt::SkipEmptyParts)
+                                         : QStringList();
+    const bool search = !words.isEmpty();
+    const bool showHidden = m_showHidden;
+    m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden] {
         const QCollator collator = naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
         sinceSend.start();
         int interval = FirstBatchMs;
+        bool truncated = false;
         auto send = [&](bool done) {
             QMetaObject::invokeMethod(
                 this,
-                [this, generation, done, initial, entries = std::move(batch)]() mutable {
+                [this, generation, done, initial, truncated, entries = std::move(batch)]() mutable {
+                    if (generation == m_generation && done)
+                        m_searchTruncated = truncated;
                     if (initial)
                         applyBatch(generation, std::move(entries), done);
                     else
@@ -234,12 +310,46 @@ void DirectoryModel::startScan(bool initial)
             interval = BatchIntervalMs;
         };
 
-        for (const QString &dir : dirs) {
+        // Search: breadth first, so results near the folder come first. It
+        // doesn't follow symlinks or enter other drives (or /proc), and
+        // skips hidden folders unless hidden files are shown.
+        QStringList queue = dirs;
+        int found = 0;
+#if defined(Q_OS_UNIX)
+        struct stat rootStat;
+        const bool haveRoot = ::stat(QFile::encodeName(dirs.first()).constData(), &rootStat) == 0;
+#endif
+        for (qsizetype q = 0; q < queue.size(); ++q) {
+            const QString dir = queue.at(q);
             QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
             while (it.hasNext()) {
                 if (m_generation != generation)
                     return; // the user went elsewhere
                 it.next();
+                if (search) {
+                    const QFileInfo &fi = it.fileInfo();
+                    const QString name = it.fileName();
+                    const bool hidden = name.startsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char('~'));
+                    if (hidden && !showHidden)
+                        continue;
+                    if (!trash && fi.isDir() && !fi.isSymLink()) {
+                        bool sameDrive = true;
+#if defined(Q_OS_UNIX)
+                        struct stat st;
+                        sameDrive = haveRoot
+                                    && ::stat(QFile::encodeName(it.filePath()).constData(), &st) == 0
+                                    && st.st_dev == rootStat.st_dev;
+#endif
+                        if (sameDrive)
+                            queue.append(it.filePath());
+                    }
+                    if (!matchesSearch(name, words))
+                        continue;
+                    if (++found > MaxSearchResults) {
+                        truncated = true;
+                        break;
+                    }
+                }
                 FileEntry e = makeEntry(it.fileInfo(), collator);
                 e.setDir(dir);
                 if (trash) {
@@ -254,6 +364,8 @@ void DirectoryModel::startScan(bool initial)
                 if (initial && sinceSend.elapsed() > interval)
                     send(false);
             }
+            if (truncated)
+                break;
         }
         send(true);
     });
@@ -484,6 +596,10 @@ void DirectoryModel::setShowHidden(bool show)
     if (m_showHidden == show)
         return;
     m_showHidden = show;
+    if (isSearch()) {
+        relist(); // the walk skips hidden folders: search again
+        return;
+    }
     beginResetModel();
     Entries all = std::move(m_rows);
     for (FileEntry &e : m_hidden)
@@ -520,7 +636,9 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
         c = a.isDir ? compare3(a.childCount, b.childCount) : compare3(a.size, b.size);
         break;
     case TypeColumn:
-        if (m_trash)
+        if (isSearch())
+            c = a.dir.compare(b.dir, Qt::CaseInsensitive);
+        else if (m_trash)
             c = a.originalPath.compare(b.originalPath, Qt::CaseInsensitive);
         else if (!a.isDir)
             c = mimeFor(a).compare(mimeFor(b));
@@ -682,7 +800,7 @@ QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, in
     case SizeColumn:
         return tr("Size");
     case TypeColumn:
-        return m_trash ? tr("Original Location") : tr("Type");
+        return isSearch() ? tr("Location") : m_trash ? tr("Original Location") : tr("Type");
     case ModifiedColumn:
         return m_trash ? tr("Deleted") : tr("Modified");
     }
@@ -711,6 +829,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             return formatSize(e.size);
         case TypeColumn:
+            if (isSearch() && !m_trash)
+                return searchLocation(e);
             if (m_trash) {
                 // Folder it came from, with ~ for home (like Nautilus).
                 QString where = QFileInfo(e.originalPath).absolutePath();
@@ -748,8 +868,12 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
     case ContentMimeRole:
         return e.contentMime;
     case Qt::ToolTipRole:
-        if (index.column() == NameColumn && !e.isDir)
-            return ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
+        if (index.column() == NameColumn) {
+            QString tip = e.isDir ? QString() : ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
+            if (isSearch() && !m_trash) // the grid has no Location column
+                tip = tr("In %1").arg(searchLocation(e)) + (tip.isEmpty() ? QString() : QLatin1Char('\n') + tip);
+            return tip.isEmpty() ? QVariant() : tip;
+        }
         break;
     case IsDirRole:
         return e.isDir;
@@ -810,6 +934,16 @@ QIcon DirectoryModel::iconFor(const FileEntry &e) const
     if (it == m_iconCache.constEnd())
         it = m_iconCache.insert(key, m_iconProvider.icon(QFileInfo(e.path())));
     return *it;
+}
+
+// Where a search result is, relative to the searched folder ("Documents/Work"),
+// or the folder's own name for items directly in it.
+QString DirectoryModel::searchLocation(const FileEntry &e) const
+{
+    if (e.dir == m_path)
+        return QFileInfo(m_path).fileName().isEmpty() ? QDir::toNativeSeparators(m_path)
+                                                      : QFileInfo(m_path).fileName();
+    return QDir::toNativeSeparators(QDir(m_path).relativeFilePath(e.dir));
 }
 
 QString DirectoryModel::typeFor(const FileEntry &e) const
