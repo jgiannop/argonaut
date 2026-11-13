@@ -2,7 +2,9 @@
 
 #include "Theme.h"
 
+#include <QCache>
 #include <QHash>
+#include <QPixmap>
 #include <QStringList>
 #include <QStyledItemDelegate>
 
@@ -36,6 +38,7 @@ private:
     void paintList(QPainter *painter, const QStyleOptionViewItem &option,
                    const QModelIndex &index) const;
     void paintIcon(QPainter *painter, const QRect &rect, const QModelIndex &index) const;
+    QPixmap renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const;
     QStringList wrappedName(const QString &name, const QStyleOptionViewItem &option,
                             int width) const;
 
@@ -43,4 +46,6 @@ private:
     Theme m_theme;
     bool m_grid = true;
     mutable QHash<QString, QStringList> m_wrapCache;
+    // Thumbnails pre-rendered at their on-screen size (cost in KiB).
+    mutable QCache<QString, QPixmap> m_thumbCache{32 * 1024};
 };

@@ -38,6 +38,7 @@ private:
 
     QCache<QString, Entry> m_cache; // cost in KiB
     QSet<QString> m_pending;
-    QSet<QString> m_imageSuffixes;
+    QSet<QString> m_imageSuffixes;  // we can decode these ourselves
+    QSet<QString> m_cachedSuffixes; // may exist in the shared thumbnail cache
     QThreadPool m_pool;
 };

@@ -64,6 +64,18 @@ Thumbnailer::Thumbnailer(QObject *parent)
     for (const QByteArray &fmt : QImageReader::supportedImageFormats())
         m_imageSuffixes.insert(QString::fromLatin1(fmt).toLower());
     m_imageSuffixes.insert("jpeg");
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
+    // Types other apps' thumbnailers (Nautilus, Tumbler…) commonly put in
+    // the shared cache. We only read those, never create them.
+    for (const char *s : {"pdf", "epub", "djvu", "ps", "eps", "svg", "svgz", "webp", "avif",
+                          "heic", "heif", "jxl", "tif", "tiff", "psd", "xcf", "kra", "ora",
+                          "raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "mp4", "m4v",
+                          "mkv", "webm", "avi", "mov", "wmv", "flv", "mpg", "mpeg", "ogv", "3gp",
+                          "ts", "odt", "ods", "odp", "odg", "docx", "xlsx", "pptx", "doc", "xls",
+                          "ppt", "ttf", "otf", "blend", "stl", "3mf", "mobi", "cbz", "cbr"})
+        m_cachedSuffixes.insert(QString::fromLatin1(s));
+#endif
 }
 
 Thumbnailer::~Thumbnailer()
@@ -76,6 +88,12 @@ QPixmap Thumbnailer::thumbnail(const QFileInfo &info)
 {
     if (!info.isFile())
         return {};
+    // Cheap check first: most files (text, logs, code…) never have one.
+    const QString suffix = info.suffix().toLower();
+    const bool decodable = m_imageSuffixes.contains(suffix);
+    if (!decodable && !m_cachedSuffixes.contains(suffix))
+        return {};
+
     const QString path = info.absoluteFilePath();
     const QDateTime mtime = info.lastModified();
 
@@ -83,12 +101,6 @@ QPixmap Thumbnailer::thumbnail(const QFileInfo &info)
         return e->pixmap;
     if (m_pending.contains(path))
         return {};
-
-    const bool decodable = m_imageSuffixes.contains(info.suffix().toLower());
-#if !defined(Q_OS_LINUX) && !defined(Q_OS_FREEBSD)
-    if (!decodable)
-        return {};
-#endif
 
     m_pending.insert(path);
     m_pool.start([this, path, mtime, decodable] {
