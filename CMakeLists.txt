@@ -19,6 +19,8 @@ qt_standard_project_setup()
 qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
+    src/Trash.h
+    src/Trash.cpp
     src/FileJob.h
     src/FileJob.cpp
     src/FileOperations.h
@@ -52,6 +54,25 @@ qt_add_executable(kaftilous
 )
 
 target_link_libraries(kaftilous PRIVATE kaftilous_core Qt6::Widgets)
+
+# Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
+# Without them the app builds normally, just without the terminal panel.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(VTERM IMPORTED_TARGET vterm)
+endif()
+if(VTERM_FOUND AND UNIX)
+    target_sources(kaftilous PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
+    target_compile_definitions(kaftilous PRIVATE KAFTILOUS_TERMINAL=1)
+    target_link_libraries(kaftilous PRIVATE PkgConfig::VTERM)
+    find_library(UTIL_LIBRARY util)
+    if(UTIL_LIBRARY)
+        target_link_libraries(kaftilous PRIVATE ${UTIL_LIBRARY})
+    endif()
+    message(STATUS "Embedded terminal: enabled (libvterm ${VTERM_VERSION})")
+else()
+    message(STATUS "Embedded terminal: disabled (install libvterm-dev to enable)")
+endif()
 
 # Windows: no console window. macOS: build a .app bundle.
 set_target_properties(kaftilous PROPERTIES

@@ -1,5 +1,7 @@
 #include "FileOperations.h"
 
+#include "Trash.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -42,17 +44,58 @@ FileOperations::~FileOperations()
 
 FileJob *FileOperations::copy(const QStringList &paths, const QString &targetDir)
 {
-    return startJob(FileJob::Kind::Copy, transfersInto(paths, targetDir), true);
+    return startJob(FileJob::Kind::Copy, transfersInto(paths, targetDir), true, true);
 }
 
 FileJob *FileOperations::move(const QStringList &paths, const QString &targetDir)
 {
-    return startJob(FileJob::Kind::Move, transfersInto(paths, targetDir), true);
+    return startJob(FileJob::Kind::Move, transfersInto(paths, targetDir), true, true);
 }
 
 FileJob *FileOperations::trash(const QStringList &paths)
 {
-    return startJob(FileJob::Kind::Trash, transfersInto(paths, QString()), true);
+    return startJob(FileJob::Kind::Trash, transfersInto(paths, QString()), true, true);
+}
+
+FileJob *FileOperations::deletePermanently(const QStringList &paths)
+{
+    return startJob(FileJob::Kind::Delete, transfersInto(paths, QString()), false, true);
+}
+
+FileJob *FileOperations::restore(const QStringList &pathsInTrash)
+{
+    QList<Transfer> transfers;
+    for (const QString &path : pathsInTrash) {
+        const Trash::Info info = Trash::info(path);
+        if (info.valid) {
+            const QFileInfo original(info.originalPath);
+            transfers.append({path, original.absolutePath(), original.fileName()});
+        } else {
+            // No record of where it came from: put it in the home folder.
+            transfers.append({path, QDir::homePath(), QFileInfo(path).fileName()});
+        }
+    }
+    return startJob(FileJob::Kind::Restore, transfers, false, true);
+}
+
+FileJob *FileOperations::emptyTrash()
+{
+    QStringList items;
+    for (const QString &filesDir : Trash::filesDirs()) {
+        const QDir files(filesDir);
+        for (const QFileInfo &entry : files.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot
+                                                          | QDir::Hidden | QDir::System))
+            items.append(entry.absoluteFilePath());
+        // Stray .trashinfo files whose item is already gone.
+        const QDir info(QFileInfo(filesDir).absolutePath() + QStringLiteral("/info"));
+        for (const QFileInfo &entry : info.entryInfoList({QStringLiteral("*.trashinfo")},
+                                                         QDir::Files | QDir::Hidden)) {
+            const QString item = filesDir + QLatin1Char('/') + entry.completeBaseName();
+            if (!QFileInfo::exists(item))
+                items.append(entry.absoluteFilePath());
+        }
+    }
+    return startJob(FileJob::Kind::Delete, transfersInto(items, QString()), false, true);
 }
 
 void FileOperations::cancelAll()
@@ -61,12 +104,13 @@ void FileOperations::cancelAll()
         job->cancel();
 }
 
-FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo)
+FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
+                                  bool userAction)
 {
     if (transfers.isEmpty())
         return nullptr;
     auto *job = new FileJob(kind, std::move(transfers), this);
-    job->setProperty(UserActionProperty, recordUndo);
+    job->setProperty(UserActionProperty, userAction);
     m_active.append(job);
     connect(job, &FileJob::finished, this, [this, job, recordUndo] {
         m_active.removeOne(job);
@@ -137,13 +181,13 @@ void FileOperations::undo()
 
     switch (entry.kind) {
     case FileJob::Kind::Copy:
-        startJob(FileJob::Kind::Trash, transfersInto(copies, QString()), false);
+        startJob(FileJob::Kind::Trash, transfersInto(copies, QString()), false, false);
         break;
     case FileJob::Kind::Move:
-        startJob(FileJob::Kind::Move, back, false);
+        startJob(FileJob::Kind::Move, back, false, false);
         break;
     case FileJob::Kind::Trash:
-        startJob(FileJob::Kind::Restore, back, false);
+        startJob(FileJob::Kind::Restore, back, false, false);
         break;
     case FileJob::Kind::Restore:
         break;

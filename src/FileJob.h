@@ -34,7 +34,9 @@ class FileJob : public QObject
     Q_OBJECT
 
 public:
-    enum class Kind { Copy, Move, Trash, Restore };
+    // Restore: out of the Trash (removes the .trashinfo, recreates the folder).
+    // Delete: permanently, no undo.
+    enum class Kind { Copy, Move, Trash, Restore, Delete };
 
     struct Progress
     {
@@ -70,6 +72,7 @@ private:
     // Worker thread only.
     void run();
     void runTrash();
+    void runDelete();
     void runTransfers();
     bool copyTree(const QString &source, const QString &target);
     bool copyFile(const QString &source, const QString &target, const QFileInfo &info);

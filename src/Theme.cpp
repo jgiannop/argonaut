@@ -434,6 +434,11 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
         line(4.75, 4.75, 11.25, 11.25);
         line(11.25, 4.75, 4.75, 11.25);
         break;
+    case Glyph::Terminal:
+        p->drawRoundedRect(QRectF(1.75, 2.5, 12.5, 11), 1.5, 1.5);
+        poly({{4.5, 6}, {6.75, 8}, {4.5, 10}});
+        line(8.25, 10.25, 11.25, 10.25);
+        break;
     }
     p->restore();
 }

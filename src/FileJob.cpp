@@ -1,5 +1,7 @@
 #include "FileJob.h"
 
+#include "Trash.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -69,17 +71,13 @@ bool removeTree(const QString &path)
     return QFile::remove(path);
 }
 
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-// After restoring ".../Trash/files/NAME", drop ".../Trash/info/NAME.trashinfo".
+// After an item leaves ".../Trash/files", drop its ".../Trash/info/NAME.trashinfo".
 void removeTrashInfo(const QString &pathInTrash)
 {
-    const QFileInfo info(pathInTrash);
-    if (info.dir().dirName() != QLatin1String("files"))
-        return;
-    QFile::remove(QDir::cleanPath(info.dir().absolutePath() + "/../info/" + info.fileName()
-                                  + ".trashinfo"));
+    const QString info = Trash::infoPathFor(pathInTrash);
+    if (!info.isEmpty())
+        QFile::remove(info);
 }
-#endif
 
 } // namespace
 
@@ -193,6 +191,8 @@ void FileJob::run()
     m_notifyTimer.start();
     if (m_kind == Kind::Trash)
         runTrash();
+    else if (m_kind == Kind::Delete)
+        runDelete();
     else
         runTransfers();
     notify(true);
@@ -215,6 +215,33 @@ void FileJob::runTrash()
             addResult(t.source, pathInTrash);
         else
             addError(tr("Couldn't move “%1” to the Trash.").arg(name));
+        itemDone();
+    }
+}
+
+// Permanent deletion (Shift+Delete, Empty Trash). Items inside a trash
+// folder also lose their .trashinfo.
+void FileJob::runDelete()
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        m_progress.measuring = false;
+    }
+    for (const Transfer &t : m_transfers) {
+        if (isCanceled())
+            break;
+        const QFileInfo info(t.source);
+        setCurrent(info.fileName());
+        if (!info.exists() && !info.isSymLink()) {
+            itemDone();
+            continue; // already gone
+        }
+        if (removeTree(t.source)) {
+            removeTrashInfo(t.source);
+            addResult(t.source, QString());
+        } else {
+            addError(tr("Couldn't delete “%1”.").arg(info.fileName()));
+        }
         itemDone();
     }
 }
@@ -255,6 +282,8 @@ void FileJob::runTransfers()
 
         const QString src = QDir::cleanPath(srcInfo.absoluteFilePath());
         const QString dir = QDir::cleanPath(t.targetDir);
+        if (m_kind == Kind::Restore && !QFileInfo(dir).exists())
+            QDir().mkpath(dir); // its original folder was deleted meanwhile
         if (!QFileInfo(dir).isDir()) {
             addError(tr("The destination folder “%1” doesn't exist.")
                          .arg(QDir::toNativeSeparators(dir)));
@@ -300,10 +329,8 @@ void FileJob::runTransfers()
         }
 
         if (ok) {
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
             if (m_kind == Kind::Restore)
                 removeTrashInfo(src);
-#endif
             addResult(src, target);
         } else if (pathExists(target)) {
             removeTree(target); // incomplete copy: it didn't exist before

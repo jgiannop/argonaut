@@ -1,5 +1,7 @@
 #include "DirectoryModel.h"
 
+#include "Trash.h"
+
 #include <QCollator>
 #include <QDateTime>
 #include <QDir>
@@ -83,7 +85,7 @@ DirectoryModel::DirectoryModel(QObject *parent)
             while ((n = ::read(m_inotifyFd, buffer, sizeof buffer)) > 0) {
                 for (char *p = buffer; p < buffer + n;) {
                     const auto *event = reinterpret_cast<const inotify_event *>(p);
-                    if (event->wd == m_watchId)
+                    if (m_watchIds.contains(event->wd))
                         relevant = true;
                     p += sizeof(inotify_event) + event->len;
                 }
@@ -96,7 +98,7 @@ DirectoryModel::DirectoryModel(QObject *parent)
     if (m_inotifyFd < 0) {
         m_watcher = new QFileSystemWatcher(this);
         connect(m_watcher, &QFileSystemWatcher::directoryChanged, this, [this](const QString &dir) {
-            if (QDir::cleanPath(dir) == m_path)
+            if (m_dirs.contains(QDir::cleanPath(dir)))
                 folderChanged();
         });
     }
@@ -113,22 +115,27 @@ DirectoryModel::~DirectoryModel()
 #endif
 }
 
-void DirectoryModel::watch(const QString &path)
+void DirectoryModel::watch(const QStringList &dirs)
 {
 #if defined(Q_OS_LINUX)
     if (m_inotifyFd >= 0) {
-        if (m_watchId >= 0)
-            inotify_rm_watch(m_inotifyFd, m_watchId);
-        m_watchId = inotify_add_watch(m_inotifyFd, QFile::encodeName(path).constData(),
-                                      IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO
-                                          | IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF
-                                          | IN_MOVE_SELF);
+        for (int id : std::as_const(m_watchIds))
+            inotify_rm_watch(m_inotifyFd, id);
+        m_watchIds.clear();
+        for (const QString &dir : dirs) {
+            const int id = inotify_add_watch(m_inotifyFd, QFile::encodeName(dir).constData(),
+                                             IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO
+                                                 | IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF
+                                                 | IN_MOVE_SELF);
+            if (id >= 0)
+                m_watchIds.append(id);
+        }
         return;
     }
 #endif
     if (!m_watcher->directories().isEmpty())
         m_watcher->removePaths(m_watcher->directories());
-    m_watcher->addPath(path);
+    m_watcher->addPaths(dirs);
 }
 
 void DirectoryModel::folderChanged()
@@ -149,13 +156,18 @@ void DirectoryModel::setPath(const QString &path)
 
     beginResetModel();
     m_path = path;
+    m_trash = Trash::isFilesDir(path);
+    m_dirs = m_trash ? Trash::filesDirs() : QStringList{path};
+    if (!m_dirs.contains(path))
+        m_dirs.prepend(path);
     m_rows.clear();
     m_hidden.clear();
-    m_rowByName.clear();
+    m_rowByPath.clear();
     endResetModel();
+    emit headerDataChanged(Qt::Horizontal, 0, ColumnCount - 1);
 
     m_loading = true;
-    watch(path);
+    watch(m_dirs);
     startScan(true);
 }
 
@@ -174,8 +186,9 @@ void DirectoryModel::startScan(bool initial)
 {
     m_scanning = true;
     const quint64 generation = m_generation;
-    const QString path = m_path;
-    m_pool.start([this, generation, path, initial] {
+    const QStringList dirs = m_dirs;
+    const bool trash = m_trash;
+    m_pool.start([this, generation, dirs, trash, initial] {
         const QCollator collator = naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
@@ -196,15 +209,26 @@ void DirectoryModel::startScan(bool initial)
             interval = BatchIntervalMs;
         };
 
-        QDirIterator it(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
-        while (it.hasNext()) {
-            if (m_generation != generation)
-                return; // the user went elsewhere
-            it.next();
-            batch.push_back(makeEntry(it.fileInfo(), collator));
-            // Initial load of a big folder: show it progressively.
-            if (initial && sinceSend.elapsed() > interval)
-                send(false);
+        for (const QString &dir : dirs) {
+            QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+            while (it.hasNext()) {
+                if (m_generation != generation)
+                    return; // the user went elsewhere
+                it.next();
+                FileEntry e = makeEntry(it.fileInfo(), collator);
+                e.dir = dir;
+                if (trash) {
+                    const Trash::Info info = Trash::info(e.path());
+                    e.originalPath = info.originalPath;
+                    e.deleted = info.deletionDate.isValid() ? info.deletionDate.toMSecsSinceEpoch()
+                                                            : e.mtime;
+                    e.isHidden = false; // everything in the Trash is shown
+                }
+                batch.push_back(std::move(e));
+                // Initial load of a big folder: show it progressively.
+                if (initial && sinceSend.elapsed() > interval)
+                    send(false);
+            }
         }
         send(true);
     });
@@ -261,20 +285,20 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         return;
     m_scanning = false;
 
-    QHash<QString, size_t> freshByName;
-    freshByName.reserve(qsizetype(fresh.size()));
+    QHash<QString, size_t> freshByPath;
+    freshByPath.reserve(qsizetype(fresh.size()));
     for (size_t i = 0; i < fresh.size(); ++i)
-        freshByName.insert(fresh[i].name, i);
+        freshByPath.insert(fresh[i].path(), i);
 
     size_t removed = 0;
     size_t added = 0;
     for (const FileEntry &e : m_rows) {
-        const auto it = freshByName.constFind(e.name);
-        if (it == freshByName.constEnd() || !isShown(fresh[*it]))
+        const auto it = freshByPath.constFind(e.path());
+        if (it == freshByPath.constEnd() || !isShown(fresh[*it]))
             ++removed;
     }
     for (const FileEntry &e : fresh) {
-        if (isShown(e) && !m_rowByName.contains(e.name))
+        if (isShown(e) && !m_rowByPath.contains(e.path()))
             ++added;
     }
 
@@ -292,8 +316,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
     } else {
         // 1. Removals (descending, so row numbers stay valid).
         for (int row = int(m_rows.size()) - 1; row >= 0; --row) {
-            const auto it = freshByName.constFind(m_rows[size_t(row)].name);
-            if (it != freshByName.constEnd() && isShown(fresh[*it]))
+            const auto it = freshByPath.constFind(m_rows[size_t(row)].path());
+            if (it != freshByPath.constEnd() && isShown(fresh[*it]))
                 continue;
             beginRemoveRows(QModelIndex(), row, row);
             m_rows.erase(m_rows.begin() + row);
@@ -305,7 +329,7 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         bool sortKeyChanged = false;
         for (size_t row = 0; row < m_rows.size(); ++row) {
             FileEntry &cur = m_rows[row];
-            const FileEntry &now = fresh[freshByName.value(cur.name)];
+            const FileEntry &now = fresh[freshByPath.value(cur.path())];
             if (cur.size == now.size && cur.mtime == now.mtime && cur.isDir == now.isDir
                 && cur.isSymLink == now.isSymLink)
                 continue;
@@ -322,7 +346,7 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
 
         // 3. Insertions at their sorted position.
         for (FileEntry &e : fresh) {
-            if (!isShown(e) || m_rowByName.contains(e.name))
+            if (!isShown(e) || m_rowByPath.contains(e.path()))
                 continue;
             const auto pos = std::lower_bound(m_rows.begin(), m_rows.end(), e,
                                               [this](const FileEntry &a, const FileEntry &b) {
@@ -359,15 +383,14 @@ void DirectoryModel::startCounting()
     for (const Entries *list : {&m_rows, &m_hidden}) {
         for (const FileEntry &e : *list) {
             if (e.isDir && e.childCount < 0)
-                dirs.append(e.name);
+                dirs.append(e.path());
         }
     }
     if (dirs.isEmpty())
         return;
 
     const quint64 generation = m_generation;
-    const QString path = m_path;
-    m_pool.start([this, generation, path, dirs] {
+    m_pool.start([this, generation, dirs] {
         QHash<QString, int> counts;
         QElapsedTimer sinceSend;
         sinceSend.start();
@@ -378,17 +401,16 @@ void DirectoryModel::startCounting()
             counts = QHash<QString, int>();
             sinceSend.restart();
         };
-        for (const QString &name : dirs) {
+        for (const QString &dir : dirs) {
             if (m_generation != generation)
                 return;
             int n = 0;
-            QDirIterator it(path + QLatin1Char('/') + name,
-                            QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+            QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
             while (it.hasNext()) {
                 it.next();
                 ++n;
             }
-            counts.insert(name, n);
+            counts.insert(dir, n);
             if (sinceSend.elapsed() > 150)
                 send();
         }
@@ -401,14 +423,14 @@ void DirectoryModel::applyCounts(quint64 generation, const QHash<QString, int> &
     if (generation != m_generation || counts.isEmpty())
         return;
     for (auto it = counts.constBegin(); it != counts.constEnd(); ++it) {
-        const int row = m_rowByName.value(it.key(), -1);
+        const int row = m_rowByPath.value(it.key(), -1);
         if (row >= 0) {
             m_rows[size_t(row)].childCount = it.value();
             const QModelIndex cell = index(row, SizeColumn);
             emit dataChanged(cell, cell);
         } else {
             for (FileEntry &e : m_hidden) {
-                if (e.name == it.key())
+                if (e.path() == it.key())
                     e.childCount = it.value();
             }
         }
@@ -460,11 +482,13 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
         c = a.isDir ? compare3(a.childCount, b.childCount) : compare3(a.size, b.size);
         break;
     case TypeColumn:
-        if (!a.isDir)
+        if (m_trash)
+            c = a.originalPath.compare(b.originalPath, Qt::CaseInsensitive);
+        else if (!a.isDir)
             c = mimeFor(a).compare(mimeFor(b));
         break;
     case ModifiedColumn:
-        c = compare3(a.mtime, b.mtime);
+        c = m_trash ? compare3(a.deleted, b.deleted) : compare3(a.mtime, b.mtime);
         break;
     default:
         break;
@@ -473,6 +497,8 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
         c = a.key.compare(b.key);
     if (c == 0)
         c = a.name.compare(b.name);
+    if (c == 0)
+        c = a.dir.compare(b.dir); // same name in two trash folders
     return m_sortOrder == Qt::AscendingOrder ? c < 0 : c > 0;
 }
 
@@ -486,10 +512,10 @@ void DirectoryModel::resort()
 {
     emit layoutAboutToBeChanged({}, QAbstractItemModel::VerticalSortHint);
     const QModelIndexList before = persistentIndexList();
-    QStringList names;
-    names.reserve(before.size());
+    QStringList paths;
+    paths.reserve(before.size());
     for (const QModelIndex &idx : before)
-        names.append(idx.row() < int(m_rows.size()) ? m_rows[size_t(idx.row())].name : QString());
+        paths.append(idx.row() < int(m_rows.size()) ? m_rows[size_t(idx.row())].path() : QString());
 
     sortRows();
     rebuildIndex();
@@ -497,7 +523,7 @@ void DirectoryModel::resort()
     QModelIndexList after;
     after.reserve(before.size());
     for (int i = 0; i < before.size(); ++i) {
-        const int row = m_rowByName.value(names.at(i), -1);
+        const int row = m_rowByPath.value(paths.at(i), -1);
         after.append(row < 0 ? QModelIndex() : index(row, before.at(i).column()));
     }
     changePersistentIndexList(before, after);
@@ -506,31 +532,23 @@ void DirectoryModel::resort()
 
 void DirectoryModel::rebuildIndex()
 {
-    m_rowByName.clear();
-    m_rowByName.reserve(qsizetype(m_rows.size()));
+    m_rowByPath.clear();
+    m_rowByPath.reserve(qsizetype(m_rows.size()));
     for (size_t i = 0; i < m_rows.size(); ++i)
-        m_rowByName.insert(m_rows[i].name, int(i));
+        m_rowByPath.insert(m_rows[i].path(), int(i));
 }
 
 // -------------------------------------------------------------- access ---
 
-QString DirectoryModel::joinPath(const QString &name) const
-{
-    return m_path.endsWith(QLatin1Char('/')) ? m_path + name : m_path + QLatin1Char('/') + name;
-}
-
 QModelIndex DirectoryModel::indexForPath(const QString &path, int column) const
 {
-    const QFileInfo info(path);
-    if (QDir::cleanPath(info.absolutePath()) != m_path)
-        return {};
-    const int row = m_rowByName.value(info.fileName(), -1);
+    const int row = m_rowByPath.value(QDir::cleanPath(path), -1);
     return row < 0 ? QModelIndex() : index(row, column);
 }
 
 QString DirectoryModel::filePath(const QModelIndex &index) const
 {
-    return index.isValid() ? joinPath(m_rows[size_t(index.row())].name) : QString();
+    return index.isValid() ? m_rows[size_t(index.row())].path() : QString();
 }
 
 QString DirectoryModel::fileName(const QModelIndex &index) const
@@ -607,9 +625,9 @@ QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, in
     case SizeColumn:
         return tr("Size");
     case TypeColumn:
-        return tr("Type");
+        return m_trash ? tr("Original Location") : tr("Type");
     case ModifiedColumn:
-        return tr("Modified");
+        return m_trash ? tr("Deleted") : tr("Modified");
     }
     return {};
 }
@@ -633,9 +651,17 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             return QLocale().formattedDataSize(e.size);
         case TypeColumn:
+            if (m_trash) {
+                // Folder it came from, with ~ for home (like Nautilus).
+                QString where = QFileInfo(e.originalPath).absolutePath();
+                const QString home = QDir::homePath();
+                if (where == home || where.startsWith(home + QLatin1Char('/')))
+                    where = QLatin1Char('~') + where.mid(home.size());
+                return e.originalPath.isEmpty() ? tr("Unknown") : QDir::toNativeSeparators(where);
+            }
             return typeFor(e);
         case ModifiedColumn: {
-            const QDateTime when = QDateTime::fromMSecsSinceEpoch(e.mtime);
+            const QDateTime when = QDateTime::fromMSecsSinceEpoch(m_trash ? e.deleted : e.mtime);
             const QLocale locale;
             if (when.date() == QDate::currentDate())
                 return locale.toString(when.time(), QLocale::ShortFormat);
@@ -652,7 +678,9 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             return iconFor(e);
         break;
     case PathRole:
-        return joinPath(e.name);
+        return e.path();
+    case OriginalPathRole:
+        return e.originalPath;
     case IsDirRole:
         return e.isDir;
     case SizeRole:
@@ -691,11 +719,11 @@ const QString &DirectoryModel::mimeFor(const FileEntry &e) const
 // per mime type, looked up once.
 QIcon DirectoryModel::iconFor(const FileEntry &e) const
 {
-    const QString key = e.isDir ? QStringLiteral("dir:") + joinPath(e.name)
+    const QString key = e.isDir ? QStringLiteral("dir:") + e.path()
                                 : QStringLiteral("mime:") + mimeFor(e);
     auto it = m_iconCache.constFind(key);
     if (it == m_iconCache.constEnd())
-        it = m_iconCache.insert(key, m_iconProvider.icon(QFileInfo(joinPath(e.name))));
+        it = m_iconCache.insert(key, m_iconProvider.icon(QFileInfo(e.path())));
     return *it;
 }
 

@@ -9,7 +9,11 @@
 #include "PathBar.h"
 #include "PreferencesDialog.h"
 #include "Thumbnailer.h"
+#if defined(KAFTILOUS_TERMINAL)
+#include "TerminalWidget.h"
+#endif
 #include "Toast.h"
+#include "Trash.h"
 
 #include <QAction>
 #include <QApplication>
@@ -175,6 +179,17 @@ QLineEdit#renameEdit { background: @window; color: @fg; border: 2px solid @accen
     border-radius: 6px; padding: 1px 4px; selection-background-color: @accent;
     selection-color: #ffffff; }
 
+QWidget#trashBar { background: @pathBg; border-bottom: 1px solid @border; }
+QLabel#trashBarText { color: @fg; }
+QToolButton#barButton { background: @button; color: @fg; border: none; border-radius: 6px;
+    padding: 5px 14px; font-weight: bold; }
+QToolButton#barButton:hover { background: @buttonHover; }
+QToolButton#barButton:disabled { color: @dim; }
+QWidget#terminalPanel { background: @window; }
+QWidget#terminalBar { background: @window; border-top: 1px solid @border; }
+QLabel#terminalTitle { color: @dim; font-weight: bold; }
+QSplitter#contentSplitter::handle { background: @border; }
+
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
@@ -312,6 +327,22 @@ void MainWindow::setupActions()
     connect(m_sortDescAct, &QAction::triggered, this,
             [this] { sortBy(m_model->sortColumn(), Qt::DescendingOrder); });
 
+#if defined(KAFTILOUS_TERMINAL)
+    m_terminalAct = new QAction(tr("Terminal"), this);
+    m_terminalAct->setCheckable(true);
+    m_terminalAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)); // like VS Code
+    connect(m_terminalAct, &QAction::toggled, this, [this](bool on) {
+        if (on)
+            showTerminal(m_current);
+        else
+            hideTerminal();
+    });
+    m_openTerminalHereAct = new QAction(tr("Open in Terminal"), this);
+    connect(m_openTerminalHereAct, &QAction::triggered, this, [this] {
+        showTerminal(m_contextFolder.isEmpty() ? m_current : m_contextFolder);
+    });
+#endif
+
     m_newFolderAct = new QAction(tr("New Folder"), this);
     m_newFolderAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
     connect(m_newFolderAct, &QAction::triggered, this, [this] { createNewItem(true); });
@@ -376,6 +407,16 @@ void MainWindow::setupActions()
     m_trashAct->setShortcut(QKeySequence::Delete);
     connect(m_trashAct, &QAction::triggered, this, &MainWindow::trashSelection);
 
+    m_deleteAct = new QAction(tr("Delete Permanently…"), this);
+    m_deleteAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Delete));
+    connect(m_deleteAct, &QAction::triggered, this, &MainWindow::deleteSelection);
+
+    m_restoreAct = new QAction(tr("Restore From Trash"), this);
+    connect(m_restoreAct, &QAction::triggered, this, &MainWindow::restoreSelection);
+
+    m_emptyTrashAct = new QAction(tr("Empty Trash…"), this);
+    connect(m_emptyTrashAct, &QAction::triggered, this, &MainWindow::emptyTrash);
+
     m_undoAct = new QAction(tr("Undo"), this);
     m_undoAct->setShortcut(QKeySequence::Undo);
     connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
@@ -391,7 +432,9 @@ void MainWindow::setupActions()
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_newFolderAct, m_newFileAct, m_renameAct,
-                m_selectAllAct, m_closeAct, m_quitAct});
+                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct});
+    if (m_terminalAct)
+        addAction(m_terminalAct);
 }
 
 QToolButton *MainWindow::makeButton(const QString &toolTip, const char *objectName)
@@ -572,6 +615,13 @@ QWidget *MainWindow::buildContentPane()
     row->addWidget(m_locationStack, 1);
     row->addSpacing(4);
 
+    if (m_terminalAct) {
+        m_terminalButton = makeButton(tr("Terminal (Ctrl+`)"));
+        m_terminalButton->setCheckable(true);
+        connect(m_terminalButton, &QToolButton::toggled, m_terminalAct, &QAction::setChecked);
+        connect(m_terminalAct, &QAction::toggled, m_terminalButton, &QToolButton::setChecked);
+        row->addWidget(m_terminalButton);
+    }
     m_viewButton = makeButton(QString());
     connect(m_viewButton, &QToolButton::clicked, this, [this] { setGridMode(!m_grid); });
     row->addWidget(m_viewButton);
@@ -661,7 +711,40 @@ QWidget *MainWindow::buildContentPane()
     connect(selection, &QItemSelectionModel::selectionChanged, this,
             &MainWindow::updateEditActions);
     connect(m_proxy, &QAbstractItemModel::layoutChanged, this, &MainWindow::updateRenameGeometry);
-    layout->addWidget(m_viewStack, 1);
+    // Shown only in the Trash: what it is, plus Restore / Empty Trash.
+    m_trashBar = new QWidget(pane);
+    m_trashBar->setObjectName("trashBar");
+    m_trashBar->setAttribute(Qt::WA_StyledBackground);
+    auto *trashRow = new QHBoxLayout(m_trashBar);
+    trashRow->setContentsMargins(16, 6, 10, 6);
+    auto *trashText = new QLabel(tr("Items in the Trash are deleted forever when you empty it."),
+                                 m_trashBar);
+    trashText->setObjectName("trashBarText");
+    m_trashRestoreButton = new QToolButton(m_trashBar);
+    m_trashRestoreButton->setObjectName("barButton");
+    m_trashRestoreButton->setDefaultAction(m_restoreAct);
+    m_trashRestoreButton->setText(tr("Restore"));
+    m_trashEmptyButton = new QToolButton(m_trashBar);
+    m_trashEmptyButton->setObjectName("barButton");
+    m_trashEmptyButton->setDefaultAction(m_emptyTrashAct);
+    for (QToolButton *b : {m_trashRestoreButton, m_trashEmptyButton})
+        b->setFocusPolicy(Qt::NoFocus);
+    trashRow->addWidget(trashText, 1);
+    trashRow->addWidget(m_trashRestoreButton);
+    trashRow->addWidget(m_trashEmptyButton);
+    m_trashBar->hide();
+    layout->addWidget(m_trashBar);
+
+    m_contentSplitter = new QSplitter(Qt::Vertical, pane);
+    m_contentSplitter->setObjectName("contentSplitter");
+    m_contentSplitter->setChildrenCollapsible(false);
+    m_contentSplitter->setHandleWidth(1);
+    m_contentSplitter->addWidget(m_viewStack);
+#if defined(KAFTILOUS_TERMINAL)
+    m_contentSplitter->addWidget(buildTerminalPanel());
+#endif
+    m_contentSplitter->setStretchFactor(0, 1);
+    layout->addWidget(m_contentSplitter, 1);
 
     m_floatingBar = new QLabel(m_viewStack);
     m_floatingBar->setObjectName("floatingBar");
@@ -715,6 +798,11 @@ void MainWindow::applyTheme(bool force)
     m_gridDelegate->setTheme(m_theme);
     m_listDelegate->setTheme(m_theme);
     m_opsPanel->setTheme(m_theme);
+#if defined(KAFTILOUS_TERMINAL)
+    m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
+    m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
+    m_terminal->setTheme(m_theme);
+#endif
     m_toast->setTheme(m_theme);
     m_view->viewport()->update();
 
@@ -775,13 +863,13 @@ void MainWindow::populateSidebar()
         addPlace(tr(p.name), path, p.glyph);
     }
 
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    // Freedesktop trash folder (browse only for now).
-    const QString trash = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-                          + "/Trash/files";
-    if (QFileInfo(trash).isDir())
+    if (Trash::isSupported()) {
+        // Shows every trash folder merged (home and removable drives).
+        const QString trash = Trash::homeFilesDir();
+        QDir().mkpath(trash);
+        QDir().mkpath(QFileInfo(trash).absolutePath() + QStringLiteral("/info"));
         addPlace(tr("Trash"), trash, Glyph::Trash);
-#endif
+    }
 
     addSeparator();
 
@@ -848,11 +936,13 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     m_current = clean;
 
     m_model->setPath(clean);
+    m_trashBar->setVisible(m_model->isTrash());
     m_view->scrollToTop();
     m_pathBar->setPath(clean);
 
-    const QString title = info.fileName().isEmpty() ? QDir::toNativeSeparators(clean)
-                                                    : info.fileName();
+    const QString title = m_model->isTrash()        ? tr("Trash")
+                          : info.fileName().isEmpty() ? QDir::toNativeSeparators(clean)
+                                                      : info.fileName();
     setWindowTitle(tr("%1 — Kaftilous").arg(title));
 
     syncSidebarSelection();
@@ -1273,9 +1363,77 @@ void MainWindow::paste()
 
 void MainWindow::trashSelection()
 {
+    if (m_model->isTrash()) {
+        deleteSelection(); // already in the Trash: the only step left is forever
+        return;
+    }
     const QStringList paths = selectedPaths();
     if (!paths.isEmpty())
         m_ops->trash(paths);
+}
+
+bool MainWindow::confirmPermanentDelete(const QStringList &paths, bool wholeTrash)
+{
+    QString question;
+    if (wholeTrash)
+        question = tr("Empty all items from the Trash?");
+    else if (paths.size() == 1)
+        question = tr("Permanently delete “%1”?").arg(QFileInfo(paths.first()).fileName());
+    else
+        question = tr("Permanently delete %1 selected items?").arg(paths.size());
+    QMessageBox box(QMessageBox::Warning, wholeTrash ? tr("Empty Trash") : tr("Delete Permanently"),
+                    question, QMessageBox::NoButton, this);
+    box.setInformativeText(wholeTrash ? tr("All items in the Trash will be deleted forever.")
+                                      : tr("If you delete an item, it will be gone forever."));
+    QPushButton *cancel = box.addButton(QMessageBox::Cancel);
+    QPushButton *remove =
+        box.addButton(wholeTrash ? tr("Empty Trash") : tr("Delete"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(cancel);
+    box.exec();
+    return box.clickedButton() == remove;
+}
+
+void MainWindow::deleteSelection()
+{
+    const QStringList paths = selectedPaths();
+    if (!paths.isEmpty() && confirmPermanentDelete(paths, false))
+        m_ops->deletePermanently(paths);
+}
+
+void MainWindow::restoreSelection()
+{
+    if (!m_model->isTrash())
+        return;
+    const QStringList paths = selectedPaths();
+    if (!paths.isEmpty())
+        m_ops->restore(paths);
+}
+
+void MainWindow::emptyTrash()
+{
+    bool empty = true;
+    for (const QString &dir : Trash::filesDirs()) {
+        if (!QDir(dir).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+            empty = false;
+    }
+    if (empty) {
+        showMessage(tr("The Trash is already empty"));
+        return;
+    }
+    if (confirmPermanentDelete({}, true))
+        m_ops->emptyTrash();
+}
+
+// A drop into the Trash (its sidebar entry or the Trash view) trashes.
+void MainWindow::performDrop(const QStringList &sources, const QString &targetDir,
+                             Qt::DropAction action)
+{
+    if (Trash::isFilesDir(targetDir))
+        m_ops->trash(sources);
+    else if (action == Qt::MoveAction)
+        m_ops->move(sources, targetDir);
+    else
+        m_ops->copy(sources, targetDir);
 }
 
 void MainWindow::updateEditActions()
@@ -1283,11 +1441,17 @@ void MainWindow::updateEditActions()
     const bool hasSelection = m_view && m_view->selectionModel()->hasSelection();
     for (QAction *action : {m_openAct, m_cutAct, m_copyAct, m_trashAct})
         action->setEnabled(hasSelection);
-    const bool writable = !m_current.isEmpty() && QFileInfo(m_current).isWritable();
+    const bool inTrash = m_model && m_model->isTrash();
+    const bool writable = !inTrash && !m_current.isEmpty() && QFileInfo(m_current).isWritable();
+    m_deleteAct->setEnabled(hasSelection);
+    m_restoreAct->setEnabled(inTrash && hasSelection);
+    if (m_trashRestoreButton)
+        m_trashRestoreButton->setText(tr("Restore")); // setDefaultAction resets it
+    m_emptyTrashAct->setEnabled(Trash::isSupported());
     m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
-    m_renameAct->setEnabled(m_view && selectedViewIndexes().size() == 1);
+    m_renameAct->setEnabled(!inTrash && m_view && selectedViewIndexes().size() == 1);
     m_undoAct->setEnabled(m_ops->canUndo());
     m_undoAct->setText(m_ops->undoText());
 }
@@ -1304,8 +1468,22 @@ void MainWindow::showContextMenu(const QPoint &pos)
 
     QMenu *menu = makeMenu();
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    if (index.isValid()) {
+    m_contextFolder = m_current;
+    if (index.isValid() && m_model->isDir(toSource(index)))
+        m_contextFolder = m_model->filePath(toSource(index));
+    if (index.isValid() && m_model->isTrash()) {
+        menu->addAction(m_restoreAct);
+        menu->addAction(m_deleteAct);
+        menu->addSeparator();
         menu->addAction(m_openAct);
+        menu->addAction(m_copyAct);
+    } else if (!index.isValid() && m_model->isTrash()) {
+        menu->addAction(m_emptyTrashAct);
+        menu->addAction(m_hiddenAct);
+    } else if (index.isValid()) {
+        menu->addAction(m_openAct);
+        if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
+            menu->addAction(m_openTerminalHereAct);
         menu->addSeparator();
         menu->addAction(m_renameAct);
         menu->addSeparator();
@@ -1313,10 +1491,15 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_copyAct);
         menu->addSeparator();
         menu->addAction(m_trashAct);
+        menu->addAction(m_deleteAct);
     } else {
         menu->addAction(m_newFolderAct);
         menu->addAction(m_newFileAct);
         menu->addSeparator();
+        if (m_openTerminalHereAct) {
+            menu->addAction(m_openTerminalHereAct);
+            menu->addSeparator();
+        }
         menu->addAction(m_pasteAct);
         menu->addAction(m_undoAct);
         menu->addSeparator();
@@ -1343,6 +1526,13 @@ void MainWindow::onJobFinished(FileJob *job)
             done == 1 ? tr("“%1” moved to the Trash").arg(QFileInfo(results.first().source).fileName())
                       : tr("%n items moved to the Trash", nullptr, done);
         m_toast->showMessage(text, tr("Undo"), [this] { m_ops->undo(); });
+    } else if (job->kind() == FileJob::Kind::Delete && done > 0) {
+        showMessage(done == 1 ? tr("1 item deleted") : tr("%1 items deleted").arg(done));
+    } else if (job->kind() == FileJob::Kind::Restore && done > 0) {
+        const QFileInfo where(results.first().target);
+        showMessage(done == 1 ? tr("“%1” restored to “%2”")
+                                    .arg(where.fileName(), QDir::toNativeSeparators(where.absolutePath()))
+                              : tr("%1 items restored").arg(done));
     } else if (!job->flushedDrives().isEmpty() && done > 0) {
         showMessage(tr("Done — everything is written to “%1”")
                         .arg(job->flushedDrives().join(QStringLiteral("”, “"))));
@@ -1462,6 +1652,10 @@ QWidget *MainWindow::buildMenuBar()
     file->addSeparator();
     file->addAction(m_openAct);
     file->addSeparator();
+    if (Trash::isSupported()) {
+        file->addAction(m_emptyTrashAct);
+        file->addSeparator();
+    }
     file->addAction(m_closeAct);
     file->addAction(m_quitAct);
 
@@ -1475,6 +1669,9 @@ QWidget *MainWindow::buildMenuBar()
     edit->addAction(m_selectAllAct);
     edit->addAction(m_renameAct);
     edit->addAction(m_trashAct);
+    edit->addAction(m_deleteAct);
+    if (Trash::isSupported())
+        edit->addAction(m_restoreAct);
     edit->addSeparator();
     edit->addAction(m_copyLocationAct);
     edit->addSeparator();
@@ -1494,6 +1691,8 @@ QWidget *MainWindow::buildMenuBar()
     view->addSeparator();
     view->addAction(m_hiddenAct);
     view->addAction(m_sidebarAct);
+    if (m_terminalAct)
+        view->addAction(m_terminalAct);
 
     QMenu *go = addMenu(tr("&Go"));
     go->addAction(m_backAct);
@@ -1771,6 +1970,14 @@ Qt::DropAction MainWindow::dropActionFor(const QStringList &sources, const QStri
             allAlreadyThere = false;
     }
 
+    if (Trash::isFilesDir(targetDir)) {
+        for (const QString &source : sources) {
+            if (!Trash::filesDirOf(source).isEmpty())
+                return Qt::IgnoreAction; // already in the Trash
+        }
+        return (possible & Qt::MoveAction) ? Qt::MoveAction : Qt::IgnoreAction;
+    }
+
     Qt::DropAction action;
     if (modifiers & Qt::ControlModifier)
         action = Qt::CopyAction;
@@ -1832,10 +2039,7 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
         }
         drop->setDropAction(action);
         drop->accept();
-        if (action == Qt::MoveAction)
-            m_ops->move(sources, targetDir);
-        else
-            m_ops->copy(sources, targetDir);
+        performDrop(sources, targetDir, action);
         return true;
     }
 
@@ -1883,10 +2087,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
         }
         drop->setDropAction(action);
         drop->accept();
-        if (action == Qt::MoveAction)
-            m_ops->move(sources, targetDir);
-        else
-            m_ops->copy(sources, targetDir);
+        performDrop(sources, targetDir, action);
         return true;
     }
 
@@ -1903,3 +2104,98 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
     drop->accept();
     return true;
 }
+
+// ------------------------------------------------------------ terminal ---
+
+#if defined(KAFTILOUS_TERMINAL)
+
+QWidget *MainWindow::buildTerminalPanel()
+{
+    m_terminalPanel = new QWidget(this);
+    m_terminalPanel->setObjectName("terminalPanel");
+    m_terminalPanel->setAttribute(Qt::WA_StyledBackground);
+    auto *layout = new QVBoxLayout(m_terminalPanel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto *bar = new QWidget(m_terminalPanel);
+    bar->setObjectName("terminalBar");
+    bar->setAttribute(Qt::WA_StyledBackground);
+    auto *row = new QHBoxLayout(bar);
+    row->setContentsMargins(14, 3, 6, 3);
+    m_terminalTitle = new QLabel(tr("Terminal"), bar);
+    m_terminalTitle->setObjectName("terminalTitle");
+    m_terminalCloseButton = makeButton(tr("Hide terminal (Ctrl+`)"));
+    m_terminalCloseButton->setFixedSize(26, 26);
+    connect(m_terminalCloseButton, &QToolButton::clicked, this,
+            [this] { m_terminalAct->setChecked(false); });
+    row->addWidget(m_terminalTitle, 1);
+    row->addWidget(m_terminalCloseButton);
+    layout->addWidget(bar);
+
+    m_terminal = new TerminalWidget(m_terminalPanel);
+    m_terminal->setPassthroughShortcuts({m_terminalAct->shortcut()});
+    connect(m_terminal, &TerminalWidget::titleChanged, this, [this](const QString &title) {
+        m_terminalTitle->setText(title.isEmpty() ? tr("Terminal") : title);
+    });
+    // `exit` closes the panel; the next one starts a fresh shell.
+    connect(m_terminal, &TerminalWidget::finished, this, [this] {
+        m_terminalTitle->setText(tr("Terminal"));
+        m_terminalAct->setChecked(false);
+    });
+    layout->addWidget(m_terminal, 1);
+
+    m_terminalPanel->hide();
+    return m_terminalPanel;
+}
+
+// Show the terminal in `directory`: start a shell there, or `cd` the running
+// one (only if it's idle at the prompt, never under a running program).
+void MainWindow::showTerminal(const QString &directory)
+{
+    if (!m_terminal->isRunning()) {
+        if (!m_terminal->start(directory)) {
+            showMessage(tr("Couldn't start a terminal"));
+            const QSignalBlocker block(m_terminalAct);
+            m_terminalAct->setChecked(false);
+            m_terminalButton->setChecked(false);
+            return;
+        }
+    } else if (!m_terminal->changeDirectory(directory)) {
+        showMessage(tr("A program is running in the terminal, so it stays where it is"));
+    }
+
+    if (!m_terminalAct->isChecked()) {
+        const QSignalBlocker block(m_terminalAct);
+        m_terminalAct->setChecked(true);
+        m_terminalButton->setChecked(true);
+    }
+    if (m_terminalPanel->isHidden()) {
+        m_terminalPanel->show();
+        if (!m_terminalSized) {
+            const int total = m_contentSplitter->height();
+            m_contentSplitter->setSizes({total * 62 / 100, total * 38 / 100});
+            m_terminalSized = true;
+        }
+    }
+    m_terminal->setFocus(Qt::ShortcutFocusReason);
+}
+
+void MainWindow::hideTerminal()
+{
+    const bool hadFocus = m_terminal->hasFocus();
+    m_terminalPanel->hide();
+    if (hadFocus)
+        m_view->setFocus();
+}
+
+#else
+
+QWidget *MainWindow::buildTerminalPanel()
+{
+    return nullptr;
+}
+void MainWindow::showTerminal(const QString &) {}
+void MainWindow::hideTerminal() {}
+
+#endif

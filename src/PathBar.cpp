@@ -1,5 +1,7 @@
 #include "PathBar.h"
 
+#include "Trash.h"
+
 #include <QDir>
 #include <QEvent>
 #include <QHBoxLayout>
@@ -132,9 +134,15 @@ void PathBar::rebuild()
     QList<Segment> segments;
 
     const QString home = QDir::cleanPath(QDir::homePath());
+    const QString trash = Trash::filesDirOf(m_path);
     QString base;
     QString rest;
-    if (m_path == home || m_path.startsWith(home + '/')) {
+    if (!trash.isEmpty()) {
+        // The Trash is one place, wherever its folders really are.
+        segments.append({tr("Trash"), Trash::homeFilesDir(), Glyph::Trash, true});
+        base = trash;
+        rest = m_path.mid(trash.size());
+    } else if (m_path == home || m_path.startsWith(home + '/')) {
         segments.append({tr("Home"), home, Glyph::Home, true});
         base = home;
         rest = m_path.mid(home.size());
