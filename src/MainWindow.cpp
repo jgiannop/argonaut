@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "ConflictDialog.h"
 #include "DirectoryModel.h"
 #include "FileFilterProxy.h"
 #include "FileItemDelegate.h"
@@ -190,6 +191,23 @@ QWidget#terminalBar { background: @window; border-top: 1px solid @border; }
 QLabel#terminalTitle { color: @dim; font-weight: bold; }
 QSplitter#contentSplitter::handle { background: @border; }
 
+QDialog#conflictDialog { background: @window; }
+QLabel#conflictTitle { color: @fg; font-weight: bold; font-size: 15px; }
+QLabel#conflictText { color: @dim; }
+QCheckBox#conflictCheck { color: @fg; spacing: 8px; }
+QCheckBox#conflictCheck::indicator { width: 14px; height: 14px; border: 1px solid @dim;
+    border-radius: 4px; background: @pathBg; }
+QCheckBox#conflictCheck::indicator:checked { background: @accent; border-color: @accent; }
+QWidget#conflictCard { background: @pathBg; border-radius: 10px; }
+QLabel#conflictCardHeading { color: @fg; font-weight: bold; }
+QLineEdit#conflictName { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+    padding: 6px 8px; selection-background-color: @accent; }
+QPushButton#conflictButton { background: @button; color: @fg; border: none; border-radius: 6px;
+    padding: 7px 14px; }
+QPushButton#conflictButton:hover { background: @buttonHover; }
+QPushButton#conflictPrimary { background: @accent; color: #ffffff; border: none;
+    border-radius: 6px; padding: 7px 16px; font-weight: bold; }
+
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
@@ -228,7 +246,9 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("Kaftilous");
 
     m_ops = new FileOperations(this);
+    m_ops->setAskOnConflict(true);
     connect(m_ops, &FileOperations::jobFinished, this, &MainWindow::onJobFinished);
+    connect(m_ops, &FileOperations::conflictRaised, this, &MainWindow::askConflict);
     connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
             &MainWindow::updateEditActions);
@@ -2199,3 +2219,27 @@ void MainWindow::showTerminal(const QString &) {}
 void MainWindow::hideTerminal() {}
 
 #endif
+
+// ----------------------------------------------------------- conflicts ---
+
+void MainWindow::askConflict(FileJob *job, const QString &source, const QString &existing)
+{
+    m_conflicts.append({QPointer<FileJob>(job), source, existing});
+    if (!m_conflictOpen)
+        showNextConflict();
+}
+
+void MainWindow::showNextConflict()
+{
+    while (!m_conflicts.isEmpty()) {
+        const PendingConflict next = m_conflicts.takeFirst();
+        if (!next.job)
+            continue; // cancelled or finished meanwhile
+        m_conflictOpen = true;
+        ConflictDialog dialog(next.source, next.existing, this);
+        dialog.exec();
+        m_conflictOpen = false;
+        if (next.job)
+            next.job->resolveConflict(dialog.resolution());
+    }
+}

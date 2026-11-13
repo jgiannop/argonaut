@@ -7,6 +7,9 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QWaitCondition>
+
+#include <optional>
 
 class QFileInfo;
 class QThreadPool;
@@ -49,7 +52,29 @@ public:
         QString current;        // name of the item being processed
     };
 
+    // What to do when the destination already has an item with that name.
+    enum class ConflictAction {
+        Replace,  // the existing item goes to the Trash, then the transfer happens
+        Skip,     // leave both as they are
+        KeepBoth, // transfer under another name ("name (copy)" or a chosen one)
+        Merge,    // folder onto folder: transfer the contents, asking again inside
+        Cancel,   // stop the whole job
+    };
+    struct Resolution
+    {
+        ConflictAction action = ConflictAction::KeepBoth;
+        bool applyToAll = false; // remember for the rest of this job (files and
+                                 // folders separately)
+        QString newName;         // KeepBoth with a chosen name
+    };
+
     FileJob(Kind kind, QList<Transfer> transfers, QObject *parent = nullptr);
+
+    // Ask (via conflict()) when the destination name is taken. Off: always
+    // KeepBoth without asking (used by tests and non-interactive callers).
+    void setInteractive(bool interactive) { m_interactive = interactive; }
+    // Answer the question conflict() asked (GUI thread).
+    void resolveConflict(const Resolution &resolution);
 
     Kind kind() const { return m_kind; }
     const QList<Transfer> &transfers() const { return m_transfers; }
@@ -67,6 +92,8 @@ public:
 signals:
     void progressChanged();
     void finished();
+    // The worker is paused until resolveConflict() (or cancel()) is called.
+    void conflict(const QString &source, const QString &existing);
 
 private:
     // Worker thread only.
@@ -74,6 +101,12 @@ private:
     void runTrash();
     void runDelete();
     void runTransfers();
+    bool transferItem(const QString &source, const QString &dir, const QString &name,
+                      qint64 bytes, bool topLevel);
+    bool mergeInto(const QString &sourceDir, const QString &targetDir);
+    bool moveOrCopy(const QString &source, const QString &target, qint64 bytes,
+                    const QString &dir);
+    Resolution askUser(const QString &source, const QString &existing);
     bool copyTree(const QString &source, const QString &target);
     bool copyFile(const QString &source, const QString &target, const QFileInfo &info);
     void flushDrive(const QString &dir);
@@ -91,6 +124,12 @@ private:
     QElapsedTimer m_elapsed;     // started in start(), read from the GUI thread
     QElapsedTimer m_notifyTimer; // worker thread only
     bool m_safeWrites = false;   // worker thread only: current target is removable
+    bool m_interactive = false;
+    std::optional<ConflictAction> m_fileChoice;   // "apply to all", worker thread only
+    std::optional<ConflictAction> m_folderChoice;
+    QMutex m_askMutex;
+    QWaitCondition m_answered;
+    std::optional<Resolution> m_answer; // guarded by m_askMutex
 
     mutable QMutex m_mutex; // guards everything below
     Progress m_progress;

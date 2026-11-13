@@ -69,7 +69,13 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
 - File operations (copy, cut/paste, move to trash, undo):
   - `FileJob` runs one operation on a worker thread (`FileOperations` owns a 2-thread pool). It first measures the total size, then transfers chunk by chunk, checking `cancel()`. Progress is a mutex-guarded snapshot (`progress()`); `progressChanged` is throttled and delivered queued.
   - Safety rules to keep:
-    - Never overwrite: targets come from `uniqueTargetPath` ("name (copy).ext"), and files open with `QIODevice::NewOnly`.
+    - Never overwrite: files open with `QIODevice::NewOnly`. When the destination name is taken, `transferItem` resolves the clash:
+      - Copies into the item's own folder duplicate without asking.
+      - Otherwise `askUser` emits `conflict(source, existing)` and the worker **waits** (`QWaitCondition`) until `resolveConflict()` or `cancel()`.
+      - The answers are Replace (the existing item goes to the **Trash** first; it is never deleted), Skip, KeepBoth (`uniqueTargetPath` or a typed name), Merge (folder onto folder: `mergeInto` handles each child, asking again inside) and Cancel.
+      - "Apply to all" is remembered separately for files and folders.
+      - Only newly created items go into `results`, so undoing a merge never touches what was already there.
+      - Jobs ask only when `FileOperations::setAskOnConflict(true)`; otherwise they keep both silently, which is the tests' default. `MainWindow` shows `ConflictDialog`s one at a time (`m_conflicts` queue).
     - A move tries `QDir::rename` first and falls back to copy and then delete; the original is deleted only after the copy is complete.
     - A cancelled or failed item removes only its own newly created target.
     - Removable drives (`needsSafeWrites`): on Linux these are udisks mounts under `/media` or `/run/media`, a USB sysfs path, or the sysfs `removable` flag; on macOS, `/Volumes/`. For those, data is flushed to the device every 32 MiB (`fdatasync`). The filesystem is synced (`syncfs`) before a cross-filesystem move deletes the source, and again at the end of the job. During that final sync the job shows `Progress::finishing` ("Writing to the drive…"), and the drive is listed in `flushedDrives()`. The internal disk is never synced, to keep it fast. `KAFTILOUS_SAFE_WRITES=1/0` forces the behaviour (used by the tests).

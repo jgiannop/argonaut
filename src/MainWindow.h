@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QMainWindow>
+#include <QPointer>
 #include <QStack>
 #include <QString>
 
@@ -118,6 +119,9 @@ private:
     void cancelRename();
     void updateRenameGeometry();
     void onJobFinished(FileJob *job);
+    // Name clashes: one "Replace?" question at a time (jobs wait meanwhile).
+    void askConflict(FileJob *job, const QString &source, const QString &existing);
+    void showNextConflict();
 
     // Highlight `paths` (in the current folder) once the model has them.
     void selectPaths(const QStringList &paths);
@@ -199,6 +203,15 @@ private:
     QList<QAction *> m_sortColumnActs; // by DirectoryModel::Column
     QAction *m_sortAscAct = nullptr;
     QAction *m_sortDescAct = nullptr;
+
+    struct PendingConflict
+    {
+        QPointer<FileJob> job;
+        QString source;
+        QString existing;
+    };
+    QList<PendingConflict> m_conflicts;
+    bool m_conflictOpen = false;
 
     QAction *m_deleteAct = nullptr;     // Delete Permanently…
     QAction *m_restoreAct = nullptr;    // Restore From Trash

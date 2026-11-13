@@ -51,6 +51,8 @@ qt_add_executable(kaftilous
     src/OperationsPanel.cpp
     src/Toast.h
     src/Toast.cpp
+    src/ConflictDialog.h
+    src/ConflictDialog.cpp
 )
 
 target_link_libraries(kaftilous PRIVATE kaftilous_core Qt6::Widgets)
