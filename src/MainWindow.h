@@ -122,7 +122,7 @@ private:
     void updateResizeCursor(Qt::Edges edges);
 
     Theme m_theme;
-    int m_themeDark = -1;
+    QString m_themeId; // empty until the first applyTheme()
     bool m_csd = false;
     bool m_grid = true;
     bool m_showHidden = false;

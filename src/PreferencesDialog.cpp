@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -61,8 +62,8 @@ QIcon previewIcon(ThemeMode mode)
     QPainterPath frame;
     frame.addRoundedRect(QRectF(0.5, 0.5, PreviewSize.width() - 1, PreviewSize.height() - 1), 8, 8);
 
-    const Theme light = themeFor(false);
-    const Theme dark = themeFor(true);
+    const Theme light = Theme::forMode(ThemeMode::Light);
+    const Theme dark = Theme::forMode(ThemeMode::Dark);
     if (mode == ThemeMode::System) {
         // Split diagonally: light top-left, dark bottom-right.
         QPainterPath lightHalf;
@@ -76,7 +77,7 @@ QIcon previewIcon(ThemeMode mode)
         drawMockWindow(p, light, frame.intersected(lightHalf));
         drawMockWindow(p, dark, frame.intersected(darkHalf));
     } else {
-        drawMockWindow(p, mode == ThemeMode::Dark ? dark : light, frame);
+        drawMockWindow(p, Theme::forMode(mode), frame);
     }
 
     p.setPen(QPen(QColor(0, 0, 0, 50), 1));
@@ -106,33 +107,27 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addWidget(hint);
     layout->addSpacing(10);
 
-    auto *cards = new QHBoxLayout;
-    cards->setSpacing(12);
+    auto *cards = new QGridLayout;
+    cards->setSpacing(10);
     auto *group = new QButtonGroup(this);
     group->setExclusive(true);
 
     const ThemeMode current = savedThemeMode();
-    const struct {
-        ThemeMode mode;
-        const char *label;
-    } options[] = {
-        {ThemeMode::System, QT_TR_NOOP("Follow System")},
-        {ThemeMode::Light, QT_TR_NOOP("Light")},
-        {ThemeMode::Dark, QT_TR_NOOP("Dark")},
-    };
-    for (const auto &option : options) {
+    const QList<ThemeMode> modes = allThemeModes();
+    constexpr int Columns = 4;
+    for (int i = 0; i < modes.size(); ++i) {
+        const ThemeMode mode = modes.at(i);
         auto *card = new QToolButton(this);
         card->setObjectName("themeCard");
         card->setCheckable(true);
-        card->setChecked(option.mode == current);
+        card->setChecked(mode == current);
         card->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        card->setText(tr(option.label));
-        card->setIcon(previewIcon(option.mode));
+        card->setText(themeModeName(mode));
+        card->setIcon(previewIcon(mode));
         card->setIconSize(PreviewSize);
         card->setCursor(Qt::PointingHandCursor);
         group->addButton(card);
-        cards->addWidget(card);
-        const ThemeMode mode = option.mode;
+        cards->addWidget(card, i / Columns, i % Columns);
         connect(card, &QToolButton::clicked, this, [mode] { setThemeMode(mode); });
     }
     layout->addLayout(cards);

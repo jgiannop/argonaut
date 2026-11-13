@@ -21,87 +21,56 @@ const QPalette &systemPalette()
     return palette;
 }
 
-QPalette buildPalette(bool dark, const QColor &accent)
+ThemeMode s_mode = ThemeMode::System; // what applyThemeMode() last applied
+
+struct ThemeInfo
 {
-    const QColor window = dark ? QColor("#242424") : QColor("#fafafa");
-    const QColor base = dark ? QColor("#1e1e1e") : QColor("#ffffff");
-    const QColor text = dark ? QColor("#ffffff") : QColor("#303030");
-    const QColor button = dark ? QColor("#303030") : QColor("#f0f0f0");
-    const QColor disabled = dark ? QColor("#7f7f7f") : QColor("#a0a0a0");
+    ThemeMode mode;
+    const char *key;  // saved in the settings
+    const char *name; // shown in Preferences (translated)
+};
 
-    QPalette p;
-    p.setColor(QPalette::Window, window);
-    p.setColor(QPalette::WindowText, text);
-    p.setColor(QPalette::Base, base);
-    p.setColor(QPalette::AlternateBase, dark ? QColor("#2a2a2a") : QColor("#f4f4f4"));
-    p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, button);
-    p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::BrightText, dark ? QColor("#ff7b63") : QColor("#c01c28"));
-    p.setColor(QPalette::ToolTipBase, dark ? QColor("#383838") : QColor("#ffffff"));
-    p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::PlaceholderText, dark ? QColor(255, 255, 255, 128) : QColor(0, 0, 0, 110));
-    p.setColor(QPalette::Highlight, accent);
-    p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-    p.setColor(QPalette::Link, dark ? QColor("#78aeed") : QColor("#1c71d8"));
-    // Fusion's bevel shades
-    p.setColor(QPalette::Light, button.lighter(130));
-    p.setColor(QPalette::Midlight, button.lighter(115));
-    p.setColor(QPalette::Mid, button.darker(130));
-    p.setColor(QPalette::Dark, button.darker(160));
-    p.setColor(QPalette::Shadow, QColor(0, 0, 0, dark ? 160 : 90));
-    for (QPalette::ColorRole role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
-        p.setColor(QPalette::Disabled, role, disabled);
-    return p;
-}
+const ThemeInfo kThemes[] = {
+    {ThemeMode::System, "system", QT_TRANSLATE_NOOP("Theme", "Follow System")},
+    {ThemeMode::Light, "light", QT_TRANSLATE_NOOP("Theme", "Light")},
+    {ThemeMode::Dark, "dark", QT_TRANSLATE_NOOP("Theme", "Dark")},
+    {ThemeMode::MidnightBlue, "midnight", QT_TRANSLATE_NOOP("Theme", "Midnight Blue")},
+    {ThemeMode::RoseDawn, "rose", QT_TRANSLATE_NOOP("Theme", "Rosé Dawn")},
+    {ThemeMode::Forest, "forest", QT_TRANSLATE_NOOP("Theme", "Forest")},
+    {ThemeMode::Sunset, "sunset", QT_TRANSLATE_NOOP("Theme", "Sunset")},
+};
 
-} // namespace
-
-ThemeMode savedThemeMode()
+const ThemeInfo &infoFor(ThemeMode mode)
 {
-    const QString value = QSettings().value(ThemeKey, "system").toString();
-    if (value == "light")
-        return ThemeMode::Light;
-    if (value == "dark")
-        return ThemeMode::Dark;
-    return ThemeMode::System;
-}
-
-void applyThemeMode(ThemeMode mode)
-{
-    const QPalette &system = systemPalette();
-    if (mode == ThemeMode::System) {
-        // Leave the palette untouched at startup so Qt keeps following the
-        // platform; only restore it if we replaced it earlier.
-        if (QApplication::palette() != system)
-            QApplication::setPalette(system);
-        return;
+    for (const ThemeInfo &info : kThemes) {
+        if (info.mode == mode)
+            return info;
     }
-    QApplication::setPalette(
-        buildPalette(mode == ThemeMode::Dark, system.color(QPalette::Highlight)));
+    return kThemes[0];
 }
 
-void setThemeMode(ThemeMode mode)
+QColor withAlpha(QColor c, int alpha)
 {
-    const char *value = mode == ThemeMode::Light ? "light"
-                        : mode == ThemeMode::Dark ? "dark"
-                                                  : "system";
-    QSettings().setValue(ThemeKey, QString::fromLatin1(value));
-    applyThemeMode(mode);
+    c.setAlpha(alpha);
+    return c;
 }
 
-Theme themeFor(bool dark)
+// `over` (possibly translucent) painted on top of opaque `under`.
+QColor blend(const QColor &over, const QColor &under)
 {
-    return Theme::fromPalette(buildPalette(dark, systemPalette().color(QPalette::Highlight)));
+    const qreal a = over.alphaF();
+    return QColor::fromRgbF(over.redF() * a + under.redF() * (1 - a),
+                            over.greenF() * a + under.greenF() * (1 - a),
+                            over.blueF() * a + under.blueF() * (1 - a));
 }
 
-Theme Theme::fromPalette(const QPalette &palette)
+// The GNOME-like defaults (exact libadwaita colours).
+Theme adwaita(bool dark, const QColor &accent)
 {
     Theme t;
-    t.dark = palette.color(QPalette::Window).lightness() < 128;
-    t.accent = palette.color(QPalette::Highlight);
-
-    if (t.dark) {
+    t.dark = dark;
+    t.accent = accent;
+    if (dark) {
         t.window = QColor("#242424");
         t.sidebar = QColor("#303030");
         t.outline = QColor("#3d3d3d");
@@ -134,8 +103,177 @@ Theme Theme::fromPalette(const QPalette &palette)
         t.scroll = QColor(0, 0, 0, 60);
         t.scrollHover = QColor(0, 0, 0, 110);
     }
-    t.itemSelected = t.accent;
-    t.itemSelected.setAlpha(t.dark ? 80 : 60);
+    t.itemSelected = withAlpha(t.accent, dark ? 80 : 60);
+    return t;
+}
+
+// A coloured theme from four base colours; every other token is derived
+// the same way as in the defaults, so all themes behave alike.
+Theme custom(bool dark, const QColor &window, const QColor &sidebar, const QColor &fg,
+             const QColor &accent)
+{
+    Theme t;
+    t.dark = dark;
+    t.window = window;
+    t.sidebar = sidebar;
+    t.fg = fg;
+    t.accent = accent;
+    if (dark) {
+        t.outline = sidebar.lighter(135);
+        t.dimFg = withAlpha(fg, 150);
+        t.hover = withAlpha(fg, 20);
+        t.pressed = withAlpha(fg, 38);
+        t.selected = withAlpha(fg, 28);
+        t.pathBg = withAlpha(fg, 22);
+        t.button = withAlpha(fg, 28);
+        t.buttonHover = withAlpha(fg, 48);
+        t.popup = sidebar.lighter(118);
+        t.border = QColor(0, 0, 0, 100);
+        t.scroll = withAlpha(fg, 64);
+        t.scrollHover = withAlpha(fg, 115);
+        t.itemSelected = withAlpha(accent, 85);
+    } else {
+        t.outline = sidebar.darker(118);
+        t.dimFg = withAlpha(fg, 165);
+        t.hover = withAlpha(fg, 16);
+        t.pressed = withAlpha(fg, 34);
+        t.selected = withAlpha(fg, 30);
+        t.pathBg = withAlpha(fg, 18);
+        t.button = withAlpha(fg, 22);
+        t.buttonHover = withAlpha(fg, 40);
+        t.popup = window.lighter(103);
+        t.border = withAlpha(fg, 40);
+        t.scroll = withAlpha(fg, 64);
+        t.scrollHover = withAlpha(fg, 115);
+        t.itemSelected = withAlpha(accent, 64);
+    }
+    return t;
+}
+
+// Qt palette (for widgets our style sheet doesn't cover: text fields,
+// dialogs, tooltips…) matching a theme.
+QPalette paletteFor(const Theme &t)
+{
+    const QColor text = blend(t.fg, t.window);
+    const QColor base = t.dark ? t.window.darker(112) : t.window.lighter(104);
+    const QColor disabled = blend(withAlpha(t.fg, 110), t.window);
+
+    QPalette p;
+    p.setColor(QPalette::Window, t.window);
+    p.setColor(QPalette::WindowText, text);
+    p.setColor(QPalette::Base, base);
+    p.setColor(QPalette::AlternateBase, blend(t.hover, base));
+    p.setColor(QPalette::Text, text);
+    p.setColor(QPalette::Button, t.sidebar);
+    p.setColor(QPalette::ButtonText, text);
+    p.setColor(QPalette::BrightText, t.dark ? QColor("#ff7b63") : QColor("#c01c28"));
+    p.setColor(QPalette::ToolTipBase, t.popup);
+    p.setColor(QPalette::ToolTipText, text);
+    p.setColor(QPalette::PlaceholderText, blend(t.dimFg, base));
+    p.setColor(QPalette::Highlight, t.accent);
+    p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    p.setColor(QPalette::Link, t.accent);
+    // Fusion's bevel shades
+    p.setColor(QPalette::Light, t.sidebar.lighter(130));
+    p.setColor(QPalette::Midlight, t.sidebar.lighter(115));
+    p.setColor(QPalette::Mid, t.sidebar.darker(130));
+    p.setColor(QPalette::Dark, t.sidebar.darker(160));
+    p.setColor(QPalette::Shadow, QColor(0, 0, 0, t.dark ? 160 : 90));
+    for (QPalette::ColorRole role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        p.setColor(QPalette::Disabled, role, disabled);
+    return p;
+}
+
+} // namespace
+
+QList<ThemeMode> allThemeModes()
+{
+    QList<ThemeMode> modes;
+    for (const ThemeInfo &info : kThemes)
+        modes.append(info.mode);
+    return modes;
+}
+
+QString themeModeName(ThemeMode mode)
+{
+    return QCoreApplication::translate("Theme", infoFor(mode).name);
+}
+
+ThemeMode savedThemeMode()
+{
+    const QString value = QSettings().value(ThemeKey, "system").toString();
+    for (const ThemeInfo &info : kThemes) {
+        if (value == QLatin1String(info.key))
+            return info.mode;
+    }
+    return ThemeMode::System;
+}
+
+void applyThemeMode(ThemeMode mode)
+{
+    const QPalette &system = systemPalette();
+    s_mode = mode;
+    if (mode == ThemeMode::System) {
+        // Leave the palette untouched at startup so Qt keeps following the
+        // platform; only restore it if we replaced it earlier.
+        if (QApplication::palette() != system)
+            QApplication::setPalette(system);
+        return;
+    }
+    QApplication::setPalette(paletteFor(Theme::forMode(mode)));
+}
+
+void setThemeMode(ThemeMode mode)
+{
+    QSettings().setValue(ThemeKey, QString::fromLatin1(infoFor(mode).key));
+    applyThemeMode(mode);
+}
+
+Theme currentTheme()
+{
+    return s_mode == ThemeMode::System ? Theme::fromPalette(QApplication::palette())
+                                       : Theme::forMode(s_mode);
+}
+
+Theme Theme::fromPalette(const QPalette &palette)
+{
+    const bool dark = palette.color(QPalette::Window).lightness() < 128;
+    Theme t = adwaita(dark, palette.color(QPalette::Highlight));
+    t.id = dark ? QStringLiteral("system-dark") : QStringLiteral("system-light");
+    return t;
+}
+
+Theme Theme::forMode(ThemeMode mode)
+{
+    const QColor systemAccent = systemPalette().color(QPalette::Highlight);
+    Theme t;
+    switch (mode) {
+    case ThemeMode::System:
+        return fromPalette(systemPalette());
+    case ThemeMode::Light:
+        t = adwaita(false, systemAccent);
+        break;
+    case ThemeMode::Dark:
+        t = adwaita(true, systemAccent);
+        break;
+    case ThemeMode::MidnightBlue: // deep navy, sky-blue accent
+        t = custom(true, QColor("#141b26"), QColor("#1b2433"), QColor("#e6edf7"),
+                   QColor("#5aa9ff"));
+        break;
+    case ThemeMode::RoseDawn: // warm cream, blush sidebar, rose accent
+        t = custom(false, QColor("#fbf6f3"), QColor("#f3e6e4"), QColor("#4a3536"),
+                   QColor("#d46a7e"));
+        break;
+    case ThemeMode::Forest: // deep green-grey, mint accent
+        t = custom(true, QColor("#18201b"), QColor("#1f2a24"), QColor("#e3ece5"),
+                   QColor("#5fcf8f"));
+        break;
+    case ThemeMode::Sunset: // plum and charcoal, amber accent
+        t = custom(true, QColor("#201826"), QColor("#2a2030"), QColor("#f2e8f0"),
+                   QColor("#ff9e5e"));
+        break;
+    }
+    t.id = QString::fromLatin1(infoFor(mode).key);
     return t;
 }
 

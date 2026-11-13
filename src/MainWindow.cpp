@@ -689,12 +689,13 @@ QWidget *MainWindow::buildContentPane()
 
 void MainWindow::applyTheme(bool force)
 {
-    // Use the application palette: our own style sheet changes widget palettes.
-    const Theme theme = Theme::fromPalette(QApplication::palette());
-    if (!force && m_themeDark == int(theme.dark))
+    // The applied theme (built from the application palette for "Follow
+    // System"; never from widget palettes, which our style sheet changes).
+    const Theme theme = currentTheme();
+    if (!force && m_themeId == theme.id)
         return;
     m_theme = theme;
-    m_themeDark = int(theme.dark);
+    m_themeId = theme.id;
 
     setStyleSheet(styleSheetFor(m_theme));
 
