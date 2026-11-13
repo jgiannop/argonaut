@@ -20,3 +20,8 @@ qt_add_executable(tst_bookmarks tst_bookmarks.cpp)
 target_link_libraries(tst_bookmarks PRIVATE kaftilous_core Qt6::Test)
 add_test(NAME bookmarks COMMAND tst_bookmarks)
 set_tests_properties(bookmarks PROPERTIES TIMEOUT 60)
+
+qt_add_executable(tst_openwith tst_openwith.cpp)
+target_link_libraries(tst_openwith PRIVATE kaftilous_core Qt6::Test)
+add_test(NAME openwith COMMAND tst_openwith)
+set_tests_properties(openwith PROPERTIES TIMEOUT 60)

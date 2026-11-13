@@ -19,10 +19,13 @@ qt_standard_project_setup()
 qt_add_library(kaftilous_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
+    src/Format.h
     src/Trash.h
     src/Trash.cpp
     src/Bookmarks.h
     src/Bookmarks.cpp
+    src/OpenWith.h
+    src/OpenWith.cpp
     src/FileJob.h
     src/FileJob.cpp
     src/FileOperations.h
@@ -55,6 +58,10 @@ qt_add_executable(kaftilous
     src/Toast.cpp
     src/ConflictDialog.h
     src/ConflictDialog.cpp
+    src/OpenWithDialog.h
+    src/OpenWithDialog.cpp
+    src/PropertiesDialog.h
+    src/PropertiesDialog.cpp
 )
 
 target_link_libraries(kaftilous PRIVATE kaftilous_core Qt6::Widgets)

@@ -35,6 +35,7 @@ class QStackedWidget;
 class QTabBar;
 class QTimer;
 class QToolButton;
+class QKeyEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -69,6 +70,12 @@ private:
     void updateBookmarkAction();
     void loadSettings();
     void saveSettings();
+    // Typing in the file view jumps to a matching name.
+    bool typeAheadKey(QKeyEvent *event);
+    // Open With: a submenu of the recommended apps, and the full chooser.
+    QMenu *openWithMenu(const QStringList &files);
+    void openWithOther(const QStringList &files);
+    void typeAheadFind();
 
     // Tabs: one shared view/model; each tab keeps its folder, history,
     // selection and scroll position, restored when it becomes active.
@@ -240,6 +247,8 @@ private:
     QList<PendingConflict> m_conflicts;
     bool m_conflictOpen = false;
 
+    QString m_typeAhead;
+    QElapsedTimer m_typeAheadTimer;
     QList<TabState> m_tabs;
     QList<TabState> m_closedTabs; // for Ctrl+Shift+T
     int m_activeTab = 0;
@@ -251,6 +260,7 @@ private:
     QAction *m_reopenTabAct = nullptr;
     QAction *m_openInNewTabAct = nullptr;
 
+    QAction *m_propertiesAct = nullptr; // Ctrl+I / Alt+Enter
     QAction *m_bookmarkAct = nullptr;   // Ctrl+D: bookmark / unbookmark this folder
     QTimer *m_sidebarRefresh = nullptr; // debounces drive/bookmark changes
     int m_mountsFd = -1;                // /proc/self/mounts (Linux): POLLPRI on change

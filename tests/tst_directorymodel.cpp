@@ -2,6 +2,7 @@
 // files, live updates from disk, persistent indexes and item counts.
 
 #include "DirectoryModel.h"
+#include "Format.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -50,6 +51,8 @@ private slots:
     void pathsAndColumns();
     void folderGone();
     void dragData();
+    void sizesLikeGnome();
+    void naturalOrderInCLocale();
     void bigFolder();
 
 private:
@@ -246,6 +249,33 @@ void TestDirectoryModel::dragData()
     QCOMPARE(data->urls(), QList<QUrl>({QUrl::fromLocalFile(m_dir + "/a.txt"),
                                         QUrl::fromLocalFile(m_dir + "/b.txt")}));
     QVERIFY(data->text().contains("a.txt"));
+}
+
+// Powers of 1000 with kB/MB/GB, like Nautilus and what drives are sold as.
+void TestDirectoryModel::sizesLikeGnome()
+{
+    QLocale::setDefault(QLocale::c());
+    QCOMPARE(formatSize(0), QStringLiteral("0 bytes"));
+    QCOMPARE(formatSize(1), QStringLiteral("1 byte"));
+    QCOMPARE(formatSize(999), QStringLiteral("999 bytes"));
+    QCOMPARE(formatSize(3000), QStringLiteral("3.0 kB"));
+    QCOMPARE(formatSize(52'000'000), QStringLiteral("52.0 MB"));
+    QCOMPARE(formatSize(32'000'000'000), QStringLiteral("32.0 GB")); // a "32 GB" stick
+    touch(m_dir + "/f.bin", 1500);
+    QVERIFY(load(m_dir));
+    QCOMPARE(m_model->index(0, DirectoryModel::SizeColumn).data().toString(), QStringLiteral("1.5 kB"));
+    QLocale::setDefault(QLocale::system());
+}
+
+// Even under LANG=C, numbers in names sort naturally.
+void TestDirectoryModel::naturalOrderInCLocale()
+{
+    QLocale::setDefault(QLocale::c());
+    for (const char *f : {"file10.txt", "file2.txt", "file1.txt"})
+        touch(m_dir + '/' + f);
+    QVERIFY(load(m_dir));
+    QCOMPARE(names(*m_model), QStringList({"file1.txt", "file2.txt", "file10.txt"}));
+    QLocale::setDefault(QLocale::system());
 }
 
 QTEST_GUILESS_MAIN(TestDirectoryModel)

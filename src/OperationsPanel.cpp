@@ -1,5 +1,7 @@
 #include "OperationsPanel.h"
 
+#include "Format.h"
+
 #include "FileJob.h"
 #include "FileOperations.h"
 
@@ -170,8 +172,8 @@ void OperationsPanel::updateJob(FileJob *job)
     row.bar->setRange(0, 1000);
     row.bar->setValue(p.bytesTotal > 0 ? int(p.bytesDone * 1000 / p.bytesTotal) : 0);
     QString detail = tr("%1 of %2")
-                         .arg(locale.formattedDataSize(p.bytesDone),
-                              locale.formattedDataSize(p.bytesTotal));
+                         .arg(formatSize(p.bytesDone),
+                              formatSize(p.bytesTotal));
     const qint64 elapsed = job->elapsedMs();
     if (elapsed > 1500 && p.bytesDone > 0 && p.bytesTotal > p.bytesDone) {
         const qint64 remaining =
