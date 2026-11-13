@@ -37,6 +37,7 @@ class QTabBar;
 class QTimer;
 class QToolButton;
 class QKeyEvent;
+class QHBoxLayout;
 
 class MainWindow : public QMainWindow
 {
@@ -64,6 +65,8 @@ private:
     QWidget *buildSidebarPane();
     QWidget *buildContentPane();
     QToolButton *makeButton(const QString &toolTip, const char *objectName = "flat");
+    // Minimize / maximize / close (client-side decorations), at the end of `row`.
+    void addWindowButtons(QHBoxLayout *row);
     QMenu *makeMenu();
     QWidget *buildMenuBar();
 
