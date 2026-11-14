@@ -24,6 +24,8 @@ public:
     void setTheme(const Theme &theme);
     void startEditing();
     QToolButton *menuButton() const { return m_menuButton; }
+    // The git branch pill ("main · 3"), hidden when `branch` is empty.
+    void setGitInfo(const QString &branch, int changes, const QString &tooltip);
 
 signals:
     void pathActivated(const QString &path);
@@ -44,5 +46,6 @@ private:
     QHBoxLayout *m_crumbLayout;
     QLineEdit *m_edit;
     QToolButton *m_menuButton;
+    QToolButton *m_gitBadge;
     QList<QList<QWidget *>> m_groups; // a crumb button + its trailing "/"
 };

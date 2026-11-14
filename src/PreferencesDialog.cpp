@@ -1,6 +1,7 @@
 #include "PreferencesDialog.h"
 
 #include "DefaultFileManager.h"
+#include "GitStatus.h"
 #include "MainWindow.h"
 #include "Theme.h"
 #include "Thumbnailer.h"
@@ -182,6 +183,28 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addSpacing(4);
     layout->addWidget(expand);
     layout->addWidget(expandHint);
+
+    // Git badges in repositories.
+    layout->addSpacing(18);
+    auto *gitHeading = new QLabel(tr("Git"), this);
+    gitHeading->setObjectName("prefHeading");
+    auto *gitCheck = new QCheckBox(tr("Show Git status in repositories"), this);
+    gitCheck->setObjectName("prefCheck");
+    gitCheck->setChecked(GitStatus::enabled());
+    auto *gitHint = new QLabel(tr("Marks changed (M), added (A), new (U) and conflicting (C) files, and shows "
+                                  "the branch in the path bar. Repositories whose settings would run "
+                                  "programs are left alone."),
+                               this);
+    gitHint->setObjectName("prefHint");
+    gitHint->setWordWrap(true);
+    connect(gitCheck, &QCheckBox::toggled, this, [](bool on) {
+        GitStatus::setEnabled(on);
+        MainWindow::resetGitEverywhere();
+    });
+    layout->addWidget(gitHeading);
+    layout->addSpacing(4);
+    layout->addWidget(gitCheck);
+    layout->addWidget(gitHint);
 
     // Default file manager: Kosmos or Nautilus, switchable both ways.
     layout->addSpacing(18);

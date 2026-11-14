@@ -157,6 +157,12 @@ DirectoryModel::DirectoryModel(QObject *parent)
             emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {StarredRole});
     });
     m_contentPool.setMaxThreadCount(1); // reading file heads: one disk stream
+    m_git = new GitStatus(this);
+    connect(m_git, &GitStatus::changed, this, [this] {
+        if (!m_rows.empty())
+            emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {GitStatusRole, Qt::ToolTipRole});
+        emit gitChanged();
+    });
     m_contentTimer.setSingleShot(true);
     m_contentTimer.setInterval(30); // batch requests from painting
     connect(&m_contentTimer, &QTimer::timeout, this, &DirectoryModel::flushContentQueue);
@@ -268,6 +274,7 @@ void DirectoryModel::removeWatch(const QString &dir)
 
 void DirectoryModel::folderChanged()
 {
+    m_git->refresh(); // a file changed: its git state may have too
     if (isVirtual())
         scheduleRescan(); // the list's file changed (or something next to it)
     else if (!QFileInfo(m_path).isDir())
@@ -298,10 +305,12 @@ void DirectoryModel::setPath(const QString &path)
         const QString list = m_place == Place::Recent ? RecentFiles::filePath() : Starred::instance().filePath();
         m_dirs = {QFileInfo(list).absolutePath()};
         QDir().mkpath(m_dirs.first());
+        m_git->setFolder(QString()); // items from anywhere: no repository
         relist();
         return;
     }
     m_trash = Trash::isFilesDir(path);
+    m_git->setFolder(m_trash ? QString() : path);
     m_dirs = m_trash ? Trash::filesDirs() : QStringList{path};
     if (!m_dirs.contains(path))
         m_dirs.prepend(path);
@@ -955,6 +964,19 @@ int DirectoryModel::depthOf(const FileEntry &e) const
     return int(QStringView(e.dir).mid(skip).count(QLatin1Char('/'))) + 1;
 }
 
+void DirectoryModel::refreshGit()
+{
+    m_git->refresh();
+}
+
+void DirectoryModel::resetGit()
+{
+    const QString path = m_path;
+    m_git->setFolder(QString()); // look again: the setting may have changed
+    if (!isVirtual() && !m_trash)
+        m_git->setFolder(path);
+}
+
 // ---------------------------------------------------------------- tree ---
 
 void DirectoryModel::setTreeEnabled(bool enabled)
@@ -1324,6 +1346,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return isLocked(e);
     case OwnerIdRole:
         return e.ownerId;
+    case GitStatusRole:
+        return int(m_git->state(e.path()));
     case TreeDepthRole:
         return isTreeActive() ? depthOf(e) : -1;
     case ExpandedRole:
@@ -1343,6 +1367,25 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
                 const QString shown = QDir::toNativeSeparators(target);
                 extra << (QFileInfo::exists(target) ? tr("Link to %1").arg(shown)
                                                     : tr("Broken link to %1").arg(shown));
+            }
+            switch (m_git->state(e.path())) {
+            case GitStatus::Modified:
+                extra << tr("Git: modified");
+                break;
+            case GitStatus::Added:
+                extra << tr("Git: added");
+                break;
+            case GitStatus::Untracked:
+                extra << tr("Git: not tracked yet");
+                break;
+            case GitStatus::Conflicted:
+                extra << tr("Git: merge conflict");
+                break;
+            case GitStatus::Changed:
+                extra << tr("Git: changes inside");
+                break;
+            case GitStatus::None:
+                break;
             }
             if (isLocked(e))
                 extra << (Access::hasOwners() ? tr("Read-only (owner: %1)").arg(Access::userName(e.ownerId))

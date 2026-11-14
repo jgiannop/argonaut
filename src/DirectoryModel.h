@@ -11,6 +11,7 @@
 #include <QTimer>
 
 #include "ContentType.h"
+#include "GitStatus.h"
 
 #include <vector>
 
@@ -97,6 +98,7 @@ public:
         TreeDepthRole,               // int: 0 = in the open folder, 1 = one level in…; -1 = no tree
         ExpandedRole,                // bool: an opened folder (tree)
         ExpandableRole,              // bool: a folder that can be opened in place (tree)
+        GitStatusRole,               // int, GitStatus::State (in a git repository)
     };
     // Places that aren't folders: lists of items from anywhere. setPath()
     // takes these paths; they're never on disk.
@@ -149,6 +151,13 @@ public:
     bool isExpanded(const QString &folder) const { return m_expanded.contains(folder); }
     QStringList expandedFolders() const { return QStringList(m_expanded.cbegin(), m_expanded.cend()); }
 
+    // Git status of the folder's repository (badges, branch in the path bar).
+    const GitStatus *git() const { return m_git; }
+    // Soon: files may have changed where nothing is watched (deeper in the
+    // repository). The window calls it when it's activated and after jobs.
+    void refreshGit();
+    void resetGit(); // look for the repository again (Preferences switched badges)
+
     void setShowHidden(bool show);
     bool showHidden() const { return m_showHidden; }
 
@@ -177,6 +186,7 @@ public:
     Qt::DropActions supportedDragActions() const override;
 
 signals:
+    void gitChanged();                    // badges, branch or repository changed
     void loaded(const QString &path);     // first complete listing of `path`
     void folderGone(const QString &path); // the open folder was deleted or moved
 
@@ -261,6 +271,7 @@ private:
     QList<int> m_watchIds;
     QHash<QString, int> m_watchByDir; // inotify id per watched folder
     bool m_treeEnabled = false;
+    GitStatus *m_git = nullptr;
     QSet<QString> m_expanded; // opened folders (tree); each is also in m_dirs
     QTimer m_rescanTimer;
     QThreadPool m_pool;

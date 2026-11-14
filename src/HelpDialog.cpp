@@ -314,6 +314,9 @@ bookmarks, recent files, thumbnails and Trash, and adds a few things of its own.
 <li>Middle-click a folder or a sidebar entry to open it in a new tab in the background.</li>
 <li>[[Ctrl+Tab]] goes to the next tab and [[Alt+1]]… [[Alt+9]] to a given one.</li>
 </ul>
+<h2>Any command by name</h2>
+<p>Press [[Ctrl+Shift+P]] and type a few letters of what you want: “hid” for Show Hidden Files,
+“nf” for New Folder, “sort size”. [[Enter]] runs it, [[Esc]] closes. The commands you used last come first.</p>
 <p>See also: <a href="topic:views">Views and sorting</a>, <a href="topic:shortcuts">Keyboard shortcuts</a>.</p>
 )"));
 
@@ -472,6 +475,20 @@ Folders appear while they're measured.</p>
 <li>Trashing, moving or copying updates the sizes at once. <b>Scan Again</b> picks up changes made by other programs.</li>
 <li>[[Ctrl+1]] or [[Ctrl+2]] goes back to the files.</li>
 </ul>
+)"));
+
+    add("git", tr("Git Repositories"), tr(R"(
+<p>Inside a Git repository, Kosmos shows what changed, like a code editor does.</p>
+<ul>
+<li>A letter after the name in the list (a small tag on the icon in the grid):
+<b>M</b> changed, <b>A</b> added, <b>U</b> new and not added yet, <b>C</b> a merge conflict.</li>
+<li>A dot on a folder means something inside it changed.</li>
+<li>The path bar shows the branch and how many items changed. Hover over it for the repository's folder.</li>
+<li>It updates when files change, after you run <code>git add</code> or <code>git commit</code>, and when you come back to the window.</li>
+</ul>
+<p>For safety, a repository whose own settings would make Git run programs (for example one you downloaded)
+is not checked; the path bar then says “git: off”. Very big repositories that take too long are skipped too.
+Turn the badges off in Preferences if you don't want them.</p>
 )"));
 
 #if defined(KOSMOS_TERMINAL)

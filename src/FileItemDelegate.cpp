@@ -179,6 +179,7 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     paintIcon(painter, iconRect, index);
     paintContentBadge(painter, iconRect, index);
     paintAccessBadges(painter, iconRect, index);
+    paintGitTag(painter, iconRect, index);
     paintStarBadge(painter, iconRect, index);
 
     painter->setPen(m_theme.fg);
@@ -232,8 +233,29 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
         paintAccessBadges(painter, iconRect, index);
         paintStarBadge(painter, iconRect, index);
         const int left = iconRect.right() + 12;
-        const QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
-                             option.rect.height());
+        QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
+                       option.rect.height());
+        const int git = index.data(DirectoryModel::GitStatusRole).toInt();
+        if (git != 0) { // the git letter at the right end of the name cell
+            const QString letter = gitLetter(git);
+            QFont bold = option.font;
+            bold.setBold(true);
+            const int w = QFontMetrics(bold).horizontalAdvance(letter.isEmpty() ? QStringLiteral("M") : letter) + 10;
+            const QRect tag(nameRect.right() - w + 1, nameRect.top(), w, nameRect.height());
+            nameRect.setRight(tag.left() - 4);
+            painter->save();
+            if (letter.isEmpty()) { // a folder with changes inside: a dot
+                painter->setRenderHint(QPainter::Antialiasing);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(gitColor(git));
+                painter->drawEllipse(QRectF(tag.center().x() - 3, tag.center().y() - 2, 6, 6));
+            } else {
+                painter->setFont(bold);
+                painter->setPen(gitColor(git));
+                painter->drawText(tag, Qt::AlignCenter, letter);
+            }
+            painter->restore();
+        }
         painter->setPen(m_theme.fg);
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           fm.elidedText(option.text, Qt::ElideMiddle, nameRect.width()));
@@ -363,6 +385,69 @@ void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, 
     painter->setPen(QPen(QColor("#c88800"), 0.8));
     painter->setBrush(QColor("#f6c915"));
     painter->drawPath(star);
+    painter->restore();
+}
+
+QString FileItemDelegate::gitLetter(int state)
+{
+    switch (GitStatus::State(state)) {
+    case GitStatus::Modified:
+        return QStringLiteral("M");
+    case GitStatus::Added:
+        return QStringLiteral("A");
+    case GitStatus::Untracked:
+        return QStringLiteral("U");
+    case GitStatus::Conflicted:
+        return QStringLiteral("C");
+    default:
+        return {}; // Changed (a folder): a dot
+    }
+}
+
+QColor FileItemDelegate::gitColor(int state) const
+{
+    // libadwaita's palette: brighter shades on dark themes.
+    switch (GitStatus::State(state)) {
+    case GitStatus::Added:
+    case GitStatus::Untracked:
+        return m_theme.dark ? QColor("#57e389") : QColor("#26a269");
+    case GitStatus::Conflicted:
+        return m_theme.dark ? QColor("#f66151") : QColor("#c01c28");
+    default:
+        return m_theme.dark ? QColor("#ffa348") : QColor("#c64600");
+    }
+}
+
+// Grid: a small round tag at the icon's bottom-left (next to a link arrow).
+void FileItemDelegate::paintGitTag(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const
+{
+    const int git = index.data(DirectoryModel::GitStatusRole).toInt();
+    if (git == 0)
+        return;
+    const qreal d = qBound(10, iconRect.width() * 3 / 8, 20);
+    qreal left = iconRect.left() - 3;
+    if (index.data(DirectoryModel::SymLinkRole).toBool())
+        left += d + 1;
+    const QString letter = gitLetter(git);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    if (letter.isEmpty()) {
+        const qreal dot = d * 0.55;
+        painter->setPen(QPen(m_theme.window, 1.5));
+        painter->setBrush(gitColor(git));
+        painter->drawEllipse(QRectF(left + (d - dot) / 2, iconRect.bottom() - d + 3 + (d - dot) / 2, dot, dot));
+    } else {
+        const QRectF r(left, iconRect.bottom() - d + 3, d, d);
+        painter->setPen(QPen(m_theme.window, 1.5));
+        painter->setBrush(gitColor(git));
+        painter->drawEllipse(r);
+        QFont font = painter->font();
+        font.setBold(true);
+        font.setPixelSize(int(d * 0.62));
+        painter->setFont(font);
+        painter->setPen(Qt::white);
+        painter->drawText(r, Qt::AlignCenter, letter);
+    }
     painter->restore();
 }
 
