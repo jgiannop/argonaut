@@ -64,23 +64,38 @@ QStringList FileManagerService::localPaths(const QStringList &uris)
     return paths;
 }
 
-bool FileManagerService::registerOn(const QDBusConnection &bus)
+bool FileManagerService::registerOn(const QDBusConnection &bus, IfTaken ifTaken)
 {
     QDBusConnection connection = bus;
     if (!connection.isConnected())
         return false;
     if (!connection.registerObject(QString::fromLatin1(ObjectPath), this, QDBusConnection::ExportAdaptors))
         return false;
-    // No queueing: if Nautilus (or another Argonaut) has it, we don't.
-    const auto reply = connection.interface()->registerService(
-        QString::fromLatin1(ServiceName), QDBusConnectionInterface::DontQueueService,
+    QDBusConnectionInterface *iface = connection.interface();
+    // Connected before asking, so a name granted at once can't be missed.
+    connect(iface, &QDBusConnectionInterface::serviceRegistered, this, [this](const QString &name) {
+        if (name != QLatin1String(ServiceName) || !m_registered || m_owns)
+            return;
+        m_owns = true;
+        emit nameAcquired();
+    });
+    const auto reply = iface->registerService(
+        QString::fromLatin1(ServiceName),
+        ifTaken == IfTaken::WaitInLine ? QDBusConnectionInterface::QueueService
+                                       : QDBusConnectionInterface::DontQueueService,
         QDBusConnectionInterface::AllowReplacement);
-    if (!reply.isValid() || reply.value() != QDBusConnectionInterface::ServiceRegistered) {
+    const bool owns = reply.isValid() && reply.value() == QDBusConnectionInterface::ServiceRegistered;
+    const bool queued = reply.isValid() && reply.value() == QDBusConnectionInterface::ServiceQueued;
+    if (!owns && !queued) {
+        disconnect(iface, nullptr, this, nullptr);
         connection.unregisterObject(QString::fromLatin1(ObjectPath));
         return false;
     }
     m_bus = connection.name();
     m_registered = true;
+    m_owns = owns;
+    if (owns)
+        emit nameAcquired();
     return true;
 }
 
@@ -89,9 +104,11 @@ void FileManagerService::unregister()
     if (!m_registered)
         return;
     QDBusConnection connection(m_bus);
-    connection.unregisterService(QString::fromLatin1(ServiceName));
+    disconnect(connection.interface(), nullptr, this, nullptr);
+    connection.unregisterService(QString::fromLatin1(ServiceName)); // also leaves the line
     connection.unregisterObject(QString::fromLatin1(ObjectPath));
     m_registered = false;
+    m_owns = false;
 }
 
 #include "FileManagerService.moc"

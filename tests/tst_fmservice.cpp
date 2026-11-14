@@ -22,6 +22,7 @@ private slots:
     void localPaths();
     void answersCalls();
     void refusesWhenTaken();
+    void waitsInLine();
 
 private:
     QDBusConnection bus() const { return QDBusConnection::sessionBus(); }
@@ -89,6 +90,30 @@ void TestFileManagerService::refusesWhenTaken()
     QVERIFY(!service.registerOn(bus()));
     QCOMPARE(bus().interface()->serviceOwner(FileManagerService::ServiceName).value(), other.baseService());
     QDBusConnection::disconnectFromBus("other");
+}
+
+void TestFileManagerService::waitsInLine()
+{
+    // Nautilus has the name: `argonaut --service` queues behind it and takes
+    // over the moment Nautilus lets go, without being started again.
+    QDBusConnection other = QDBusConnection::connectToBus(QDBusConnection::SessionBus, "nautilus");
+    QVERIFY(other.registerService(FileManagerService::ServiceName));
+    FileManagerService service;
+    QSignalSpy acquired(&service, &FileManagerService::nameAcquired);
+    QVERIFY(service.registerOn(bus(), FileManagerService::IfTaken::WaitInLine));
+    QVERIFY(!service.ownsName());
+    QCOMPARE(bus().interface()->serviceOwner(FileManagerService::ServiceName).value(), other.baseService());
+
+    QVERIFY(other.unregisterService(FileManagerService::ServiceName));
+    QTRY_COMPARE(acquired.count(), 1);
+    QVERIFY(service.ownsName());
+    QCOMPARE(bus().interface()->serviceOwner(FileManagerService::ServiceName).value(), bus().baseService());
+
+    // A Nautilus started now only waits behind us.
+    QVERIFY(!other.registerService(FileManagerService::ServiceName));
+    service.unregister();
+    QVERIFY(!bus().interface()->isServiceRegistered(FileManagerService::ServiceName).value());
+    QDBusConnection::disconnectFromBus("nautilus");
 }
 
 QTEST_GUILESS_MAIN(TestFileManagerService)
