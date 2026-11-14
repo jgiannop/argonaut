@@ -1,6 +1,8 @@
 #include "PreferencesDialog.h"
 
+#include "Claude.h"
 #include "DefaultFileManager.h"
+#include "KeyStore.h"
 #include "GitStatus.h"
 #include "MainWindow.h"
 #include "Theme.h"
@@ -8,6 +10,9 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QLineEdit>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QCheckBox>
 #include <QSettings>
 #include <QComboBox>
@@ -103,7 +108,19 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     setObjectName("preferences");
     setWindowTitle(tr("Preferences"));
 
-    auto *layout = new QVBoxLayout(this);
+    // The sections scroll when the screen is short.
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = new QScrollArea(this);
+    scroll->setObjectName("prefScroll");
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *content = new QWidget(scroll);
+    content->setObjectName("prefContent");
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+    auto *layout = new QVBoxLayout(content);
     layout->setContentsMargins(24, 20, 24, 24);
     layout->setSpacing(6);
 
@@ -258,5 +275,170 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addLayout(defaultRow);
 #endif
 
-    setFixedWidth(sizeHint().width()); // height follows the text (it changes when switching)
+    addClaudeSection(layout);
+    layout->addStretch();
+
+    const int width = content->sizeHint().width() + scroll->verticalScrollBar()->sizeHint().width();
+    setFixedWidth(width);
+    resize(width, qMin(content->sizeHint().height() + 2, 720));
+}
+
+// Claude: the API key (kept in the keyring), what may be sent, the model,
+// and what Kosmos has spent. Nothing is sent from here except the free
+// key test.
+void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
+{
+    layout->addSpacing(18);
+    auto *heading = new QLabel(tr("Claude"), this);
+    heading->setObjectName("prefHeading");
+    layout->addWidget(heading);
+    auto *intro = new QLabel(tr("Kosmos can ask Claude, Anthropic's AI, to organize a folder. Nothing is sent "
+                                "until you start it yourself, and you see the cost first. You need an API key "
+                                "from the <a href=\"https://platform.claude.com/\">Claude Console</a>."),
+                             this);
+    intro->setObjectName("prefHint");
+    intro->setWordWrap(true);
+    intro->setOpenExternalLinks(true);
+    QPalette linkPalette = intro->palette();
+    linkPalette.setColor(QPalette::Link, currentTheme().accent);
+    intro->setPalette(linkPalette);
+    layout->addWidget(intro);
+    layout->addSpacing(6);
+
+    // API key.
+    auto *keyRow = new QHBoxLayout;
+    auto *key = new QLineEdit(this);
+    key->setObjectName("connectAddress");
+    key->setEchoMode(QLineEdit::Password);
+    key->setPlaceholderText(tr("Paste your API key (sk-ant-…)"));
+    keyRow->addWidget(key, 1);
+    auto *save = new QPushButton(tr("Save"), this);
+    auto *test = new QPushButton(tr("Test"), this);
+    auto *remove = new QPushButton(tr("Remove"), this);
+    for (QPushButton *b : {save, test, remove}) {
+        b->setObjectName("prefButton");
+        b->setCursor(Qt::PointingHandCursor);
+        keyRow->addWidget(b);
+    }
+    layout->addLayout(keyRow);
+    auto *keyStatus = new QLabel(this);
+    keyStatus->setObjectName("prefHint");
+    keyStatus->setWordWrap(true);
+    layout->addWidget(keyStatus);
+
+    auto showStored = [keyStatus, remove, test] {
+        KeyStore::Where where = KeyStore::Where::None;
+        const QString stored = KeyStore::load(&where);
+        if (stored.isEmpty()) {
+            keyStatus->setText(tr("No key saved yet."));
+        } else {
+            keyStatus->setText(tr("A key ending in “…%1” is in %2.").arg(stored.right(4), KeyStore::describe(where)));
+        }
+        remove->setEnabled(where == KeyStore::Where::Keyring || where == KeyStore::Where::File);
+        test->setEnabled(!stored.isEmpty());
+    };
+    showStored();
+    connect(key, &QLineEdit::textChanged, this, [key, test, save] {
+        save->setEnabled(!key->text().trimmed().isEmpty());
+        if (!key->text().trimmed().isEmpty())
+            test->setEnabled(true);
+    });
+    save->setEnabled(false);
+    connect(save, &QPushButton::clicked, this, [key, keyStatus, showStored] {
+        QString error;
+        KeyStore::Where where;
+        if (!KeyStore::save(key->text().trimmed(), &where, &error)) {
+            keyStatus->setText(tr("Couldn't save the key: %1").arg(error));
+            return;
+        }
+        key->clear();
+        showStored();
+    });
+    connect(remove, &QPushButton::clicked, this, [keyStatus, showStored] {
+        QString error;
+        if (!KeyStore::remove(&error))
+            keyStatus->setText(error);
+        else
+            showStored();
+    });
+    auto *client = new Claude::Client(this);
+    connect(test, &QPushButton::clicked, this, [client, key, keyStatus, test] {
+        const QString candidate = key->text().trimmed().isEmpty() ? KeyStore::load() : key->text().trimmed();
+        test->setEnabled(false);
+        keyStatus->setText(tr("Checking the key…"));
+        client->testKey(candidate, [keyStatus, test](bool ok, const QString &message) {
+            test->setEnabled(true);
+            keyStatus->setText((ok ? QStringLiteral("✓ ") : QStringLiteral("✗ ")) + message
+                               + (ok ? tr(" (checked without spending anything)") : QString()));
+        });
+    });
+
+    // What may be sent.
+    layout->addSpacing(10);
+    auto *modeLabel = new QLabel(tr("What Claude may see"), this);
+    modeLabel->setObjectName("propHeading");
+    layout->addWidget(modeLabel);
+    auto *modeBox = new QComboBox(this);
+    modeBox->setObjectName("propCombo");
+    for (Claude::Mode m : {Claude::Mode::NamesOnly, Claude::Mode::Ask, Claude::Mode::Auto})
+        modeBox->addItem(Claude::modeName(m), int(m));
+    modeBox->setCurrentIndex(modeBox->findData(int(Claude::mode())));
+    layout->addWidget(modeBox);
+    auto *modeHint = new QLabel(this);
+    modeHint->setObjectName("prefHint");
+    modeHint->setWordWrap(true);
+    layout->addWidget(modeHint);
+    auto describeMode = [modeHint](Claude::Mode m) {
+        switch (m) {
+        case Claude::Mode::NamesOnly:
+            modeHint->setText(tr("Only names, sizes, dates and file types. No file contents ever leave this computer."));
+            break;
+        case Claude::Mode::Ask:
+            modeHint->setText(tr("Names and details first. When Claude can't place some files, it asks to read their "
+                                 "beginning, and you choose."));
+            break;
+        case Claude::Mode::Auto:
+            modeHint->setText(tr("Like above, without asking: Claude reads the beginning of files it can't place."));
+            break;
+        }
+    };
+    describeMode(Claude::mode());
+    connect(modeBox, &QComboBox::currentIndexChanged, this, [modeBox, describeMode] {
+        const auto m = Claude::Mode(modeBox->currentData().toInt());
+        Claude::setMode(m);
+        describeMode(m);
+    });
+
+    // Model.
+    layout->addSpacing(10);
+    auto *modelLabel = new QLabel(tr("Model"), this);
+    modelLabel->setObjectName("propHeading");
+    layout->addWidget(modelLabel);
+    auto *modelBox = new QComboBox(this);
+    modelBox->setObjectName("propCombo");
+    for (const Claude::ModelInfo &m : Claude::models()) {
+        modelBox->addItem(tr("%1  ($%2 / $%3 per million tokens in / out)")
+                              .arg(m.name, QString::number(m.inputPerMTok, 'g', 3), QString::number(m.outputPerMTok, 'g', 3)),
+                          m.id);
+    }
+    modelBox->setCurrentIndex(modelBox->findData(Claude::model()));
+    connect(modelBox, &QComboBox::currentIndexChanged, this, [modelBox] { Claude::setModel(modelBox->currentData().toString()); });
+    layout->addWidget(modelBox);
+
+    // Spending.
+    layout->addSpacing(10);
+    auto *spentRow = new QHBoxLayout;
+    auto *spent = new QLabel(this);
+    spent->setObjectName("prefHint");
+    auto showSpent = [spent] { spent->setText(tr("Spent in Kosmos so far: $%1").arg(Claude::spent(), 0, 'f', 2)); };
+    showSpent();
+    auto *reset = new QPushButton(tr("Reset"), this);
+    reset->setObjectName("prefButton");
+    connect(reset, &QPushButton::clicked, this, [showSpent] {
+        Claude::resetSpent();
+        showSpent();
+    });
+    spentRow->addWidget(spent, 1);
+    spentRow->addWidget(reset);
+    layout->addLayout(spentRow);
 }

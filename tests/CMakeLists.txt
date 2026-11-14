@@ -103,3 +103,8 @@ qt_add_executable(tst_remote tst_remote.cpp)
 target_link_libraries(tst_remote PRIVATE kosmos_core Qt6::Test)
 add_test(NAME remote COMMAND tst_remote)
 set_tests_properties(remote PROPERTIES TIMEOUT 60)
+
+qt_add_executable(tst_claude tst_claude.cpp)
+target_link_libraries(tst_claude PRIVATE kosmos_core Qt6::Test)
+add_test(NAME claude COMMAND tst_claude)
+set_tests_properties(claude PROPERTIES ENVIRONMENT "KOSMOS_KEYSTORE=file" TIMEOUT 60)

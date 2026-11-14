@@ -10,4 +10,7 @@ class PreferencesDialog : public QDialog
 
 public:
     explicit PreferencesDialog(QWidget *parent = nullptr);
+
+private:
+    void addClaudeSection(class QVBoxLayout *layout);
 };

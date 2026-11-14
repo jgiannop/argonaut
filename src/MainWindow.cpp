@@ -298,6 +298,7 @@ QListWidget#appList::item:selected { background: @itemSel; color: @fg; }
 QListWidget#appList::item:hover:!selected { background: @hover; }
 
 QDialog#preferences { background: @window; }
+QScrollArea#prefScroll, QWidget#prefContent { background: @window; }
 QDialog#connectDialog { background: @window; }
 QLineEdit#connectAddress { background: @pathBg; color: @fg; border: none; border-radius: 6px;
     padding: 7px 9px; selection-background-color: @accent; }
