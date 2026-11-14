@@ -122,6 +122,14 @@ bool makeDefault(QString *error)
     return true;
 }
 
+bool startService()
+{
+    const QString exe = installedExecutable();
+    if (exe.isEmpty() || !serviceFileIsOurs())
+        return false;
+    return QProcess::startDetached(exe, {QStringLiteral("--service")});
+}
+
 bool restorePrevious(QString *error, QString *restoredTo)
 {
     auto fail = [error](const QString &message) {

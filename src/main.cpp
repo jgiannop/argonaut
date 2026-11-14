@@ -19,6 +19,8 @@
 #if defined(ARGONAUT_DBUS)
 #include "FileManagerService.h"
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusMessage>
 #endif
 
 namespace {
@@ -130,12 +132,37 @@ int switchDefault(bool makeDefault)
         return 1;
     }
     if (makeDefault)
+        DefaultFileManager::startService();
+    if (makeDefault)
         std::printf("Argonaut now opens folders and \"Show in folder\".\n"
                     "To go back: argonaut --restore-nautilus\n");
     else
         std::printf("Folders are opened by %s again.\n", qPrintable(restoredTo));
     return 0;
 }
+
+#if defined(ARGONAUT_DBUS)
+// Another `argonaut --service` already has "Show in folder", or waits for it.
+bool anotherServiceRuns()
+{
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    QDBusMessage call = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.DBus"),
+                                                       QStringLiteral("/org/freedesktop/DBus"),
+                                                       QStringLiteral("org.freedesktop.DBus"),
+                                                       QStringLiteral("ListQueuedOwners"));
+    call << QString::fromLatin1(FileManagerService::ServiceName);
+    const QDBusMessage reply = bus.call(call);
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty())
+        return false; // nobody has it
+    const QString me = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    for (const QString &owner : reply.arguments().constFirst().toStringList()) {
+        const uint pid = bus.interface()->servicePid(owner).value();
+        if (pid && QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid)).canonicalFilePath() == me)
+            return true;
+    }
+    return false;
+}
+#endif
 
 MainWindow *newWindow()
 {
@@ -195,11 +222,16 @@ int main(int argc, char *argv[])
 
 #if defined(ARGONAUT_DBUS)
     if (parser.isSet(service)) {
-        // D-Bus started us for org.freedesktop.FileManager1. Windows open on
-        // request; we quit when the last one closes, or soon if none was asked for.
+        // D-Bus started us for org.freedesktop.FileManager1 (or Preferences
+        // did). We stay running while Argonaut is the default: a Nautilus
+        // started later (Ubuntu's desktop icons do) only waits in line for
+        // the name, and would get it the moment we quit.
+        app.setQuitOnLastWindowClosed(false);
+        if (anotherServiceRuns())
+            return 0;
         FileManagerService manager;
-        if (!manager.registerOn(QDBusConnection::sessionBus())) {
-            std::fprintf(stderr, "argonaut: another program already answers \"Show in folder\".\n");
+        if (!manager.registerOn(QDBusConnection::sessionBus(), FileManagerService::IfTaken::WaitInLine)) {
+            std::fprintf(stderr, "argonaut: couldn't ask the session bus for \"Show in folder\".\n");
             return 1;
         }
         QObject::connect(&manager, &FileManagerService::showFolders, [](const QStringList &paths, const QString &id) {
@@ -224,10 +256,18 @@ int main(int argc, char *argv[])
                              dialog->setAttribute(Qt::WA_DeleteOnClose);
                              present(dialog, id);
                          });
-        QTimer::singleShot(30000, &app, [] {
-            if (QApplication::topLevelWindows().isEmpty())
-                QApplication::quit(); // nothing was asked for
+        // Switched back to Nautilus (our service file is gone): leave once no
+        // window is open, so Nautilus, waiting in line, takes over.
+        auto *check = new QTimer(&app);
+        QObject::connect(check, &QTimer::timeout, &app, [] {
+            if (DefaultFileManager::serviceFileIsOurs())
+                return;
+            for (QWidget *widget : QApplication::topLevelWidgets())
+                if (widget->isVisible())
+                    return;
+            QApplication::quit();
         });
+        check->start(10000);
         return app.exec();
     }
 #else

@@ -264,6 +264,8 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
         const bool ok = DefaultFileManager::isArgonautDefault()
                             ? DefaultFileManager::restorePrevious(&error)
                             : DefaultFileManager::makeDefault(&error);
+        if (ok && DefaultFileManager::isArgonautDefault())
+            DefaultFileManager::startService(); // "Show in folder" now, not after the next login
         refresh();
         if (!ok)
             defaultHint->setText(error);

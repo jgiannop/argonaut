@@ -26,4 +26,10 @@ bool makeDefault(QString *error = nullptr);
 // Back to the remembered default (or Nautilus). `restoredTo` gets its id.
 bool restorePrevious(QString *error = nullptr, QString *restoredTo = nullptr);
 
+// Starts the installed `argonaut --service` in the background, so it takes
+// "Show in folder" now (or waits in line behind a running Nautilus) instead
+// of at the next request. It quits by itself once Argonaut isn't the
+// default any more. Not called by makeDefault(), so tests start nothing.
+bool startService();
+
 } // namespace DefaultFileManager
