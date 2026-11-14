@@ -58,6 +58,8 @@ qt_add_library(kosmos_core STATIC
     src/KeyStore.cpp
     src/Claude.h
     src/Claude.cpp
+    src/Organizer.h
+    src/Organizer.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
 target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml Qt6::Network)
@@ -126,6 +128,8 @@ qt_add_executable(kosmos
     src/CommandPalette.cpp
     src/ConnectDialog.h
     src/ConnectDialog.cpp
+    src/OrganizerDialog.h
+    src/OrganizerDialog.cpp
 )
 
 target_link_libraries(kosmos PRIVATE kosmos_core Qt6::Widgets)

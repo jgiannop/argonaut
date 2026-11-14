@@ -26,6 +26,9 @@ public:
 
     FileJob *copy(const QStringList &paths, const QString &targetDir);
     FileJob *move(const QStringList &paths, const QString &targetDir);
+    // Moves (and renames) each item as given, as one undoable action named
+    // `action` ("Organize" gives "Undo Organize").
+    FileJob *moveItems(const QList<Transfer> &transfers, const QString &action);
     FileJob *trash(const QStringList &paths);
     // Permanently, no undo (callers confirm first).
     FileJob *deletePermanently(const QStringList &paths);
@@ -84,7 +87,7 @@ private:
     };
 
     FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
-                      bool userAction);
+                      bool userAction, const QString &undoName = QString());
     // Starts the job that reverses `entry`; when it finishes, its own
     // inverse goes on `onto` (undo -> redo list, redo -> undo list).
     void runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, const char *history);

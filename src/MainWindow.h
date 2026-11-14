@@ -269,6 +269,9 @@ private:
     QAction *m_aboutAct = nullptr;
     QAction *m_paletteAct = nullptr;   // Ctrl+Shift+P: run any command by name
     QAction *m_connectAct = nullptr;   // Connect to Server…
+    QAction *m_organizeAct = nullptr;  // Organize with Claude…
+    void organizeWithClaude();
+    void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
     // Remote locations: mounts with GVfs (asking for logins), then opens the
     // folder. navigateTo() sends addresses (sftp://…) here.
     void connectToServer(const QString &address);

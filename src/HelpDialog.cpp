@@ -492,6 +492,28 @@ Folders appear while they're measured.</p>
 </ul>
 )"));
 
+    add("organize", tr("Organizing with Claude"), tr(R"(
+<p class="lead">Claude, Anthropic's AI, can propose a tidy structure for a messy folder and tell you what's in it.</p>
+<h2>Before the first time</h2>
+<p>Add your Anthropic API key in <b>Preferences → Claude</b> (get one in the Claude Console) and press <b>Test</b>;
+that check is free. The key is kept in your keyring.</p>
+<h2>Organizing a folder</h2>
+<ol>
+<li>Open the folder and choose <b>File → Organize with Claude…</b> (or right-click empty space).</li>
+<li>Optionally write your wishes (“invoices by year”) and choose what Claude may see. You see the estimated cost
+before anything is sent; nothing is sent until you press <b>Start</b>.</li>
+<li>When names say too little, Claude may ask to read the beginning of a few files: you choose
+<b>Allow</b> or <b>Don't share</b>. Programs are never read.</li>
+<li>Read the report, untick any change you don't want, and press <b>Apply</b>.</li>
+</ol>
+<p>Claude never touches your files: it only proposes. Kosmos creates the folders and moves and renames the items
+you kept, never overwriting anything. [[Ctrl+Z]] puts everything back (once for the moves, once more for the new folders).</p>
+<h2>Privacy and cost</h2>
+<p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
+of some files (some text, the first pages of a PDF, a small preview of an image). <b>Preferences → Claude</b> sets the
+default (names only, ask, or read when needed) and the model, and shows what you've spent.</p>
+)"));
+
     add("git", tr("Git Repositories"), tr(R"(
 <p>Inside a Git repository, Kosmos shows what changed, like a code editor does.</p>
 <ul>
