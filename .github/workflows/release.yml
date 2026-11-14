@@ -1,0 +1,44 @@
+name: Release
+
+# Push a tag like v0.4.0 (matching project(argonaut VERSION ...) in
+# CMakeLists.txt) to build the .deb and publish it as a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build qt6-base-dev qt6-tools-dev \
+            libvterm-dev libarchive-dev dpkg-dev file
+
+      - name: Check the tag matches the project version
+        run: |
+          version=$(sed -n 's/^project(argonaut VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match CMakeLists.txt version $version" >&2
+            exit 1
+          fi
+
+      - name: Build the package
+        run: |
+          cmake --preset package
+          cmake --build build/package
+          cpack --config build/package/CPackConfig.cmake
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/package/*.deb \
+            --title "Argonaut ${GITHUB_REF_NAME#v}" --generate-notes

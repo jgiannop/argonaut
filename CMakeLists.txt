@@ -197,6 +197,7 @@ install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 # uses when they're there are Recommends.
 set(CPACK_PACKAGE_NAME "argonaut-files") # the plain name is taken by an unrelated tool
 set(CPACK_PACKAGE_VENDOR "johngiannop")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/jgiannop/argonaut")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast file manager inspired by GNOME Files")
 set(CPACK_PACKAGE_DESCRIPTION "Argonaut is a fast file manager written in C++ and Qt 6, with tabs, split view, \
 Quick Look, disk usage analysis, archives, an embedded terminal, real file-type checks and \
@@ -206,6 +207,7 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_GENERATOR "DEB")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "johngiannop")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/jgiannop/argonaut")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS

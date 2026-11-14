@@ -1,0 +1,26 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a folder with …
+        2. Press …
+  - type: textarea
+    id: details
+    attributes:
+      label: System details
+      description: In Argonaut, open Help → About → System and press **Copy Details**, then paste here.
+      render: text
+    validations:
+      required: true
