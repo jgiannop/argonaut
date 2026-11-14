@@ -6,6 +6,7 @@
 #include "Format.h"
 
 #include "FileJob.h"
+#include "FileOperations.h"
 #include "RecentFiles.h"
 #include "Starred.h"
 #include "Trash.h"
@@ -318,6 +319,79 @@ void DirectoryModel::setPath(const QString &path)
     relist();
 }
 
+void DirectoryModel::setSearchFilters(TypeFilter type, DateFilter date)
+{
+    if (type == m_typeFilter && date == m_dateFilter)
+        return;
+    m_typeFilter = type;
+    m_dateFilter = date;
+    if (!m_path.isEmpty() && !isVirtual())
+        relist();
+}
+
+bool DirectoryModel::passesFilters(TypeFilter type, DateFilter date, const QString &name, bool isDir, qint64 mtime, qint64 now)
+{
+    if (date != DateFilter::Any) {
+        const QDateTime nowDt = QDateTime::fromMSecsSinceEpoch(now);
+        const qint64 startOfToday = QDateTime(nowDt.date(), QTime(0, 0)).toMSecsSinceEpoch();
+        const qint64 day = 24LL * 3600 * 1000;
+        switch (date) {
+        case DateFilter::Today:
+            if (mtime < startOfToday)
+                return false;
+            break;
+        case DateFilter::Week:
+            if (mtime < now - 7 * day)
+                return false;
+            break;
+        case DateFilter::Month:
+            if (mtime < now - 30 * day)
+                return false;
+            break;
+        case DateFilter::Year:
+            if (mtime < QDateTime(QDate(nowDt.date().year(), 1, 1), QTime(0, 0)).toMSecsSinceEpoch())
+                return false;
+            break;
+        case DateFilter::OlderThanYear:
+            if (mtime >= now - 365 * day)
+                return false;
+            break;
+        case DateFilter::Any:
+            break;
+        }
+    }
+    if (type == TypeFilter::Any)
+        return true;
+    if (type == TypeFilter::Folders)
+        return isDir;
+    if (isDir)
+        return false;
+    static const QMimeDatabase db;
+    const QMimeType mime = db.mimeTypeForFile(name, QMimeDatabase::MatchExtension);
+    const QString n = mime.name();
+    switch (type) {
+    case TypeFilter::Images:
+        return n.startsWith(QLatin1String("image/"));
+    case TypeFilter::Audio:
+        return n.startsWith(QLatin1String("audio/"));
+    case TypeFilter::Video:
+        return n.startsWith(QLatin1String("video/"));
+    case TypeFilter::Archives:
+        return FileOperations::isArchive(n);
+    case TypeFilter::Documents:
+        return n == QLatin1String("application/pdf") || n.startsWith(QLatin1String("application/vnd.oasis.opendocument"))
+               || n.startsWith(QLatin1String("application/vnd.openxmlformats-officedocument")) || n == QLatin1String("application/msword")
+               || n == QLatin1String("application/vnd.ms-excel") || n == QLatin1String("application/vnd.ms-powerpoint")
+               || n == QLatin1String("application/rtf") || n == QLatin1String("application/epub+zip")
+               || n == QLatin1String("text/markdown") || n == QLatin1String("text/plain");
+    case TypeFilter::Text:
+        return mime.inherits(QStringLiteral("text/plain")) || n == QLatin1String("application/json")
+               || n == QLatin1String("application/xml") || n == QLatin1String("application/x-shellscript");
+    default:
+        return true;
+    }
+}
+
 void DirectoryModel::setSearch(const QString &query)
 {
     const QString q = query.simplified();
@@ -427,7 +501,11 @@ void DirectoryModel::startScan(bool initial)
     const bool trash = m_trash;
     const QStringList words = isSearch() ? foldForSearch(m_query).split(QLatin1Char(' '), Qt::SkipEmptyParts)
                                          : QStringList();
-    const bool search = !words.isEmpty();
+    const bool search = isSearch(); // words, filters or both
+    const TypeFilter typeFilter = m_typeFilter;
+    const DateFilter dateFilter = m_dateFilter;
+    const bool filtered = typeFilter != TypeFilter::Any || dateFilter != DateFilter::Any;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     // Inside files: plain text is read only on this computer's own disks
     // (reading every file of a USB stick or a server is slow).
     const bool contents = search && m_searchContents && !m_trash;
@@ -441,7 +519,7 @@ void DirectoryModel::startScan(bool initial)
             listed.append({p, 0});
     }
     m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed, contents,
-                  scanText, indexWords] {
+                  scanText, indexWords, filtered, typeFilter, dateFilter, now] {
         const QCollator collator = naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
@@ -529,6 +607,7 @@ void DirectoryModel::startScan(bool initial)
                             continue;
                         std::optional<FileEntry> made = makeEntry(dir, name, collator);
                         if (!made || made->isDir || !ContentSearch::isTextFile(name, made->size)
+                            || (filtered && !passesFilters(typeFilter, dateFilter, name, false, made->mtime, now))
                             || !ContentSearch::textMatches(made->path(), words, &made->snippet))
                             continue;
                         if (++found > MaxSearchResults) {
@@ -551,6 +630,10 @@ void DirectoryModel::startScan(bool initial)
                 if (!made)
                     continue; // removed since the folder was read
                 FileEntry &e = *made;
+                if (filtered && search && !passesFilters(typeFilter, dateFilter, e.name, e.isDir, e.mtime, now)) {
+                    --found;
+                    continue;
+                }
                 if (contents)
                     emitted.insert(e.path());
                 if (trash) {
@@ -592,6 +675,8 @@ void DirectoryModel::startScan(bool initial)
                 std::optional<FileEntry> made = makeEntry(path.left(slash), path.mid(slash + 1), collator);
                 if (!made || made->isDir)
                     continue; // gone since it was indexed
+                if (filtered && !passesFilters(typeFilter, dateFilter, made->name, false, made->mtime, now))
+                    continue;
                 if (++found > MaxSearchResults) {
                     truncated = true;
                     break;

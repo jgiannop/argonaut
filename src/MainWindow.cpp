@@ -745,6 +745,17 @@ void MainWindow::setupActions()
     m_emptyTrashAct = new QAction(tr("Empty Trash…"), this);
     connect(m_emptyTrashAct, &QAction::triggered, this, &MainWindow::emptyTrash);
 
+    m_restoreAllAct = new QAction(tr("Restore All"), this);
+    connect(m_restoreAllAct, &QAction::triggered, this, [this] {
+        if (!m_model->isTrash())
+            return;
+        QStringList all;
+        for (int row = 0; row < m_model->rowCount(); ++row)
+            all << m_model->filePath(m_model->index(row, 0));
+        if (!all.isEmpty())
+            m_ops->restore(all); // back where they came from; never overwrites
+    });
+
     m_undoAct = new QAction(tr("Undo"), this);
     m_undoAct->setShortcut(QKeySequence::Undo);
     connect(m_undoAct, &QAction::triggered, m_ops, &FileOperations::undo);
@@ -1062,6 +1073,46 @@ QWidget *MainWindow::buildContentPane()
     contentsButton->setCursor(Qt::PointingHandCursor);
     searchRow->addWidget(contentsButton);
 
+    // Filters: by type and by date; they also search on their own.
+    m_filterButton = new QToolButton(searchBox);
+    m_filterButton->setObjectName("searchOption");
+    m_filterButton->setFixedHeight(32);
+    m_filterButton->setPopupMode(QToolButton::InstantPopup);
+    m_filterButton->setCursor(Qt::PointingHandCursor);
+    QMenu *filters = makeMenu();
+    filters->addSection(tr("Type"));
+    m_typeFilters = new QActionGroup(this);
+    const QList<std::pair<DirectoryModel::TypeFilter, QString>> types = {
+        {DirectoryModel::TypeFilter::Any, tr("Any type")},       {DirectoryModel::TypeFilter::Folders, tr("Folders")},
+        {DirectoryModel::TypeFilter::Documents, tr("Documents")}, {DirectoryModel::TypeFilter::Images, tr("Images")},
+        {DirectoryModel::TypeFilter::Audio, tr("Audio")},         {DirectoryModel::TypeFilter::Video, tr("Video")},
+        {DirectoryModel::TypeFilter::Archives, tr("Archives")},   {DirectoryModel::TypeFilter::Text, tr("Text and code")}};
+    for (const auto &[type, label] : types) {
+        QAction *a = filters->addAction(label);
+        a->setCheckable(true);
+        a->setData(int(type));
+        a->setChecked(type == DirectoryModel::TypeFilter::Any);
+        m_typeFilters->addAction(a);
+    }
+    filters->addSection(tr("Changed"));
+    m_dateFilters = new QActionGroup(this);
+    const QList<std::pair<DirectoryModel::DateFilter, QString>> dates = {
+        {DirectoryModel::DateFilter::Any, tr("Any time")},        {DirectoryModel::DateFilter::Today, tr("Today")},
+        {DirectoryModel::DateFilter::Week, tr("In the last 7 days")}, {DirectoryModel::DateFilter::Month, tr("In the last 30 days")},
+        {DirectoryModel::DateFilter::Year, tr("This year")},      {DirectoryModel::DateFilter::OlderThanYear, tr("Over a year ago")}};
+    for (const auto &[date, label] : dates) {
+        QAction *a = filters->addAction(label);
+        a->setCheckable(true);
+        a->setData(int(date));
+        a->setChecked(date == DirectoryModel::DateFilter::Any);
+        m_dateFilters->addAction(a);
+    }
+    connect(m_typeFilters, &QActionGroup::triggered, this, &MainWindow::applySearchFilters);
+    connect(m_dateFilters, &QActionGroup::triggered, this, &MainWindow::applySearchFilters);
+    m_filterButton->setMenu(filters);
+    m_filterButton->setText(tr("Filters"));
+    searchRow->addWidget(m_filterButton);
+
     m_locationStack = new QStackedWidget(header);
     m_locationStack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_locationStack->setFixedHeight(32);
@@ -1101,6 +1152,16 @@ QWidget *MainWindow::buildContentPane()
     m_paneSplitter->setChildrenCollapsible(false);
     m_paneSplitter->setHandleWidth(1);
     m_paneSplitter->addWidget(buildPane(m_paneSplitter, 0));
+    m_springTimer = new QTimer(this);
+    m_springTimer->setSingleShot(true);
+    m_springTimer->setInterval(800);
+    connect(m_springTimer, &QTimer::timeout, this, [this] {
+        const QString folder = m_springPath;
+        m_springPath.clear();
+        if (folder.isEmpty())
+            return;
+        springOver(folder, m_springPane);
+    });
     m_dragScrollTimer = new QTimer(this);
     m_dragScrollTimer->setInterval(40);
     connect(m_dragScrollTimer, &QTimer::timeout, this, [this] {
@@ -1191,10 +1252,14 @@ QWidget *MainWindow::buildContentPane()
     m_trashEmptyButton = new QToolButton(m_trashBar);
     m_trashEmptyButton->setObjectName("barButton");
     m_trashEmptyButton->setDefaultAction(m_emptyTrashAct);
-    for (QToolButton *b : {m_trashRestoreButton, m_trashEmptyButton})
+    m_trashRestoreAllButton = new QToolButton(m_trashBar);
+    m_trashRestoreAllButton->setObjectName("barButton");
+    m_trashRestoreAllButton->setDefaultAction(m_restoreAllAct);
+    for (QToolButton *b : {m_trashRestoreButton, m_trashRestoreAllButton, m_trashEmptyButton})
         b->setFocusPolicy(Qt::NoFocus);
     trashRow->addWidget(trashText, 1);
     trashRow->addWidget(m_trashRestoreButton);
+    trashRow->addWidget(m_trashRestoreAllButton);
     trashRow->addWidget(m_trashEmptyButton);
     m_trashBar->hide();
     m_tabBar = new QTabBar(pane);
@@ -1824,9 +1889,16 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
         if (index == m_activePane && !m_background)
             updateGitBadge();
     });
+    for (auto signal : {&QAbstractItemModel::rowsInserted, &QAbstractItemModel::rowsRemoved}) {
+        connect(m_model, signal, this, [this, index] {
+            if (index == m_activePane && !m_background && m_model->isTrash())
+                updateEditActions(); // Restore All follows what's left in the Trash
+        });
+    }
     connect(m_model, &DirectoryModel::loaded, this, [this, index] {
         PaneScope scope(this, index);
         updateFloatingBar();
+        updateEditActions();
         applyPendingSelection();
         if (m_pendingScroll >= 0) { // a tab coming back: where it was
             m_view->verticalScrollBar()->setValue(m_pendingScroll);
@@ -2231,6 +2303,143 @@ void MainWindow::updateBookmarkAction()
     const bool marked = Bookmarks::contains(m_current);
     m_bookmarkAct->setText(marked ? tr("Remove Bookmark") : tr("Bookmark This Folder"));
     m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash() && !m_model->isVirtual());
+}
+
+void MainWindow::applySearchFilters()
+{
+    const auto type = DirectoryModel::TypeFilter(m_typeFilters->checkedAction()->data().toInt());
+    const auto date = DirectoryModel::DateFilter(m_dateFilters->checkedAction()->data().toInt());
+    QStringList shown;
+    if (type != DirectoryModel::TypeFilter::Any)
+        shown << m_typeFilters->checkedAction()->text();
+    if (date != DirectoryModel::DateFilter::Any)
+        shown << m_dateFilters->checkedAction()->text();
+    m_filterButton->setText(shown.isEmpty() ? tr("Filters") : shown.join(QStringLiteral(" · ")));
+    m_model->setSearchFilters(type, date);
+    updateFloatingBar();
+}
+
+// ------------------------------------------------------- drag, extras ---
+
+// A drag held over a folder: open it in place (list with expandable
+// folders), or go into it, like Nautilus.
+void MainWindow::springOver(const QString &folder, int pane)
+{
+    if (pane != m_activePane && pane < m_paneCount) {
+        PaneScope scope(this, pane); // a drag over the other pane: open it there
+        springOver(folder, m_activePane);
+        return;
+    }
+    if (!m_grid && m_model->isTreeActive() && m_model->indexForPath(folder).isValid()) {
+        if (!m_model->isExpanded(folder))
+            m_model->expand(folder);
+        return;
+    }
+    navigateTo(folder);
+}
+
+// Opens the email app with the files attached (xdg-email); it sends nothing.
+void MainWindow::sendByEmail(const QStringList &paths)
+{
+    QStringList args;
+    for (const QString &p : paths)
+        args << QStringLiteral("--attach") << p;
+    const QString program = qEnvironmentVariable("KOSMOS_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
+    if (!QProcess::startDetached(program, args))
+        showMessage(tr("Couldn't open the email app (xdg-email is missing)"));
+}
+
+// GNOME: copy the image into ~/.local/share/backgrounds (so deleting or
+// moving the original later doesn't break it), then point the desktop at it.
+void MainWindow::setAsBackground(const QString &image)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/backgrounds");
+    QDir().mkpath(dir);
+    QString copy = dir + QLatin1Char('/') + QFileInfo(image).fileName();
+    if (QFileInfo(copy).exists() && QFileInfo(copy).size() != QFileInfo(image).size())
+        copy = uniqueTargetPath(dir, QFileInfo(image).fileName(), false);
+    if (!QFileInfo::exists(copy) && !QFile::copy(image, copy)) {
+        showMessage(tr("Couldn't copy the image for the background"));
+        return;
+    }
+    const QString uri = QUrl::fromLocalFile(copy).toString();
+    const QString gsettings = qEnvironmentVariable("KOSMOS_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
+    bool ok = true;
+    for (const char *key : {"picture-uri", "picture-uri-dark"}) {
+        ok = QProcess::execute(gsettings, {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.background"),
+                                           QString::fromLatin1(key), uri})
+                 == 0
+             && ok;
+    }
+    showMessage(ok ? tr("Background changed") : tr("Couldn't change the background (GNOME only)"));
+}
+
+// Scripts ▸: the user's scripts in ~/.local/share/nautilus/scripts, run
+// the way Nautilus runs them (same folder, same variables), so existing
+// ones work unchanged. Sub-folders become sub-menus.
+QMenu *MainWindow::scriptsMenu(const QStringList &selection)
+{
+#if !defined(Q_OS_UNIX)
+    Q_UNUSED(selection);
+    return nullptr;
+#else
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/nautilus/scripts");
+    if (m_model->isVirtual() || m_model->isTrash() || !QFileInfo(root).isDir())
+        return nullptr;
+    std::function<bool(QMenu *, const QString &, int)> fill = [&](QMenu *menu, const QString &dir, int depth) {
+        bool any = false;
+        const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name | QDir::DirsFirst);
+        for (const QFileInfo &e : entries) {
+            if (e.isDir() && depth < 3) {
+                QMenu *sub = makeMenu();
+                sub->setTitle(e.fileName());
+                if (fill(sub, e.filePath(), depth + 1)) {
+                    sub->setParent(menu, sub->windowFlags());
+                    menu->addMenu(sub);
+                    any = true;
+                } else {
+                    delete sub;
+                }
+            } else if (e.isFile() && e.isExecutable()) {
+                menu->addAction(e.fileName(), this, [this, script = e.filePath(), selection] {
+                    const QString folder = m_current;
+                    QStringList paths, uris, args;
+                    for (const QString &p : selection) {
+                        paths << p;
+                        uris << QUrl::fromLocalFile(p).toString();
+                        args << (QFileInfo(p).absolutePath() == folder ? QFileInfo(p).fileName() : p);
+                    }
+                    QProcess process;
+                    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"), paths.isEmpty() ? QString() : paths.join(QLatin1Char('\n')) + QLatin1Char('\n'));
+                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_SELECTED_URIS"), uris.isEmpty() ? QString() : uris.join(QLatin1Char('\n')) + QLatin1Char('\n'));
+                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_CURRENT_URI"), QUrl::fromLocalFile(folder).toString());
+                    const QRect g = geometry();
+                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_WINDOW_GEOMETRY"),
+                               QStringLiteral("%1x%2+%3+%4").arg(g.width()).arg(g.height()).arg(g.x()).arg(g.y()));
+                    process.setProcessEnvironment(env);
+                    process.setProgram(script);
+                    process.setArguments(args);
+                    process.setWorkingDirectory(folder);
+                    if (!process.startDetached())
+                        showMessage(tr("Couldn't run “%1”").arg(QFileInfo(script).fileName()));
+                });
+                any = true;
+            }
+        }
+        return any;
+    };
+    QMenu *menu = makeMenu();
+    menu->setTitle(tr("Scripts"));
+    if (!fill(menu, root, 0)) {
+        delete menu;
+        return nullptr;
+    }
+    menu->addSeparator();
+    menu->addAction(tr("Open Scripts Folder"), this, [this, root] { navigateTo(root); });
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    return menu;
+#endif
 }
 
 // ------------------------------------------------------------ organize ---
@@ -2872,6 +3081,11 @@ void MainWindow::setSearchActive(bool active)
         m_searchEdit->setFocus(Qt::ShortcutFocusReason);
         m_searchEdit->selectAll();
     } else if (m_locationStack->currentWidget() != m_pathBar) {
+        // Filters end with the search.
+        m_typeFilters->actions().first()->setChecked(true);
+        m_dateFilters->actions().first()->setChecked(true);
+        m_filterButton->setText(tr("Filters"));
+        m_model->setSearchFilters(DirectoryModel::TypeFilter::Any, DirectoryModel::DateFilter::Any);
         m_searchEdit->clear();
         m_locationStack->setCurrentWidget(m_pathBar);
         m_view->setFocus();
@@ -3477,6 +3691,7 @@ void MainWindow::updateEditActions()
     if (m_trashRestoreButton)
         m_trashRestoreButton->setText(tr("Restore")); // setDefaultAction resets it
     m_emptyTrashAct->setEnabled(Trash::isSupported());
+    m_restoreAllAct->setEnabled(inTrash && m_model->rowCount() > 0);
     m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
@@ -3525,6 +3740,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_openAct);
         menu->addAction(m_copyAct);
     } else if (!index.isValid() && m_model->isTrash()) {
+        menu->addAction(m_restoreAllAct);
         menu->addAction(m_emptyTrashAct);
         menu->addAction(m_hiddenAct);
     } else if (index.isValid()) {
@@ -3549,6 +3765,23 @@ void MainWindow::showContextMenu(const QPoint &pos)
             if (!files.isEmpty())
                 menu->addMenu(openWithMenu(files));
         }
+#if defined(Q_OS_LINUX)
+        {
+            // Send by Email… (files only) and Set as Background (one image).
+            QStringList files;
+            for (const QString &path : selectedPaths()) {
+                if (!QFileInfo(path).isDir())
+                    files << path;
+            }
+            if (!files.isEmpty() && files.size() == selectedPaths().size() && !m_model->isTrash())
+                menu->addAction(tr("Send by Email…"), this, [this, files] { sendByEmail(files); });
+            static const QMimeDatabase mimeDb;
+            if (files.size() == 1 && selectedPaths().size() == 1 && !m_model->isTrash()
+                && mimeDb.mimeTypeForFile(files.first()).name().startsWith(QLatin1String("image/"))
+                && !qEnvironmentVariable("XDG_CURRENT_DESKTOP").isEmpty())
+                menu->addAction(tr("Set as Background"), this, [this, image = files.first()] { setAsBackground(image); });
+        }
+#endif
         if ((m_model->isSearch() || m_model->isVirtual()) && selectedViewIndexes().size() == 1)
             menu->addAction(m_openLocationAct);
         if (m_model->isDir(toSource(index)))
@@ -3580,6 +3813,10 @@ void MainWindow::showContextMenu(const QPoint &pos)
             menu->addAction(m_copyToOtherAct);
             menu->addAction(m_moveToOtherAct);
         }
+        if (QMenu *scripts = scriptsMenu(selectedPaths())) {
+            menu->addSeparator();
+            menu->addMenu(scripts);
+        }
         menu->addSeparator();
         menu->addAction(m_trashAct);
         menu->addAction(m_deleteAct);
@@ -3602,6 +3839,10 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
         menu->addSeparator();
         menu->addAction(m_organizeAct);
+        if (QMenu *scripts = scriptsMenu({})) {
+            menu->addSeparator();
+            menu->addMenu(scripts);
+        }
         menu->addSeparator();
         menu->addAction(m_propertiesAct);
     }
@@ -4365,6 +4606,8 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
     if (event->type() == QEvent::DragLeave) {
         setDropTarget({});
         m_dragScrollTimer->stop();
+        m_springTimer->stop();
+        m_springPath.clear();
         return true;
     }
     auto *drop = static_cast<QDropEvent *>(event); // DragEnter/DragMove derive from it
@@ -4393,6 +4636,8 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
     if (event->type() == QEvent::Drop) {
         setDropTarget({});
         m_dragScrollTimer->stop();
+        m_springTimer->stop();
+        m_springPath.clear();
         if (action == Qt::IgnoreAction) {
             drop->ignore();
             return true;
@@ -4403,7 +4648,16 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
         return true;
     }
 
-    // DragEnter / DragMove: feedback only.
+    // DragEnter / DragMove: feedback only. Holding still over a folder opens it.
+    const QString spring = target.isValid() ? targetDir : QString();
+    if (spring != m_springPath) {
+        m_springPath = spring;
+        m_springPane = qMax(0, paneOf(view->viewport()));
+        if (spring.isEmpty())
+            m_springTimer->stop();
+        else
+            m_springTimer->start();
+    }
     setDropTarget(action == Qt::IgnoreAction ? QModelIndex() : target.siblingAtColumn(0));
     const int edge = 32;
     const int height = view->viewport()->height();
@@ -4427,6 +4681,10 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
 // Dropping onto a sidebar place or drive copies/moves into it.
 bool MainWindow::handleSidebarDrag(QEvent *event)
 {
+    if (event->type() == QEvent::DragLeave || event->type() == QEvent::Drop) {
+        m_springTimer->stop();
+        m_springPath.clear();
+    }
     if (event->type() == QEvent::DragLeave) {
         syncSidebarSelection();
         return true;
@@ -4487,6 +4745,11 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
         return true;
     }
     m_sidebar->setCurrentItem(item); // highlight the place under the cursor
+    if (targetDir != m_springPath && !Trash::isFilesDir(targetDir)) {
+        m_springPath = targetDir; // held still: open it, like Nautilus
+        m_springPane = m_activePane;
+        m_springTimer->start();
+    }
     drop->setDropAction(action);
     drop->accept();
     return true;

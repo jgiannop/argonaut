@@ -4,6 +4,7 @@
 #include "ContentType.h"
 #include "Format.h"
 #include "Naming.h"
+#include "Sandbox.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -35,38 +36,16 @@ QString field(QString s)
     return s;
 }
 
-// The first pages of a PDF as text, with pdftotext in a bubblewrap sandbox
-// (no network, nothing visible but the one file). No sandbox: not read.
+// The first pages of a PDF as text: pdftotext in the sandbox (no sandbox,
+// not read).
 QString pdfText(const QString &path)
 {
-    const QString bwrap = QStandardPaths::findExecutable(QStringLiteral("bwrap"));
-    const QString pdftotext = QStandardPaths::findExecutable(QStringLiteral("pdftotext"));
-    if (bwrap.isEmpty() || pdftotext.isEmpty())
-        return {};
-    QStringList box = {QStringLiteral("--ro-bind"), QStringLiteral("/usr"), QStringLiteral("/usr"),
-                       QStringLiteral("--ro-bind-try"), QStringLiteral("/etc"), QStringLiteral("/etc"),
-                       QStringLiteral("--proc"), QStringLiteral("/proc"), QStringLiteral("--dev"), QStringLiteral("/dev"),
-                       QStringLiteral("--tmpfs"), QStringLiteral("/tmp"),
-                       QStringLiteral("--unshare-all"), QStringLiteral("--die-with-parent"), QStringLiteral("--new-session"),
-                       QStringLiteral("--ro-bind"), path, QStringLiteral("/tmp/input.pdf")};
-    for (const char *link : {"bin", "sbin", "lib", "lib32", "lib64", "libx32"}) {
-        const QFileInfo info(QStringLiteral("/") + QLatin1String(link));
-        if (info.isSymLink())
-            box << QStringLiteral("--symlink") << info.symLinkTarget().mid(1) << info.filePath();
-        else if (info.isDir())
-            box << QStringLiteral("--ro-bind") << info.filePath() << info.filePath();
-    }
-    box << pdftotext << QStringLiteral("-l") << QStringLiteral("2") << QStringLiteral("-enc") << QStringLiteral("UTF-8")
-        << QStringLiteral("/tmp/input.pdf") << QStringLiteral("-");
-    QProcess process;
-    process.setStandardInputFile(QProcess::nullDevice());
-    process.start(bwrap, box);
-    if (!process.waitForStarted(5000) || !process.waitForFinished(15000)) {
-        process.kill();
-        process.waitForFinished(1000);
-        return {};
-    }
-    return QString::fromUtf8(process.readAllStandardOutput().left(64 * 1024));
+    bool ok = false;
+    const QByteArray out = Sandbox::run(QStringLiteral("pdftotext"),
+                                        {QStringLiteral("-l"), QStringLiteral("2"), QStringLiteral("-enc"), QStringLiteral("UTF-8"),
+                                         QStringLiteral("@FILE@"), QStringLiteral("-")},
+                                        path, &ok, 15000, 64 * 1024);
+    return ok ? QString::fromUtf8(out) : QString();
 }
 
 QString clip(QString text)

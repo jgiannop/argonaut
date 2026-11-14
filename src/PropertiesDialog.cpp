@@ -1,5 +1,7 @@
 #include "PropertiesDialog.h"
 
+#include "MediaInfo.h"
+
 #include "ContentType.h"
 
 #include "Format.h"
@@ -13,6 +15,7 @@
 #include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
@@ -185,6 +188,43 @@ PropertiesDialog::PropertiesDialog(const QStringList &paths, QWidget *parent)
                                               formatSize(storage.bytesTotal())),
                                      this));
     layout->addLayout(form);
+
+    // Photo, audio, video and PDF details, read in the background.
+    if (single && first.isFile()) {
+        const QString mime = ContentType::effectiveMime(ContentType::inspect(first.absoluteFilePath()));
+        if (MediaInfo::interesting(mime)) {
+            auto *details = new QFormLayout;
+            details->setLabelAlignment(Qt::AlignRight);
+            details->setHorizontalSpacing(14);
+            details->setVerticalSpacing(8);
+            auto *heading = new QLabel(tr("Details"), this);
+            heading->setObjectName("propHeading");
+            details->addRow(heading);
+            auto *reading = value(tr("Reading…"), this);
+            details->addRow(QString(), reading);
+            layout->addLayout(details);
+            QPointer<PropertiesDialog> self(this);
+            const QString path = first.absoluteFilePath();
+            QThreadPool::globalInstance()->start([self, path, mime, details, reading] {
+                const MediaInfo::Details info = MediaInfo::read(path, mime);
+                QMetaObject::invokeMethod(qApp, [self, info, details, reading] {
+                    if (!self)
+                        return;
+                    details->removeRow(reading);
+                    if (info.isEmpty())
+                        details->addRow(QString(), value(tr("No details found."), self));
+                    for (const auto &[label, text] : info) {
+                        auto *l = new QLabel(label, self);
+                        l->setObjectName("propLabel");
+                        QLabel *v = value(text, self);
+                        v->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                        details->addRow(l, v);
+                    }
+                    self->adjustSize();
+                });
+            });
+        }
+    }
 
     if (single)
         addPermissions(form, first.absoluteFilePath());
