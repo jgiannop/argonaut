@@ -443,6 +443,15 @@ private:
     void applyListColumns();
     void showListHeaderMenu(QHeaderView *header, const QPoint &pos);
     QStringList m_listColumns;
+    // Expandable folders in the list view (Preferences, view/expandFolders).
+    // Only the list shows them: switching to the grid closes every folder.
+    bool m_expandFolders = false;
+    void applyExpandFolders(); // to every pane's model
+    bool handleTreeKey(QKeyEvent *key);
+public:
+    // Preferences: turn expandable folders on or off in every window.
+    static void setExpandFoldersEverywhere(bool on);
+private:
     // Rename, move and trash need a folder you can change: checked exactly,
     // once per folder of the selected items.
     bool canChangeSelection() const;

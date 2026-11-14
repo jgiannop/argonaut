@@ -25,6 +25,7 @@
 #include <QStorageInfo>
 
 #include <algorithm>
+#include <functional>
 #include <optional>
 
 #if defined(Q_OS_LINUX)
@@ -220,20 +221,49 @@ void DirectoryModel::watch(const QStringList &dirs)
         for (int id : std::as_const(m_watchIds))
             inotify_rm_watch(m_inotifyFd, id);
         m_watchIds.clear();
-        for (const QString &dir : dirs) {
-            const int id = inotify_add_watch(m_inotifyFd, QFile::encodeName(dir).constData(),
-                                             IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO
-                                                 | IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF
-                                                 | IN_MOVE_SELF);
-            if (id >= 0)
-                m_watchIds.append(id);
-        }
+        m_watchByDir.clear();
+        for (const QString &dir : dirs)
+            addWatch(dir);
         return;
     }
 #endif
     if (!m_watcher->directories().isEmpty())
         m_watcher->removePaths(m_watcher->directories());
     m_watcher->addPaths(dirs);
+}
+
+void DirectoryModel::addWatch(const QString &dir)
+{
+#if defined(Q_OS_LINUX)
+    if (m_inotifyFd >= 0) {
+        if (m_watchByDir.contains(dir))
+            return;
+        const int id = inotify_add_watch(m_inotifyFd, QFile::encodeName(dir).constData(),
+                                         IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE
+                                             | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF);
+        if (id >= 0) {
+            m_watchIds.append(id);
+            m_watchByDir.insert(dir, id);
+        }
+        return;
+    }
+#endif
+    m_watcher->addPath(dir);
+}
+
+void DirectoryModel::removeWatch(const QString &dir)
+{
+#if defined(Q_OS_LINUX)
+    if (m_inotifyFd >= 0) {
+        const int id = m_watchByDir.take(dir);
+        if (id > 0) {
+            inotify_rm_watch(m_inotifyFd, id);
+            m_watchIds.removeAll(id);
+        }
+        return;
+    }
+#endif
+    m_watcher->removePath(dir);
 }
 
 void DirectoryModel::folderChanged()
@@ -336,6 +366,10 @@ bool DirectoryModel::matchesSearch(const QString &name, const QStringList &folde
 
 void DirectoryModel::relist()
 {
+    // Every opened folder closes (a new folder, or a search, starts flat).
+    for (const QString &folder : std::as_const(m_expanded))
+        m_dirs.removeAll(folder);
+    m_expanded.clear();
     ++m_generation;
     m_rescanTimer.stop();
     m_rescanPending = false;
@@ -401,13 +435,13 @@ void DirectoryModel::startScan(bool initial)
         auto send = [&](bool done) {
             QMetaObject::invokeMethod(
                 this,
-                [this, generation, done, initial, truncated, entries = std::move(batch)]() mutable {
+                [this, generation, done, initial, truncated, dirs, entries = std::move(batch)]() mutable {
                     if (generation == m_generation && done)
                         m_searchTruncated = truncated;
                     if (initial)
                         applyBatch(generation, std::move(entries), done);
                     else
-                        applyRescan(generation, std::move(entries));
+                        applyRescan(generation, std::move(entries), dirs);
                 },
                 Qt::QueuedConnection);
             batch = Entries();
@@ -550,11 +584,23 @@ void DirectoryModel::applyBatch(quint64 generation, Entries batch, bool done)
 
 // Apply a fresh full listing as minimal changes, so selection, current
 // item and scroll position survive.
-void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
+void DirectoryModel::applyRescan(quint64 generation, Entries fresh, const QStringList &scanned)
 {
     if (generation != m_generation)
         return;
     m_scanning = false;
+
+    // A tree: only rows of the folders this listing read can be stale. A
+    // folder opened meanwhile keeps its rows; one closed meanwhile is dropped.
+    const bool tree = isTreeActive();
+    const QSet<QString> scannedSet(scanned.cbegin(), scanned.cend());
+    const auto covered = [&](const FileEntry &e) { return !tree || scannedSet.contains(e.dir); };
+    if (tree) {
+        const QSet<QString> listedNow(m_dirs.cbegin(), m_dirs.cend());
+        fresh.erase(std::remove_if(fresh.begin(), fresh.end(),
+                                   [&](const FileEntry &e) { return !listedNow.contains(e.dir); }),
+                    fresh.end());
+    }
 
     for (FileEntry &e : fresh)
         applyCachedContent(e);
@@ -566,6 +612,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
     size_t removed = 0;
     size_t added = 0;
     for (const FileEntry &e : m_rows) {
+        if (!covered(e))
+            continue;
         const auto it = freshByPath.constFind(e.path());
         if (it == freshByPath.constEnd() || !isShown(fresh[*it]))
             ++removed;
@@ -580,8 +628,13 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         // Mass change (e.g. thousands of files deleted): one reset is
         // far cheaper than thousands of row moves.
         beginResetModel();
-        m_rows.clear();
-        m_hidden.clear();
+        Entries kept; // rows of folders this listing didn't read (tree)
+        for (FileEntry &e : m_rows) {
+            if (!covered(e))
+                kept.push_back(std::move(e));
+        }
+        m_rows = std::move(kept);
+        m_hidden.erase(std::remove_if(m_hidden.begin(), m_hidden.end(), covered), m_hidden.end());
         for (FileEntry &e : fresh)
             (isShown(e) ? m_rows : m_hidden).push_back(std::move(e));
         sortRows();
@@ -590,6 +643,8 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
     } else {
         // 1. Removals (descending, so row numbers stay valid).
         for (int row = int(m_rows.size()) - 1; row >= 0; --row) {
+            if (!covered(m_rows[size_t(row)]))
+                continue;
             const auto it = freshByPath.constFind(m_rows[size_t(row)].path());
             if (it != freshByPath.constEnd() && isShown(fresh[*it]))
                 continue;
@@ -603,7 +658,10 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         bool sortKeyChanged = false;
         for (size_t row = 0; row < m_rows.size(); ++row) {
             FileEntry &cur = m_rows[row];
-            const FileEntry &now = fresh[freshByPath.value(cur.path())];
+            const auto found = freshByPath.constFind(cur.path());
+            if (found == freshByPath.constEnd())
+                continue; // a folder this listing didn't read (tree)
+            const FileEntry &now = fresh[*found];
             if (cur.permissions != now.permissions || cur.ownerId != now.ownerId
                 || cur.groupId != now.groupId) {
                 // chmod/chown: only the emblem and columns change.
@@ -629,11 +687,23 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
             emit dataChanged(index(int(row), 0), index(int(row), ColumnCount - 1));
         }
 
-        // 3. Insertions at their sorted position.
+        // 3. Insertions at their sorted position. In a tree with opened
+        // folders the order isn't one comparison: append, then sort the tree.
+        const bool treeOrder = tree && !m_expanded.isEmpty();
+        bool appended = false;
         for (FileEntry &e : fresh) {
             ensureIndex();
             if (!isShown(e) || m_rowByPath.contains(e.path()))
                 continue;
+            if (treeOrder) {
+                const int row = int(m_rows.size());
+                beginInsertRows(QModelIndex(), row, row);
+                m_rows.push_back(std::move(e));
+                rebuildIndex();
+                endInsertRows();
+                appended = true;
+                continue;
+            }
             const auto pos = std::lower_bound(m_rows.begin(), m_rows.end(), e,
                                               [this](const FileEntry &a, const FileEntry &b) {
                                                   return lessThan(a, b);
@@ -645,14 +715,24 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
             endInsertRows();
         }
 
-        m_hidden.clear();
+        m_hidden.erase(std::remove_if(m_hidden.begin(), m_hidden.end(), covered), m_hidden.end());
         for (FileEntry &e : fresh) {
             if (!isShown(e) && !e.name.isEmpty())
                 m_hidden.push_back(std::move(e));
         }
 
-        if (sortKeyChanged && m_sortColumn != NameColumn)
+        if (appended || (sortKeyChanged && m_sortColumn != NameColumn))
             resort();
+    }
+
+    // Opened folders that are gone (deleted, renamed): forget them.
+    if (tree && !m_expanded.isEmpty()) {
+        ensureIndex();
+        const QStringList opened = expandedFolders();
+        for (const QString &folder : opened) {
+            if (m_expanded.contains(folder) && !m_rowByPath.contains(folder))
+                collapse(folder);
+        }
     }
 
     if (m_thorough)
@@ -739,6 +819,18 @@ void DirectoryModel::setShowHidden(bool show)
         relist(); // the walk skips hidden folders: search again
         return;
     }
+    if (!show) { // an opened folder that is now hidden (or inside one) closes
+        const QStringList opened = expandedFolders();
+        for (const QString &folder : opened) {
+            const int skip = int(m_path.size()) + (m_path.endsWith(QLatin1Char('/')) ? 0 : 1);
+            const QStringList parts = folder.mid(skip).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+            const bool hidden = std::any_of(parts.cbegin(), parts.cend(), [](const QString &p) {
+                return p.startsWith(QLatin1Char('.')) || p.endsWith(QLatin1Char('~'));
+            });
+            if (hidden)
+                collapse(folder);
+        }
+    }
     beginResetModel();
     Entries all = std::move(m_rows);
     for (FileEntry &e : m_hidden)
@@ -812,12 +904,203 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
 
 void DirectoryModel::sortRows()
 {
+    if (isTreeActive() && !m_expanded.isEmpty()) {
+        sortTree();
+        return;
+    }
     std::stable_sort(m_rows.begin(), m_rows.end(),
                      [this](const FileEntry &a, const FileEntry &b) { return lessThan(a, b); });
 }
 
+// Tree order: the open folder's rows sorted, and each opened folder's rows
+// sorted on their own, right below it (depth first).
+void DirectoryModel::sortTree()
+{
+    QHash<QString, std::vector<size_t>> byDir;
+    for (size_t i = 0; i < m_rows.size(); ++i)
+        byDir[m_rows[i].dir].push_back(i);
+    for (auto it = byDir.begin(); it != byDir.end(); ++it) {
+        std::stable_sort(it->begin(), it->end(),
+                         [this](size_t a, size_t b) { return lessThan(m_rows[a], m_rows[b]); });
+    }
+    Entries out;
+    out.reserve(m_rows.size());
+    std::vector<bool> used(m_rows.size(), false);
+    std::function<void(const QString &)> lay = [&](const QString &dir) {
+        const auto it = byDir.constFind(dir);
+        if (it == byDir.constEnd())
+            return;
+        for (size_t i : *it) {
+            used[i] = true;
+            const QString path = m_rows[i].path();
+            const bool open = m_rows[i].isDir && m_expanded.contains(path);
+            out.push_back(std::move(m_rows[i]));
+            if (open)
+                lay(path);
+        }
+    };
+    lay(m_path);
+    for (size_t i = 0; i < m_rows.size(); ++i) { // not reachable (shouldn't happen): keep, at the end
+        if (!used[i])
+            out.push_back(std::move(m_rows[i]));
+    }
+    m_rows = std::move(out);
+}
+
+int DirectoryModel::depthOf(const FileEntry &e) const
+{
+    if (e.dir == m_path)
+        return 0;
+    const int skip = int(m_path.size()) + (m_path.endsWith(QLatin1Char('/')) ? 0 : 1);
+    return int(QStringView(e.dir).mid(skip).count(QLatin1Char('/'))) + 1;
+}
+
+// ---------------------------------------------------------------- tree ---
+
+void DirectoryModel::setTreeEnabled(bool enabled)
+{
+    if (m_treeEnabled == enabled)
+        return;
+    if (!enabled) {
+        const QStringList opened = expandedFolders();
+        for (const QString &folder : opened)
+            collapse(folder);
+    }
+    m_treeEnabled = enabled;
+    if (!m_rows.empty()) // arrows and indentation appear or go
+        emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0));
+}
+
+void DirectoryModel::expand(const QString &folder)
+{
+    if (!isTreeActive() || m_expanded.contains(folder))
+        return;
+    ensureIndex();
+    const int row = m_rowByPath.value(folder, -1);
+    if (row < 0 || !m_rows[size_t(row)].isDir)
+        return;
+    m_expanded.insert(folder);
+    m_dirs.append(folder);
+    addWatch(folder);
+    emit dataChanged(index(row, 0), index(row, 0), {ExpandedRole});
+    startChildScan(folder);
+}
+
+void DirectoryModel::forgetExpanded(const QString &folder)
+{
+    const QString prefix = folder + QLatin1Char('/');
+    const QStringList opened = expandedFolders();
+    for (const QString &p : opened) {
+        if (p == folder || p.startsWith(prefix)) {
+            m_expanded.remove(p);
+            m_dirs.removeAll(p);
+            removeWatch(p);
+        }
+    }
+}
+
+void DirectoryModel::collapse(const QString &folder)
+{
+    if (!m_expanded.contains(folder))
+        return;
+    forgetExpanded(folder);
+    const QString prefix = folder + QLatin1Char('/');
+    // Its rows (and those of folders opened inside it) are the block right below it.
+    ensureIndex();
+    const int row = m_rowByPath.value(folder, -1);
+    if (row >= 0) {
+        const int first = row + 1;
+        int last = first;
+        while (last < int(m_rows.size()) && m_rows[size_t(last)].path().startsWith(prefix))
+            ++last;
+        if (last > first) {
+            beginRemoveRows(QModelIndex(), first, last - 1);
+            m_rows.erase(m_rows.begin() + first, m_rows.begin() + last);
+            rebuildIndex(); // before endRemoveRows: listeners may look names up
+            endRemoveRows();
+        }
+        emit dataChanged(index(row, 0), index(row, 0), {ExpandedRole});
+    }
+    // Anything left elsewhere (it shouldn't be) and its hidden items.
+    for (int i = int(m_rows.size()) - 1; i >= 0; --i) {
+        if (m_rows[size_t(i)].path().startsWith(prefix)) {
+            beginRemoveRows(QModelIndex(), i, i);
+            m_rows.erase(m_rows.begin() + i);
+            rebuildIndex();
+            endRemoveRows();
+        }
+    }
+    m_hidden.erase(std::remove_if(m_hidden.begin(), m_hidden.end(),
+                                  [&](const FileEntry &e) { return e.path().startsWith(prefix); }),
+                   m_hidden.end());
+}
+
+// Lists one opened folder (not the whole tree again).
+void DirectoryModel::startChildScan(const QString &dir)
+{
+    const quint64 generation = m_generation;
+    m_pool.start([this, generation, dir] {
+        const QCollator collator = naturalCollator();
+        Entries entries;
+        QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+        while (it.hasNext()) {
+            if (m_generation != generation)
+                return; // the user went elsewhere
+            it.next();
+            if (std::optional<FileEntry> made = makeEntry(dir, it.fileName(), collator))
+                entries.push_back(std::move(*made));
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this, generation, dir, entries = std::move(entries)]() mutable {
+                applyChildren(generation, dir, std::move(entries));
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void DirectoryModel::applyChildren(quint64 generation, const QString &dir, Entries entries)
+{
+    if (generation != m_generation || !m_expanded.contains(dir))
+        return; // another folder now, or closed again meanwhile
+    ensureIndex();
+    const int parent = m_rowByPath.value(dir, -1);
+    if (parent < 0)
+        return;
+    const QString prefix = dir + QLatin1Char('/');
+    Entries shown;
+    for (FileEntry &e : entries) {
+        if (m_rowByPath.contains(e.path()))
+            continue; // a rescan was quicker
+        m_hidden.erase(std::remove_if(m_hidden.begin(), m_hidden.end(),
+                                      [&](const FileEntry &h) { return h.path() == e.path(); }),
+                       m_hidden.end());
+        applyCachedContent(e);
+        if (m_thorough && !e.isDir && e.verdict == ContentType::Verdict::NotChecked)
+            wantContent(e);
+        (isShown(e) ? shown : m_hidden).push_back(std::move(e));
+    }
+    if (!shown.empty()) {
+        std::stable_sort(shown.begin(), shown.end(),
+                         [this](const FileEntry &a, const FileEntry &b) { return lessThan(a, b); });
+        const bool raced = parent + 1 < int(m_rows.size()) && m_rows[size_t(parent) + 1].path().startsWith(prefix);
+        const int first = raced ? int(m_rows.size()) : parent + 1;
+        beginInsertRows(QModelIndex(), first, first + int(shown.size()) - 1);
+        m_rows.insert(m_rows.begin() + first, std::make_move_iterator(shown.begin()),
+                      std::make_move_iterator(shown.end()));
+        rebuildIndex(); // before endInsertRows: listeners may look names up
+        endInsertRows();
+        if (raced)
+            resort(); // some rows were already there: put everything in tree order
+    }
+    m_contentTimer.start();
+    startCounting();
+}
+
 void DirectoryModel::resort(int sortedPrefix)
 {
+    if (isTreeActive() && !m_expanded.isEmpty())
+        sortedPrefix = -1; // the merge assumes one flat order
     emit layoutAboutToBeChanged({}, QAbstractItemModel::VerticalSortHint);
     const QModelIndexList before = persistentIndexList();
     QStringList paths;
@@ -1041,6 +1324,12 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return isLocked(e);
     case OwnerIdRole:
         return e.ownerId;
+    case TreeDepthRole:
+        return isTreeActive() ? depthOf(e) : -1;
+    case ExpandedRole:
+        return m_expanded.contains(e.path());
+    case ExpandableRole:
+        return isTreeActive() && e.isDir && e.childCount != 0; // "0 items": nothing to open
     case ContentMimeRole:
         return e.contentMime;
     case Qt::ToolTipRole:

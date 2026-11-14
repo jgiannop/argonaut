@@ -1,11 +1,14 @@
 #include "PreferencesDialog.h"
 
 #include "DefaultFileManager.h"
+#include "MainWindow.h"
 #include "Theme.h"
 #include "Thumbnailer.h"
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QSettings>
 #include <QComboBox>
 #include <QPushButton>
 #include <QGridLayout>
@@ -161,6 +164,24 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addWidget(thumbsHint);
     layout->addSpacing(6);
     layout->addWidget(thumbs);
+
+    // Expandable folders in the list view, like Nautilus.
+    layout->addSpacing(18);
+    auto *listHeading = new QLabel(tr("List View"), this);
+    listHeading->setObjectName("prefHeading");
+    auto *expand = new QCheckBox(tr("Expandable folders"), this);
+    expand->setObjectName("prefCheck");
+    expand->setChecked(QSettings().value("view/expandFolders", false).toBool());
+    auto *expandHint = new QLabel(tr("Show an arrow before each folder in the list, to open it in place. "
+                                     "→ and ← open and close the selected folder."),
+                                  this);
+    expandHint->setObjectName("prefHint");
+    expandHint->setWordWrap(true);
+    connect(expand, &QCheckBox::toggled, this, [](bool on) { MainWindow::setExpandFoldersEverywhere(on); });
+    layout->addWidget(listHeading);
+    layout->addSpacing(4);
+    layout->addWidget(expand);
+    layout->addWidget(expandHint);
 
     // Default file manager: Kosmos or Nautilus, switchable both ways.
     layout->addSpacing(18);

@@ -94,6 +94,9 @@ public:
         SymLinkRole,                 // bool
         LockedRole,                  // bool: probably not writable by you (🔒)
         OwnerIdRole,                 // uint (Access::NoId if unknown)
+        TreeDepthRole,               // int: 0 = in the open folder, 1 = one level in…; -1 = no tree
+        ExpandedRole,                // bool: an opened folder (tree)
+        ExpandableRole,              // bool: a folder that can be opened in place (tree)
     };
     // Places that aren't folders: lists of items from anywhere. setPath()
     // takes these paths; they're never on disk.
@@ -132,6 +135,19 @@ public:
     // Matching, exposed for tests: words = foldForSearch(query).split(' ').
     static QString foldForSearch(const QString &text);
     static bool matchesSearch(const QString &name, const QStringList &foldedWords);
+
+    // Expandable folders in the list view (Preferences, like Nautilus).
+    // An opened folder's items become rows right below it, one level
+    // deeper, sorted on their own; only opened folders are read and
+    // watched. Only for plain folders: search, the Trash, Recent and
+    // Starred stay flat. setPath() and search close every folder.
+    void setTreeEnabled(bool enabled);
+    bool treeEnabled() const { return m_treeEnabled; }
+    bool isTreeActive() const { return m_treeEnabled && m_place == Place::Folder && !m_trash && !isSearch(); }
+    void expand(const QString &folder);
+    void collapse(const QString &folder); // and every folder opened inside it
+    bool isExpanded(const QString &folder) const { return m_expanded.contains(folder); }
+    QStringList expandedFolders() const { return QStringList(m_expanded.cbegin(), m_expanded.cend()); }
 
     void setShowHidden(bool show);
     bool showHidden() const { return m_showHidden; }
@@ -173,7 +189,16 @@ private:
     void startScan(bool initial);
     void scheduleRescan();
     void applyBatch(quint64 generation, Entries batch, bool done);
-    void applyRescan(quint64 generation, Entries fresh);
+    // `scanned`: the folders this listing read. In a tree, rows of folders
+    // opened after it started are left alone.
+    void applyRescan(quint64 generation, Entries fresh, const QStringList &scanned);
+    void startChildScan(const QString &dir);
+    void applyChildren(quint64 generation, const QString &dir, Entries entries);
+    void sortTree();            // each folder's rows sorted, laid out depth first
+    int depthOf(const FileEntry &e) const;
+    void forgetExpanded(const QString &folder); // with the folders opened inside it
+    void addWatch(const QString &dir);
+    void removeWatch(const QString &dir);
     void startCounting();
     void applyCounts(quint64 generation, const QHash<QString, int> &counts);
 
@@ -234,6 +259,9 @@ private:
     QSocketNotifier *m_inotifyNotifier = nullptr;
     int m_inotifyFd = -1;
     QList<int> m_watchIds;
+    QHash<QString, int> m_watchByDir; // inotify id per watched folder
+    bool m_treeEnabled = false;
+    QSet<QString> m_expanded; // opened folders (tree); each is also in m_dirs
     QTimer m_rescanTimer;
     QThreadPool m_pool;
     QThreadPool m_contentPool;

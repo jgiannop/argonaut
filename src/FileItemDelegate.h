@@ -36,8 +36,15 @@ public:
     // Folder under a drag in progress: drawn highlighted ("drop here").
     void setDropTarget(const QModelIndex &index) { m_dropTarget = index; }
     QSize gridCellSize(const QFontMetrics &fm) const;
-    // Where the inline rename field goes for an item drawn in `itemRect`.
-    QRect nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const;
+    // Where the inline rename field goes for an item drawn in `itemRect`
+    // (`index` gives the tree indentation in the list).
+    QRect nameEditorRect(const QRect &itemRect, const QFontMetrics &fm,
+                         const QModelIndex &index = QModelIndex()) const;
+    // Expandable folders (list): how far an item is moved right, and the
+    // ▸ arrow's place in its Name cell (empty if it has none).
+    static constexpr int TreeStep = 20;
+    int treeIndent(const QModelIndex &index) const;
+    QRect expanderRect(const QRect &cellRect, const QModelIndex &index) const;
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index) const override;
@@ -49,6 +56,7 @@ private:
     void paintList(QPainter *painter, const QStyleOptionViewItem &option,
                    const QModelIndex &index) const;
     void paintIcon(QPainter *painter, const QRect &rect, const QModelIndex &index) const;
+    void paintExpander(QPainter *painter, const QRect &rect, bool expanded) const;
     QPixmap renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const;
     void paintContentBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     void paintStarBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;

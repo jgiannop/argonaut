@@ -324,6 +324,11 @@ and turn the mouse wheel. [[Ctrl+0]] goes back to the normal size. Each view rem
 <h2>Sorting</h2>
 <p>Click a column header in the list, or use <b>View → Sort</b>. Folders always come first, and names
 are in natural order, so “file2” comes before “file10”.</p>
+<h2>Opening folders in place</h2>
+<p>Turn on <b>Expandable folders</b> in Preferences ([[Ctrl+,]]) to see an arrow before each folder in the list.
+Click it, or press [[Right]], to show the folder's items right below it; [[Left]] closes it again, or goes
+to the folder an item is in. You can copy, move, rename and preview items there as anywhere else.
+Search, the Trash, Recent and Starred always show a plain list.</p>
 <h2>Columns</h2>
 <p>The list shows Name, Size, Type and Modified. Right-click the column header to add <b>Owner</b>,
 <b>Group</b> and <b>Permissions</b>.</p>
