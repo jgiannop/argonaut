@@ -11,7 +11,7 @@ class QProcess;
 
 // Remote locations (Connect to Server): sftp://, smb://, ftp://, WebDAV…
 // mounted by GVfs (`gio mount`, Linux). With gvfs-fuse every mount is also a
-// folder under $XDG_RUNTIME_DIR/gvfs, so the rest of Kosmos (listing, copy,
+// folder under $XDG_RUNTIME_DIR/gvfs, so the rest of Argonaut (listing, copy,
 // undo, preview) works on it like on any other folder. Core code, no widgets.
 namespace Remote {
 
@@ -20,7 +20,7 @@ namespace Remote {
 bool isRemoteAddress(const QString &text);
 
 // The folder GVfs puts mounts in ($XDG_RUNTIME_DIR/gvfs); empty if none.
-// KOSMOS_GVFS_ROOT replaces it (tests).
+// ARGONAUT_GVFS_ROOT replaces it (tests).
 QString gvfsRoot();
 
 struct Mount
@@ -41,7 +41,7 @@ Mount mountOf(const QString &path);
 
 // Mounts one address with `gio mount`, answering its questions through
 // signals (it asks on its standard input: user, domain, password, and
-// choices such as an unknown host key). KOSMOS_GIO_PROGRAM replaces gio.
+// choices such as an unknown host key). ARGONAUT_GIO_PROGRAM replaces gio.
 class Mounter : public QObject
 {
     Q_OBJECT

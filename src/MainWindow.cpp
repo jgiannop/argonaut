@@ -32,7 +32,7 @@
 #include "PropertiesDialog.h"
 #include "QuickLook.h"
 #include "Thumbnailer.h"
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
 #include "TerminalWidget.h"
 #endif
 #include "Toast.h"
@@ -391,7 +391,7 @@ QPushButton#aboutClose { background: @accent; color: #ffffff; border: none; bord
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    m_csd = qEnvironmentVariableIsEmpty("KOSMOS_NATIVE_DECORATIONS");
+    m_csd = qEnvironmentVariableIsEmpty("ARGONAUT_NATIVE_DECORATIONS");
 #if defined(Q_OS_MACOS)
     m_csd = false; // keep the native traffic-light title bar on macOS
 #endif
@@ -399,7 +399,7 @@ MainWindow::MainWindow(QWidget *parent)
         setWindowFlag(Qt::FramelessWindowHint);
 
     resize(1150, 720);
-    setWindowTitle("Kosmos");
+    setWindowTitle("Argonaut");
 
     m_ops = new FileOperations(this);
     m_ops->setAskOnConflict(true);
@@ -553,7 +553,7 @@ void MainWindow::setupActions()
     connect(m_sortDescAct, &QAction::triggered, this,
             [this] { sortBy(m_model->sortColumn(), Qt::DescendingOrder); });
 
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
     m_terminalAct = new QAction(tr("Terminal"), this);
     m_terminalAct->setCheckable(true);
     m_terminalAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)); // like VS Code
@@ -811,7 +811,7 @@ void MainWindow::setupActions()
     m_zoomResetAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomResetAct, &QAction::triggered, this, [this] { zoom(0); });
 
-    m_aboutAct = new QAction(tr("About Kosmos"), this);
+    m_aboutAct = new QAction(tr("About Argonaut"), this);
     m_aboutAct->setMenuRole(QAction::AboutRole);
     connect(m_aboutAct, &QAction::triggered, this, [this] {
         static QPointer<AboutDialog> dialog;
@@ -970,7 +970,7 @@ QWidget *MainWindow::buildSidebarPane()
     connect(m_searchButton, &QToolButton::toggled, m_searchAct, &QAction::setChecked);
     connect(m_searchAct, &QAction::toggled, m_searchButton, &QToolButton::setChecked);
 
-    m_titleLabel = new QLabel(tr("Kosmos"), header);
+    m_titleLabel = new QLabel(tr("Argonaut"), header);
     m_titleLabel->setObjectName("title");
     m_titleLabel->setAlignment(Qt::AlignCenter);
 
@@ -1293,7 +1293,7 @@ QWidget *MainWindow::buildContentPane()
     m_contentSplitter->setChildrenCollapsible(false);
     m_contentSplitter->setHandleWidth(1);
     m_contentSplitter->addWidget(m_paneSplitter);
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
     m_contentSplitter->addWidget(buildTerminalPanel());
 #endif
     m_contentSplitter->setStretchFactor(0, 1);
@@ -1466,7 +1466,7 @@ void MainWindow::refreshChrome()
     m_trashBar->setVisible(m_model->isTrash());
     m_pathBar->setPath(m_current);
     updateGitBadge();
-    setWindowTitle(tr("%1 — Kosmos").arg(titleFor(m_current)));
+    setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_current)));
     syncSidebarSelection();
     updateActions();
     updateEditActions();
@@ -2082,7 +2082,7 @@ void MainWindow::applyTheme(bool force)
         if (auto *close = qobject_cast<QToolButton *>(m_tabBar->tabButton(i, QTabBar::RightSide)))
             close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
     }
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
     m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
     m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
     m_terminal->setTheme(m_theme);
@@ -2344,7 +2344,7 @@ void MainWindow::sendByEmail(const QStringList &paths)
     QStringList args;
     for (const QString &p : paths)
         args << QStringLiteral("--attach") << p;
-    const QString program = qEnvironmentVariable("KOSMOS_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
+    const QString program = qEnvironmentVariable("ARGONAUT_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
     if (!QProcess::startDetached(program, args))
         showMessage(tr("Couldn't open the email app (xdg-email is missing)"));
 }
@@ -2363,7 +2363,7 @@ void MainWindow::setAsBackground(const QString &image)
         return;
     }
     const QString uri = QUrl::fromLocalFile(copy).toString();
-    const QString gsettings = qEnvironmentVariable("KOSMOS_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
+    const QString gsettings = qEnvironmentVariable("ARGONAUT_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
     bool ok = true;
     for (const char *key : {"picture-uri", "picture-uri-dark"}) {
         ok = QProcess::execute(gsettings, {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.background"),
@@ -2582,7 +2582,7 @@ void MainWindow::chooseShare(const QString &serverAddress)
             base += QLatin1Char('/');
         connectToServer(base + QString::fromUtf8(QUrl::toPercentEncoding(share)));
     });
-    list->start(qEnvironmentVariable("KOSMOS_GIO_PROGRAM", QStringLiteral("gio")), {QStringLiteral("list"), serverAddress});
+    list->start(qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio")), {QStringLiteral("list"), serverAddress});
 }
 
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
@@ -2609,7 +2609,7 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
         });
         return;
     }
-    const QString program = qEnvironmentVariable("KOSMOS_EJECT_PROGRAM", QStringLiteral("gio"));
+    const QString program = qEnvironmentVariable("ARGONAUT_EJECT_PROGRAM", QStringLiteral("gio"));
     auto *process = new QProcess(this);
     connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
         if (status == QProcess::NormalExit && code == 0) {
@@ -4757,7 +4757,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
 
 // ------------------------------------------------------------ terminal ---
 
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
 
 QWidget *MainWindow::buildTerminalPanel()
 {
@@ -5010,7 +5010,7 @@ void MainWindow::switchToTab(int index)
         if (!navigateTo(tab.path, false)) // its folder may be gone by now
             navigateTo(QDir::homePath(), false);
     } else {
-        setWindowTitle(tr("%1 — Kosmos").arg(tabTitle(m_current)));
+        setWindowTitle(tr("%1 — Argonaut").arg(tabTitle(m_current)));
     }
     m_backHistory = tab.back;
     m_forwardHistory = tab.forward;
@@ -5237,7 +5237,7 @@ void MainWindow::openFile(const QString &path)
                         QMessageBox::NoButton, this);
         box.setInformativeText(ContentType::describe(result) + QStringLiteral(".\n\n")
                                + tr("Files like this are a common way to spread malware. "
-                                    "Kosmos won't run it."));
+                                    "Argonaut won't run it."));
         QPushButton *keep = box.addButton(tr("Don't Open"), QMessageBox::RejectRole);
         QPushButton *trash = box.addButton(tr("Move to Trash"), QMessageBox::DestructiveRole);
         QPushButton *asNamed = box.addButton(tr("Open as Named"), QMessageBox::AcceptRole);

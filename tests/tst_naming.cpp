@@ -377,7 +377,7 @@ int main(int argc, char **argv)
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
-    qputenv("KOSMOS_TRASH_HOME_ONLY", "1");
+    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     for (const char *dir : {"/home", "/data", "/config", "/cache"})

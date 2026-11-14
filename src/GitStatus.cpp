@@ -18,7 +18,7 @@ namespace {
 
 QString gitProgram()
 {
-    const QString overridden = qEnvironmentVariable("KOSMOS_GIT_PROGRAM"); // tests
+    const QString overridden = qEnvironmentVariable("ARGONAUT_GIT_PROGRAM"); // tests
     if (!overridden.isEmpty())
         return overridden;
     static const QString found = QStandardPaths::findExecutable(QStringLiteral("git"));

@@ -37,7 +37,7 @@ QString yesNo(bool on, const QString &yes, const QString &no)
 QList<Detail> details()
 {
     QList<Detail> list;
-    list.append({QObject::tr("Kosmos"), QApplication::applicationVersion()});
+    list.append({QObject::tr("Argonaut"), QApplication::applicationVersion()});
     list.append({QObject::tr("Qt"), QObject::tr("%1 (built with %2)").arg(QString::fromLatin1(qVersion()),
                                                                         QStringLiteral(QT_VERSION_STR))});
     list.append({QObject::tr("System"), QSysInfo::prettyProductName()});
@@ -48,13 +48,13 @@ QList<Detail> details()
     const QString platform = QGuiApplication::platformName();
     list.append({QObject::tr("Desktop"), desktop.isEmpty() ? platform : QStringLiteral("%1 (%2)").arg(desktop, platform)});
 
-#if defined(KOSMOS_LIBARCHIVE_VERSION)
-    list.append({QObject::tr("Archives"), QObject::tr("Yes, libarchive %1").arg(QStringLiteral(KOSMOS_LIBARCHIVE_VERSION))});
+#if defined(ARGONAUT_LIBARCHIVE_VERSION)
+    list.append({QObject::tr("Archives"), QObject::tr("Yes, libarchive %1").arg(QStringLiteral(ARGONAUT_LIBARCHIVE_VERSION))});
 #else
     list.append({QObject::tr("Archives"), QObject::tr("Not in this build")});
 #endif
-#if defined(KOSMOS_TERMINAL)
-    list.append({QObject::tr("Terminal"), QObject::tr("Yes, libvterm %1").arg(QStringLiteral(KOSMOS_VTERM_VERSION))});
+#if defined(ARGONAUT_TERMINAL)
+    list.append({QObject::tr("Terminal"), QObject::tr("Yes, libvterm %1").arg(QStringLiteral(ARGONAUT_VTERM_VERSION))});
 #else
     list.append({QObject::tr("Terminal"), QObject::tr("Not in this build")});
 #endif
@@ -63,7 +63,7 @@ QList<Detail> details()
                  yesNo(!QStandardPaths::findExecutable(QStringLiteral("bwrap")).isEmpty(),
                        QObject::tr("Yes, bubblewrap"), QObject::tr("No (install bubblewrap)"))});
     list.append({QObject::tr("Default file manager"),
-                 yesNo(DefaultFileManager::isKosmosDefault(), QObject::tr("Kosmos"), QObject::tr("Another app"))});
+                 yesNo(DefaultFileManager::isArgonautDefault(), QObject::tr("Argonaut"), QObject::tr("Another app"))});
 #endif
     list.append({QObject::tr("Settings"), QDir::toNativeSeparators(QSettings().fileName())});
     list.append({QObject::tr("Cache"),
@@ -104,7 +104,7 @@ QWidget *card(const QString &heading, const QString &html, QWidget *parent)
 AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
 {
     setObjectName("aboutDialog");
-    setWindowTitle(tr("About Kosmos"));
+    setWindowTitle(tr("About Argonaut"));
     setAttribute(Qt::WA_DeleteOnClose);
 
     auto *layout = new QVBoxLayout(this);
@@ -118,7 +118,7 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
     layout->addWidget(icon);
     layout->addSpacing(10);
 
-    auto *name = new QLabel(QStringLiteral("Kosmos"), this);
+    auto *name = new QLabel(QStringLiteral("Argonaut"), this);
     name->setObjectName("aboutName");
     name->setAlignment(Qt::AlignCenter);
     layout->addWidget(name);
@@ -203,7 +203,7 @@ QWidget *AboutDialog::buildAboutPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
     layout->addWidget(paragraph(
-        tr("Kosmos is a file manager in the spirit of GNOME Files: simple to use, quick with big folders, "
+        tr("Argonaut is a file manager in the spirit of GNOME Files: simple to use, quick with big folders, "
            "and careful with your files. It shares bookmarks, recent files, thumbnails and the Trash with "
            "your desktop."),
         page));
@@ -230,8 +230,8 @@ QWidget *AboutDialog::buildAboutPage()
         grid->addWidget(card, i / 2, i % 2);
     }
     layout->addLayout(grid);
-    layout->addWidget(paragraph(tr("Its name is the Greek <i>κόσμος</i>, which first meant “order” "
-                                   "and later “the universe”."),
+    layout->addWidget(paragraph(tr("Named after the Argonauts, who sailed on the <i>Argo</i> into the unknown, "
+                                   "and the <i>argonauta</i>, whose shell is called the paper nautilus."),
                                 page, "aboutDim"));
     layout->addStretch();
     return page;
@@ -274,10 +274,10 @@ QWidget *AboutDialog::buildCreditsPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
     QString built = tr("<a href=\"https://www.qt.io\">Qt</a> %1 for the interface, the same on every system");
-#if defined(KOSMOS_LIBARCHIVE_VERSION)
+#if defined(ARGONAUT_LIBARCHIVE_VERSION)
     built += tr("<br><a href=\"https://libarchive.org\">libarchive</a> for compressing and extracting");
 #endif
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
     built += tr("<br><a href=\"https://www.leonerd.org.uk/code/libvterm/\">libvterm</a> for the terminal");
 #endif
 #if defined(Q_OS_LINUX)
@@ -290,7 +290,7 @@ QWidget *AboutDialog::buildCreditsPage()
                               "redrawn with Qt alone. Terminal colours from GNOME Console."),
                            page));
     layout->addWidget(card(tr("License"),
-                           tr("Copyright © 2026 johngiannop. Kosmos is free software: you can share and change it "
+                           tr("Copyright © 2026 johngiannop. Argonaut is free software: you can share and change it "
                               "under the <a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">GNU General Public "
                               "License, version 3 or later</a>. It comes with no warranty."),
                            page));

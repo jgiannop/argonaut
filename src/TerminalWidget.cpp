@@ -169,7 +169,7 @@ bool TerminalWidget::start(const QString &directory)
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("TERM", "xterm-256color");
     env.insert("COLORTERM", "truecolor");
-    env.insert("TERM_PROGRAM", "kosmos");
+    env.insert("TERM_PROGRAM", "argonaut");
     env.insert("PWD", directory);
     QList<QByteArray> envStrings;
     for (const QString &entry : env.toStringList())

@@ -8,7 +8,7 @@ class QDBusConnection;
 // org.freedesktop.FileManager1 on the session bus: what apps call for "Show
 // in folder" (ShowItems), "Open folder" (ShowFolders) and "Properties"
 // (ShowItemProperties). Requests arrive as signals with local paths; the
-// app opens windows for them. Owned only by `kosmos --service`, which
+// app opens windows for them. Owned only by `argonaut --service`, which
 // D-Bus starts through the service file DefaultFileManager writes. Linux.
 class FileManagerService : public QObject
 {

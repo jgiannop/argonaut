@@ -14,7 +14,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
-#if defined(KOSMOS_ARCHIVES)
+#if defined(ARGONAUT_ARCHIVES)
 #include <archive.h>
 #include <archive_entry.h>
 #endif
@@ -107,7 +107,7 @@ void TestPreview::folder()
 
 void TestPreview::archive()
 {
-#if !defined(KOSMOS_ARCHIVES)
+#if !defined(ARGONAUT_ARCHIVES)
     QSKIP("built without libarchive");
 #else
     const QString path = m_dir->path() + "/bundle.tar";

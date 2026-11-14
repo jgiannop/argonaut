@@ -1,5 +1,5 @@
 // Tests for the Claude API client (against a fake server on localhost,
-// KOSMOS_CLAUDE_BASE_URL) and the key store's file mode. No real API calls.
+// ARGONAUT_CLAUDE_BASE_URL) and the key store's file mode. No real API calls.
 
 #include "Claude.h"
 #include "KeyStore.h"
@@ -55,7 +55,7 @@ void TestClaude::init()
 void TestClaude::sendsAMessage()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, message("Hello there"), {}});
     Claude::Client client;
     client.setApiKey("sk-ant-test");
@@ -97,7 +97,7 @@ void TestClaude::sendsAMessage()
 void TestClaude::retriesWhenOverloaded()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({529, R"({"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}})", {}});
     api.replies.append({200, message("finally"), {}});
     Claude::Client client;
@@ -149,7 +149,7 @@ void TestClaude::errorsForPeople()
 void TestClaude::testKey()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, R"({"data":[{"id":"claude-opus-5-5"}]})", {}});
     api.replies.append({401, R"({"error":{"type":"authentication_error","message":"invalid"}})", {}});
     Claude::Client client;
@@ -176,7 +176,7 @@ void TestClaude::testKey()
 void TestClaude::countTokens()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, R"({"input_tokens":2345})", {}});
     Claude::Client client;
     client.setApiKey("k");
@@ -194,7 +194,7 @@ void TestClaude::countTokens()
 void TestClaude::refusal()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, message("", "refusal"), {}});
     Claude::Client client;
     client.setApiKey("k");
@@ -228,7 +228,7 @@ void TestClaude::costs()
 
 void TestClaude::keyStoreFile()
 {
-    qputenv("KOSMOS_KEYSTORE", "file");
+    qputenv("ARGONAUT_KEYSTORE", "file");
     qunsetenv("ANTHROPIC_API_KEY");
     KeyStore::remove();
     KeyStore::Where where = KeyStore::Where::Keyring;
@@ -247,7 +247,7 @@ void TestClaude::keyStoreFile()
 
 void TestClaude::environmentKeyWins()
 {
-    qputenv("KOSMOS_KEYSTORE", "file");
+    qputenv("ARGONAUT_KEYSTORE", "file");
     KeyStore::save("stored");
     qputenv("ANTHROPIC_API_KEY", "from-env");
     KeyStore::Where where;
@@ -263,11 +263,11 @@ int main(int argc, char **argv)
     qputenv("HOME", QFile::encodeName(sandbox.path() + "/home"));
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
-    qputenv("KOSMOS_KEYSTORE", "file"); // never the real keyring
+    qputenv("ARGONAUT_KEYSTORE", "file"); // never the real keyring
     qunsetenv("ANTHROPIC_API_KEY");
     QCoreApplication app(argc, argv);
-    QCoreApplication::setOrganizationName("KosmosTest");
-    QCoreApplication::setApplicationName("KosmosTest");
+    QCoreApplication::setOrganizationName("ArgonautTest");
+    QCoreApplication::setApplicationName("ArgonautTest");
     TestClaude test;
     return QTest::qExec(&test, argc, argv);
 }

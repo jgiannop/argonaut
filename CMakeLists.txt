@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(kosmos VERSION 0.3.0 LANGUAGES CXX)
+project(argonaut VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ qt_standard_project_setup()
 
 # Non-GUI core shared by the app and the tests: the folder model and the
 # file operations engine (copy/move/trash/undo, clipboard).
-qt_add_library(kosmos_core STATIC
+qt_add_library(argonaut_core STATIC
     src/DirectoryModel.h
     src/DirectoryModel.cpp
     src/DiskUsageModel.cpp
@@ -65,15 +65,15 @@ qt_add_library(kosmos_core STATIC
     src/MediaInfo.h
     src/MediaInfo.cpp
 )
-target_include_directories(kosmos_core PUBLIC src)
-target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml Qt6::Network)
+target_include_directories(argonaut_core PUBLIC src)
+target_link_libraries(argonaut_core PUBLIC Qt6::Widgets Qt6::Xml Qt6::Network)
 
 # "Show in folder" for other apps (org.freedesktop.FileManager1), Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Qt6 6.4 REQUIRED COMPONENTS DBus)
-    target_sources(kosmos_core PRIVATE src/FileManagerService.h src/FileManagerService.cpp)
-    target_link_libraries(kosmos_core PUBLIC Qt6::DBus)
-    target_compile_definitions(kosmos_core PUBLIC KOSMOS_DBUS=1)
+    target_sources(argonaut_core PRIVATE src/FileManagerService.h src/FileManagerService.cpp)
+    target_link_libraries(argonaut_core PUBLIC Qt6::DBus)
+    target_compile_definitions(argonaut_core PUBLIC ARGONAUT_DBUS=1)
 endif()
 
 # Compress / Extract: needs libarchive (optional, like the terminal).
@@ -82,15 +82,15 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBARCHIVE IMPORTED_TARGET libarchive)
 endif()
 if(LIBARCHIVE_FOUND)
-    target_sources(kosmos_core PRIVATE src/FileJobArchive.cpp)
-    target_compile_definitions(kosmos_core PUBLIC KOSMOS_ARCHIVES=1)
-    target_link_libraries(kosmos_core PUBLIC PkgConfig::LIBARCHIVE)
+    target_sources(argonaut_core PRIVATE src/FileJobArchive.cpp)
+    target_compile_definitions(argonaut_core PUBLIC ARGONAUT_ARCHIVES=1)
+    target_link_libraries(argonaut_core PUBLIC PkgConfig::LIBARCHIVE)
     message(STATUS "Compress / Extract: enabled (libarchive ${LIBARCHIVE_VERSION})")
 else()
     message(STATUS "Compress / Extract: disabled (install libarchive-dev to enable)")
 endif()
 
-qt_add_executable(kosmos
+qt_add_executable(argonaut
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
@@ -136,11 +136,11 @@ qt_add_executable(kosmos
     src/OrganizerDialog.cpp
 )
 
-target_link_libraries(kosmos PRIVATE kosmos_core Qt6::Widgets)
+target_link_libraries(argonaut PRIVATE argonaut_core Qt6::Widgets)
 # One version number for the app, the About box and the installer.
-target_compile_definitions(kosmos PRIVATE KOSMOS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(argonaut PRIVATE ARGONAUT_VERSION="${PROJECT_VERSION}")
 if(LIBARCHIVE_FOUND)
-    target_compile_definitions(kosmos PRIVATE KOSMOS_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
+    target_compile_definitions(argonaut PRIVATE ARGONAUT_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
 endif()
 
 # Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
@@ -150,12 +150,12 @@ if(PkgConfig_FOUND)
     pkg_check_modules(VTERM IMPORTED_TARGET vterm)
 endif()
 if(VTERM_FOUND AND UNIX)
-    target_sources(kosmos PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
-    target_compile_definitions(kosmos PRIVATE KOSMOS_TERMINAL=1 KOSMOS_VTERM_VERSION="${VTERM_VERSION}")
-    target_link_libraries(kosmos PRIVATE PkgConfig::VTERM)
+    target_sources(argonaut PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
+    target_compile_definitions(argonaut PRIVATE ARGONAUT_TERMINAL=1 ARGONAUT_VTERM_VERSION="${VTERM_VERSION}")
+    target_link_libraries(argonaut PRIVATE PkgConfig::VTERM)
     find_library(UTIL_LIBRARY util)
     if(UTIL_LIBRARY)
-        target_link_libraries(kosmos PRIVATE ${UTIL_LIBRARY})
+        target_link_libraries(argonaut PRIVATE ${UTIL_LIBRARY})
     endif()
     message(STATUS "Embedded terminal: enabled (libvterm ${VTERM_VERSION})")
 else()
@@ -163,7 +163,7 @@ else()
 endif()
 
 # Windows: no console window. macOS: build a .app bundle.
-set_target_properties(kosmos PROPERTIES
+set_target_properties(argonaut PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
 )
@@ -171,15 +171,15 @@ set_target_properties(kosmos PROPERTIES
 # ------------------------------------------------------------- install ---
 # `cmake --install build/release` (the release preset installs into ~/.local):
 # the program, its menu entry and icon. Uninstall: `cmake --build build/release
-# --target uninstall` (run `kosmos --restore-nautilus` first if it's the default).
+# --target uninstall` (run `argonaut --restore-nautilus` first if it's the default).
 include(GNUInstallDirs)
-install(TARGETS kosmos RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} BUNDLE DESTINATION .)
+install(TARGETS argonaut RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} BUNDLE DESTINATION .)
 if(UNIX AND NOT APPLE)
     # Absolute path: D-Bus and the desktop start it without the user's PATH.
-    set(KOSMOS_EXE "${CMAKE_INSTALL_FULL_BINDIR}/kosmos")
-    configure_file(data/kosmos.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/kosmos.desktop @ONLY)
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kosmos.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-    install(FILES data/kosmos.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    set(ARGONAUT_EXE "${CMAKE_INSTALL_FULL_BINDIR}/argonaut")
+    configure_file(data/argonaut.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/argonaut.desktop @ONLY)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/argonaut.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES data/argonaut.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
     # Let menus and "Open With" see the new entry right away.
     install(CODE [[
         find_program(UPDATE_DESKTOP_DATABASE update-desktop-database)
@@ -193,12 +193,12 @@ install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 # ------------------------------------------------------------- package ---
 # A .deb for Ubuntu and Debian: `cmake --preset package && cmake --build
 # build/package && cpack --config build/package/CPackConfig.cmake`.
-# Library dependencies are worked out by dpkg-shlibdeps; the tools Kosmos
+# Library dependencies are worked out by dpkg-shlibdeps; the tools Argonaut
 # uses when they're there are Recommends.
-set(CPACK_PACKAGE_NAME "kosmos")
+set(CPACK_PACKAGE_NAME "argonaut-files") # the plain name is taken by an unrelated tool
 set(CPACK_PACKAGE_VENDOR "johngiannop")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast file manager inspired by GNOME Files")
-set(CPACK_PACKAGE_DESCRIPTION "Kosmos is a fast file manager written in C++ and Qt 6, with tabs, split view, \
+set(CPACK_PACKAGE_DESCRIPTION "Argonaut is a fast file manager written in C++ and Qt 6, with tabs, split view, \
 Quick Look, disk usage analysis, archives, an embedded terminal, real file-type checks and \
 undo for every file operation. It shares bookmarks, recent files, thumbnails and the Trash \
 with GNOME Files.")

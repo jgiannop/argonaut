@@ -6,10 +6,10 @@
 #include <QStringList>
 
 // Starred files and folders: the Starred place, and the ★ on their icons.
-// Kept in $XDG_DATA_HOME/kosmos/starred (one file:// URI per line).
+// Kept in $XDG_DATA_HOME/argonaut/starred (one file:// URI per line).
 // (Nautilus keeps its stars in GNOME's Tracker database, which other apps
-// can't use reliably, so this is Kosmos's own list.)
-// Stars follow items that Kosmos renames or moves (renamed()). Items that
+// can't use reliably, so this is Argonaut's own list.)
+// Stars follow items that Argonaut renames or moves (renamed()). Items that
 // are gone (e.g. in the Trash) stay starred but aren't shown, so restoring
 // them brings the star back. GUI thread only.
 class Starred : public QObject
@@ -36,6 +36,6 @@ private:
 
     QStringList m_order; // newest first
     QSet<QString> m_set;
-    QFileSystemWatcher m_watcher; // other Kosmos windows/processes
+    QFileSystemWatcher m_watcher; // other Argonaut windows/processes
     bool m_saving = false;
 };

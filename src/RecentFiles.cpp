@@ -110,7 +110,7 @@ QList<Item> read(int max)
 
 bool rememberEnabled()
 {
-    const QString forced = qEnvironmentVariable("KOSMOS_REMEMBER_RECENT");
+    const QString forced = qEnvironmentVariable("ARGONAUT_REMEMBER_RECENT");
     if (!forced.isEmpty())
         return forced != QLatin1String("0");
 #if defined(Q_OS_LINUX)
@@ -167,7 +167,7 @@ bool add(const QString &path, const QString &mimeType)
     bookmark.setAttribute("modified", stamp);
     bookmark.setAttribute("visited", stamp);
 
-    // <bookmark:application name="Kosmos" … count="N"/>
+    // <bookmark:application name="Argonaut" … count="N"/>
     QDomElement apps = bookmark.firstChildElement("info").firstChildElement("metadata")
                            .firstChildElement("bookmark:applications");
     if (apps.isNull())
@@ -175,13 +175,13 @@ bool add(const QString &path, const QString &mimeType)
     QDomElement app;
     for (QDomElement e = apps.firstChildElement("bookmark:application"); !e.isNull();
          e = e.nextSiblingElement("bookmark:application")) {
-        if (e.attribute("name") == QLatin1String("Kosmos"))
+        if (e.attribute("name") == QLatin1String("Argonaut"))
             app = e;
     }
     if (app.isNull()) {
         app = doc.createElement("bookmark:application");
-        app.setAttribute("name", "Kosmos");
-        app.setAttribute("exec", "'kosmos %u'");
+        app.setAttribute("name", "Argonaut");
+        app.setAttribute("exec", "'argonaut %u'");
         app.setAttribute("count", "0");
         apps.appendChild(app);
     }

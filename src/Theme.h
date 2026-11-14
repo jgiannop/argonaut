@@ -63,5 +63,5 @@ enum class Glyph {
 };
 
 QIcon glyphIcon(Glyph glyph, const QColor &color);
-// Kosmos's own icon (the same drawing as data/kosmos.svg), for windows.
+// Argonaut's own icon (the same drawing as data/argonaut.svg), for windows.
 QIcon applicationIcon();

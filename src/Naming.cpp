@@ -213,7 +213,7 @@ QList<TransferResult> applyBatch(const QList<RenameItem> &items, QString *error)
         Pending &first = pending.first();
         const QFileInfo info(first.current);
         const QString temp = uniqueTargetPath(info.absolutePath(),
-                                              QStringLiteral(".kosmos-rename-") + info.fileName(),
+                                              QStringLiteral(".argonaut-rename-") + info.fileName(),
                                               info.isDir());
         if (!step(first.current, temp)) {
             rollBack();

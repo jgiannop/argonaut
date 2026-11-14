@@ -85,7 +85,7 @@ void ConnectDialog::validate()
     const QString text = address();
     QString problem;
     if (!text.isEmpty() && !Remote::isRemoteAddress(text))
-        problem = tr("Kosmos can connect with sftp, smb, ftp, ftps, dav, davs, afp and nfs.");
+        problem = tr("Argonaut can connect with sftp, smb, ftp, ftps, dav, davs, afp and nfs.");
     else if (!text.isEmpty() && QUrl(text).host().isEmpty() && !text.startsWith(QLatin1String("mtp")))
         problem = tr("The address needs a server name.");
     m_problem->setText(problem);

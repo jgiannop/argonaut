@@ -9,7 +9,7 @@
 
 // Organize a folder with Claude (core code, no widgets).
 //
-// Kosmos describes the folder's items (names, sizes, dates, real types;
+// Argonaut describes the folder's items (names, sizes, dates, real types;
 // sub-folders by their item count and a few names inside) and Claude
 // answers through two tools:
 //  - read_files: asks to read the beginning of some files whose names say

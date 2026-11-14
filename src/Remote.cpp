@@ -12,7 +12,7 @@ namespace {
 
 QString gioProgram()
 {
-    return qEnvironmentVariable("KOSMOS_GIO_PROGRAM", QStringLiteral("gio"));
+    return qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio"));
 }
 
 // "host=x,user=y,port=22" -> {host: x, user: y, port: 22}; values are
@@ -55,7 +55,7 @@ bool isRemoteAddress(const QString &text)
 
 QString gvfsRoot()
 {
-    const QString overridden = qEnvironmentVariable("KOSMOS_GVFS_ROOT");
+    const QString overridden = qEnvironmentVariable("ARGONAUT_GVFS_ROOT");
     if (!overridden.isEmpty())
         return QDir::cleanPath(overridden);
 #if defined(Q_OS_LINUX)

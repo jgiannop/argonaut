@@ -2,15 +2,15 @@
 
 #include <QString>
 
-// Where Kosmos keeps the Anthropic API key (core code, no widgets).
+// Where Argonaut keeps the Anthropic API key (core code, no widgets).
 //
 //  1. ANTHROPIC_API_KEY in the environment wins, and is never stored.
 //  2. Otherwise the desktop's keyring through the freedesktop Secret
 //     Service over D-Bus (GNOME Keyring, KWallet), the same place browsers
 //     and Nautilus keep passwords. No extra library needed.
 //  3. Without a keyring (Windows, macOS, a bare session): a file only you
-//     can read (0600) in Kosmos's config folder, and the UI says so.
-// KOSMOS_KEYSTORE=file forces 3 (tests).
+//     can read (0600) in Argonaut's config folder, and the UI says so.
+// ARGONAUT_KEYSTORE=file forces 3 (tests).
 namespace KeyStore {
 
 enum class Where { None, Environment, Keyring, File };

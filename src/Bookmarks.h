@@ -7,7 +7,7 @@
 // (~/.config/gtk-3.0/bookmarks on Linux; a file of the same format in the
 // app's config folder elsewhere). One line per bookmark:
 //     file:///home/me/Projects%20Old Optional label
-// Lines Kosmos doesn't use (network locations, etc.) are kept untouched.
+// Lines Argonaut doesn't use (network locations, etc.) are kept untouched.
 namespace Bookmarks {
 
 struct Bookmark

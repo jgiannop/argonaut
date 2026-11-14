@@ -158,7 +158,7 @@ void FileJob::runExtract()
 
         const QString base = archiveBaseName(archiveInfo.fileName());
         const QString temp =
-            uniqueTargetPath(dest, QStringLiteral(".") + base + QStringLiteral(".kosmos-extract"), true);
+            uniqueTargetPath(dest, QStringLiteral(".") + base + QStringLiteral(".argonaut-extract"), true);
         if (!QDir().mkdir(temp)) {
             addError(tr("Couldn't create a folder in “%1”.").arg(QDir::toNativeSeparators(dest)));
             itemDone();
@@ -181,7 +181,7 @@ void FileJob::runExtract()
         int skipped = 0;
         qint64 lastPosition = 0;
         if (archive_read_open_filename(in, QFile::encodeName(t.source).constData(), Chunk) != ARCHIVE_OK) {
-            addError(tr("“%1” isn't an archive Kosmos can open.").arg(archiveInfo.fileName()));
+            addError(tr("“%1” isn't an archive Argonaut can open.").arg(archiveInfo.fileName()));
             failed = true;
         }
         struct archive_entry *entry = nullptr;
@@ -309,7 +309,7 @@ void FileJob::runCompress()
     const QString name = m_transfers.first().targetName;
     m_safeWrites = needsSafeWrites(dir);
     const QString target = uniqueTargetPath(dir, name, false);
-    const QString part = dir + QStringLiteral("/.") + QFileInfo(target).fileName() + QStringLiteral(".kosmos-part");
+    const QString part = dir + QStringLiteral("/.") + QFileInfo(target).fileName() + QStringLiteral(".argonaut-part");
     setCurrent(QFileInfo(target).fileName());
 
     struct archive *out = archive_write_new();

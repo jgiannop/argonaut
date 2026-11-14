@@ -1,6 +1,6 @@
 // Tests for searching inside files: words safe for queries, snippets,
 // plain-text scanning, and DirectoryModel's search with a fake tracker3
-// (KOSMOS_TRACKER_PROGRAM) standing in for GNOME's search index.
+// (ARGONAUT_TRACKER_PROGRAM) standing in for GNOME's search index.
 
 #include "ContentSearch.h"
 #include "DirectoryModel.h"
@@ -74,7 +74,7 @@ void TestContentSearch::init()
 {
     m_tmp = new QTemporaryDir;
     m_dir = QDir::cleanPath(m_tmp->path());
-    qunsetenv("KOSMOS_TRACKER_PROGRAM");
+    qunsetenv("ARGONAUT_TRACKER_PROGRAM");
 }
 
 void TestContentSearch::cleanup()
@@ -87,7 +87,7 @@ void TestContentSearch::fakeTracker(const QString &script)
     const QString path = m_bin + "/tracker3";
     writeFile(path, ("#!/bin/sh\n" + script).toUtf8());
     QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    qputenv("KOSMOS_TRACKER_PROGRAM", QFile::encodeName(path));
+    qputenv("ARGONAUT_TRACKER_PROGRAM", QFile::encodeName(path));
 }
 
 bool TestContentSearch::search(DirectoryModel &model, const QString &query)
@@ -204,7 +204,7 @@ int main(int argc, char **argv)
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
     qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
-    qputenv("KOSMOS_TRASH_HOME_ONLY", "1");
+    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);

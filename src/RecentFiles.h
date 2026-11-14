@@ -5,7 +5,7 @@
 #include <QStringList>
 
 // The freedesktop "recently used" list (~/.local/share/recently-used.xbel),
-// which GTK apps, LibreOffice and Nautilus share. Kosmos shows it as the
+// which GTK apps, LibreOffice and Nautilus share. Argonaut shows it as the
 // Recent place and adds the files it opens, as Nautilus does.
 //
 // Writing keeps everything else in the file (other apps' entries, groups,
@@ -22,9 +22,9 @@ QString filePath(); // $XDG_DATA_HOME/recently-used.xbel
 // Local items, most recent first, at most `max`. Doesn't check existence.
 QList<Item> read(int max = 500);
 // GNOME's privacy switch (org.gnome.desktop.privacy remember-recent-files).
-// KOSMOS_REMEMBER_RECENT=0/1 overrides it (tests).
+// ARGONAUT_REMEMBER_RECENT=0/1 overrides it (tests).
 bool rememberEnabled();
-// Record that Kosmos opened `path` (no-op if remembering is off).
+// Record that Argonaut opened `path` (no-op if remembering is off).
 bool add(const QString &path, const QString &mimeType);
 // Take items out of the list (the files themselves are untouched).
 bool remove(const QStringList &paths);

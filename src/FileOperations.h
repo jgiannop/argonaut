@@ -17,9 +17,9 @@ class FileOperations : public QObject
 public:
     // Dynamic property on each job: true for user actions, false for undos
     // and redos.
-    static constexpr const char *UserActionProperty = "kosmosUserAction";
+    static constexpr const char *UserActionProperty = "argonautUserAction";
     // Dynamic property on undo/redo jobs: "undo" or "redo".
-    static constexpr const char *HistoryProperty = "kosmosHistory";
+    static constexpr const char *HistoryProperty = "argonautHistory";
 
     explicit FileOperations(QObject *parent = nullptr);
     ~FileOperations() override;

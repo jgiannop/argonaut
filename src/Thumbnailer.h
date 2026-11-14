@@ -24,7 +24,7 @@
 //     - Only for what the views paint, i.e. visible files.
 //     - By default only on local disks (policy()), not USB sticks or
 //       network drives, where reading a video to thumbnail it is slow.
-//     - Failures are remembered (~/.cache/thumbnails/fail/kosmos/) until
+//     - Failures are remembered (~/.cache/thumbnails/fail/argonaut/) until
 //       the file changes.
 class Thumbnailer : public QObject
 {
