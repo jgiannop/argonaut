@@ -1,6 +1,6 @@
 # Argonaut
 
-A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus). It is named after the Argonauts, who sailed with Jason on the *Argo* into the unknown, and after the *argonauta*, the small octopus whose shell is called the paper nautilus. It was called Kaftilous until version 0.2 and Kosmos until 0.3; settings, stars and the API key carry over by themselves.
+A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus). It is named after the Argonauts, who sailed with Jason on the *Argo* into the unknown, and after the *argonauta*, the small octopus whose shell is called the paper nautilus. It was called Kaftilous until version 0.2 and Kosmos in 0.3; settings, stars and the API key carry over by themselves.
 
 > **Status:** preview. Used daily on Ubuntu 24.04 (X11). The code is written to be cross-platform (Linux, Windows, macOS), but only Linux has been tested so far, and the interface is in English only. [Bug reports and feedback](https://github.com/jgiannop/argonaut/issues) are welcome.
 
@@ -147,7 +147,7 @@ For an optimized build, use `release` instead of `debug`.
 Download `argonaut-files_<version>_amd64.deb` from the [releases page](https://github.com/jgiannop/argonaut/releases) and install it with:
 
 ```bash
-sudo apt install ./argonaut-files_0.3.0_amd64.deb
+sudo apt install ./argonaut-files_0.4.0_amd64.deb
 ```
 
 apt also offers the helpers Argonaut uses when they're there (GVfs for servers, bubblewrap for its sandbox, poppler-utils and exiftool for details, Tracker for searching inside documents).
