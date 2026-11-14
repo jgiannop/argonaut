@@ -8,7 +8,7 @@ Argonaut is a cross-platform (Linux, Windows, macOS) desktop file manager writte
 
 The minimum Qt version is **6.4** (what Ubuntu 24.04 ships). Don't use APIs added after 6.4 unless you also raise `find_package(Qt6 6.4 ...)` in `CMakeLists.txt`.
 
-License: GPL-3.0-or-later (`LICENSE`), copyright johngiannop. Hosted at https://github.com/jgiannop/argonaut (`origin`; the old Bitbucket remote is `bitbucket`). `.github/workflows/ci.yml` builds and runs the tests on Ubuntu 24.04 for every push and PR; pushing a tag `vX.Y.Z` that matches `project(argonaut VERSION …)` runs `release.yml`, which builds the .deb and publishes a GitHub Release with it. A `.deb` comes from CPack: `cmake --preset package` (Release, prefix `/usr`, no tests), `cmake --build build/package`, `cpack --config build/package/CPackConfig.cmake`. Library dependencies come from dpkg-shlibdeps (so a package built on Ubuntu 24.04 needs 24.04's t64 libraries); optional helpers are `CPACK_DEBIAN_PACKAGE_RECOMMENDS`.
+License: GPL-3.0-or-later (`LICENSE`), copyright johngiannop. Hosted at https://github.com/jgiannop/argonaut (`origin`). `.github/workflows/ci.yml` builds and runs the tests on Ubuntu 24.04 for every push and PR; pushing a tag `vX.Y.Z` that matches `project(argonaut VERSION …)` runs `release.yml`, which builds the .deb and publishes a GitHub Release with it. A `.deb` comes from CPack: `cmake --preset package` (Release, prefix `/usr`, no tests), `cmake --build build/package`, `cpack --config build/package/CPackConfig.cmake`. Library dependencies come from dpkg-shlibdeps (so a package built on Ubuntu 24.04 needs 24.04's t64 libraries); optional helpers are `CPACK_DEBIAN_PACKAGE_RECOMMENDS`.
 
 ## Build and run
 
