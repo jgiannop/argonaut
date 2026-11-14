@@ -1,6 +1,7 @@
 // Tests for DirectoryModel: listing, natural folders-first sorting, hidden
 // files, live updates from disk, persistent indexes and item counts.
 
+#include "Access.h"
 #include "DirectoryModel.h"
 #include "Format.h"
 
@@ -12,6 +13,11 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+
+#if defined(Q_OS_UNIX)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -60,6 +66,11 @@ private slots:
     void searchHiddenAndSymlinks();
     void searchEndsAndRefreshes();
     void searchStopsAtLimit();
+    void accessHelpers();
+    void ownersAndPermissions();
+    void lockAndLinkEmblems();
+    void chmodUpdatesRow();
+    void selectionChangeableFolders();
 
 private:
     bool load(const QString &path);
@@ -432,6 +443,150 @@ void TestDirectoryModel::realTypesInBackground()
              ContentType::Verdict::Mismatch);
     QTest::qWait(200);
     QCOMPARE(ContentType::readCount(), readsAfterFirst);
+}
+
+void TestDirectoryModel::accessHelpers()
+{
+    using P = QFile::Permissions;
+    QCOMPARE(Access::permissionString(P(QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther),
+                                      false, false),
+             QStringLiteral("-rw-r--r--"));
+    QCOMPARE(Access::permissionString(P(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup
+                                        | QFile::ExeGroup | QFile::ReadOther | QFile::ExeOther),
+                                      true, false),
+             QStringLiteral("drwxr-xr-x"));
+    QCOMPARE(Access::permissionString(Access::PermissionMask, false, true), QStringLiteral("lrwxrwxrwx"));
+    QCOMPARE(Access::permissionString(P(), false, false), QStringLiteral("----------"));
+#if defined(Q_OS_UNIX)
+    if (::geteuid() == 0)
+        QSKIP("root can write everything");
+    const uint me = uint(::geteuid());
+    const uint myGroup = uint(::getegid());
+    const uint other = me + 12345;
+    QVERIFY(Access::likelyWritable(P(QFile::WriteOwner), me, other));
+    QVERIFY(!Access::likelyWritable(P(QFile::WriteGroup | QFile::WriteOther), me, myGroup)); // owner bits rule
+    QVERIFY(Access::likelyWritable(P(QFile::WriteGroup), other, myGroup));
+    QVERIFY(!Access::likelyWritable(P(QFile::WriteOwner | QFile::WriteOther), other, myGroup));
+    QVERIFY(Access::likelyWritable(P(QFile::WriteOther), other, other + 1));
+    QVERIFY(!Access::likelyWritable(P(QFile::WriteOwner), 0, 0));
+    QVERIFY(!Access::userName(me).isEmpty());
+    QCOMPARE(Access::userName(0), QStringLiteral("root"));
+    QCOMPARE(Access::userName(Access::NoId), QString());
+#endif
+}
+
+void TestDirectoryModel::ownersAndPermissions()
+{
+#if !defined(Q_OS_UNIX)
+    QSKIP("Unix owners and permission bits");
+#else
+    touch(m_dir + "/plain.txt");
+    QVERIFY(QFile::setPermissions(m_dir + "/plain.txt",
+                                  QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther));
+    QVERIFY(load(m_dir));
+    const QModelIndex row = m_model->indexForPath(m_dir + "/plain.txt");
+    QVERIFY(row.isValid());
+    QCOMPARE(row.siblingAtColumn(DirectoryModel::PermissionsColumn).data().toString(), QStringLiteral("-rw-r--r--"));
+    QCOMPARE(row.siblingAtColumn(DirectoryModel::OwnerColumn).data().toString(),
+             QFileInfo(m_dir + "/plain.txt").owner());
+    QCOMPARE(row.siblingAtColumn(DirectoryModel::GroupColumn).data().toString(),
+             QFileInfo(m_dir + "/plain.txt").group());
+    QCOMPARE(row.data(DirectoryModel::OwnerIdRole).toUInt(), uint(::geteuid()));
+    QCOMPARE(m_model->headerData(DirectoryModel::OwnerColumn, Qt::Horizontal).toString(), QStringLiteral("Owner"));
+
+    // The same mtime and size QFileInfo gives (the content cache keys on them).
+    const QFileInfo fi(m_dir + "/plain.txt");
+    QCOMPARE(row.data(DirectoryModel::ModifiedRole).toDateTime().toMSecsSinceEpoch(),
+             fi.lastModified().toMSecsSinceEpoch());
+
+    // Sorting by permissions: 0644 before 0664.
+    touch(m_dir + "/shared.txt");
+    QVERIFY(QFile::setPermissions(m_dir + "/shared.txt", QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup
+                                                             | QFile::WriteGroup | QFile::ReadOther));
+    QVERIFY(load(m_dir));
+    m_model->sort(DirectoryModel::PermissionsColumn, Qt::DescendingOrder);
+    QCOMPARE(names(*m_model), QStringList({"shared.txt", "plain.txt"}));
+#endif
+}
+
+void TestDirectoryModel::lockAndLinkEmblems()
+{
+#if !defined(Q_OS_UNIX)
+    QSKIP("Unix permission bits and symlinks");
+#else
+    if (::geteuid() == 0)
+        QSKIP("root can write everything");
+    touch(m_dir + "/mine.txt");
+    touch(m_dir + "/readonly.txt");
+    QVERIFY(QFile::setPermissions(m_dir + "/readonly.txt", QFile::ReadOwner | QFile::ReadGroup));
+    QVERIFY(QFile::link(m_dir + "/mine.txt", m_dir + "/link.txt"));
+    QVERIFY(QFile::link(m_dir + "/missing", m_dir + "/broken"));
+    QDir().mkdir(m_dir + "/sub");
+    QVERIFY(QFile::link(m_dir + "/sub", m_dir + "/sublink"));
+    QVERIFY(load(m_dir));
+
+    auto at = [this](const QString &name) { return m_model->indexForPath(m_dir + '/' + name); };
+    QVERIFY(!at("mine.txt").data(DirectoryModel::LockedRole).toBool());
+    QVERIFY(at("readonly.txt").data(DirectoryModel::LockedRole).toBool());
+    QVERIFY(at("readonly.txt").data(Qt::ToolTipRole).toString().contains("Read-only"));
+    QVERIFY(!at("mine.txt").data(DirectoryModel::SymLinkRole).toBool());
+    QVERIFY(at("link.txt").data(DirectoryModel::SymLinkRole).toBool());
+    QVERIFY(at("link.txt").data(Qt::ToolTipRole).toString().contains("Link to"));
+    QVERIFY(at("broken").data(DirectoryModel::SymLinkRole).toBool());
+    QVERIFY(at("broken").data(Qt::ToolTipRole).toString().contains("Broken link"));
+    // A link to a folder lists as a folder, like before.
+    QVERIFY(m_model->isDir(at("sublink")));
+    QVERIFY(at("sublink").data(DirectoryModel::SymLinkRole).toBool());
+    QVERIFY(QFile::setPermissions(m_dir + "/readonly.txt", QFile::ReadOwner | QFile::WriteOwner));
+#endif
+}
+
+void TestDirectoryModel::chmodUpdatesRow()
+{
+#if !defined(Q_OS_LINUX)
+    QSKIP("inotify IN_ATTRIB");
+#else
+    if (::geteuid() == 0)
+        QSKIP("root can write everything");
+    touch(m_dir + "/f.txt");
+    QVERIFY(load(m_dir));
+    QVERIFY(!m_model->indexForPath(m_dir + "/f.txt").data(DirectoryModel::LockedRole).toBool());
+    QVERIFY(QFile::setPermissions(m_dir + "/f.txt", QFile::ReadOwner));
+    QTRY_VERIFY_WITH_TIMEOUT(m_model->indexForPath(m_dir + "/f.txt").data(DirectoryModel::LockedRole).toBool(), 5000);
+    QVERIFY(QFile::setPermissions(m_dir + "/f.txt", QFile::ReadOwner | QFile::WriteOwner));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_model->indexForPath(m_dir + "/f.txt").data(DirectoryModel::LockedRole).toBool(), 5000);
+#endif
+}
+
+void TestDirectoryModel::selectionChangeableFolders()
+{
+#if !defined(Q_OS_UNIX)
+    QSKIP("Unix folder permissions");
+#else
+    if (::geteuid() == 0)
+        QSKIP("root can change everything");
+    const uint me = uint(::geteuid());
+    QDir().mkdir(m_dir + "/open");
+    QDir().mkdir(m_dir + "/closed");
+    QDir().mkdir(m_dir + "/sticky");
+    QVERIFY(::chmod(QFile::encodeName(m_dir + "/closed").constData(), 0555) == 0);
+    QVERIFY(::chmod(QFile::encodeName(m_dir + "/sticky").constData(), 01777) == 0);
+    QHash<QString, Access::FolderAccess> cache;
+    QVERIFY(Access::canChangeItemsIn(m_dir + "/open", me, &cache));
+    QVERIFY(!Access::canChangeItemsIn(m_dir + "/closed", me, &cache));
+    // A sticky folder you own: anything in it may change.
+    QVERIFY(Access::canChangeItemsIn(m_dir + "/sticky", me + 1, &cache));
+    QCOMPARE(cache.size(), 3);
+    QVERIFY(cache.value(m_dir + "/sticky").sticky);
+    // /tmp is sticky and owned by root: only your own items.
+    QHash<QString, Access::FolderAccess> tmp;
+    struct stat st;
+    if (::stat("/tmp", &st) == 0 && (st.st_mode & S_ISVTX) && st.st_uid == 0 && ::access("/tmp", W_OK) == 0) {
+        QVERIFY(Access::canChangeItemsIn("/tmp", me, &tmp));
+        QVERIFY(!Access::canChangeItemsIn("/tmp", 0, &tmp));
+    }
+    QVERIFY(::chmod(QFile::encodeName(m_dir + "/closed").constData(), 0755) == 0);
+#endif
 }
 
 int main(int argc, char **argv)

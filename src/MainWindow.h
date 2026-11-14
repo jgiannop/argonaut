@@ -40,6 +40,8 @@ class QToolButton;
 class QKeyEvent;
 class QHBoxLayout;
 
+class QHeaderView;
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -433,6 +435,14 @@ private:
     void updateViewChrome();  // grid/list button and zoom limits
     void updatePaneCaptions();
     void fitListColumns(); // narrow panes drop Type, then Modified, so names have room
+    // Owner / Group / Permissions: hidden unless chosen in the list
+    // header's right-click menu (saved as view/listColumns, for both panes).
+    void applyListColumns();
+    void showListHeaderMenu(QHeaderView *header, const QPoint &pos);
+    QStringList m_listColumns;
+    // Rename, move and trash need a folder you can change: checked exactly,
+    // once per folder of the selected items.
+    bool canChangeSelection() const;
     QString titleFor(const QString &path) const;
     void setSplitView(bool on);
     void ensureSecondPane();

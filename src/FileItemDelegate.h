@@ -52,6 +52,8 @@ private:
     QPixmap renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const;
     void paintContentBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     void paintStarBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
+    // Symlink arrow (bottom-left) and 🔒 for items you can't change (top-left).
+    void paintAccessBadges(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     QStringList wrappedName(const QString &name, const QStyleOptionViewItem &option,
                             int width) const;
 

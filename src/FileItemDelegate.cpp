@@ -138,6 +138,7 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
 
     paintIcon(painter, iconRect, index);
     paintContentBadge(painter, iconRect, index);
+    paintAccessBadges(painter, iconRect, index);
     paintStarBadge(painter, iconRect, index);
 
     painter->setPen(m_theme.fg);
@@ -185,6 +186,7 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
                              m_iconSize);
         paintIcon(painter, iconRect, index);
         paintContentBadge(painter, iconRect, index);
+        paintAccessBadges(painter, iconRect, index);
         paintStarBadge(painter, iconRect, index);
         const int left = iconRect.right() + 12;
         const QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
@@ -318,6 +320,63 @@ void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, 
     painter->setPen(QPen(QColor("#c88800"), 0.8));
     painter->setBrush(QColor("#f6c915"));
     painter->drawPath(star);
+    painter->restore();
+}
+
+void FileItemDelegate::paintAccessBadges(QPainter *painter, const QRect &iconRect,
+                                         const QModelIndex &index) const
+{
+    const bool link = index.data(DirectoryModel::SymLinkRole).toBool();
+    const bool locked = index.data(DirectoryModel::LockedRole).toBool();
+    if (!link && !locked)
+        return;
+    const qreal d = qBound(10, iconRect.width() * 3 / 8, 20);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    // A dark disc on light themes, a light one on dark themes; the symbol
+    // is cut out in the background colour, with a ring to part it from the icon.
+    auto disc = [&](const QRectF &r) {
+        painter->setPen(QPen(m_theme.window, 1.5));
+        painter->setBrush(m_theme.fg);
+        painter->drawEllipse(r);
+    };
+    if (link) {
+        const QRectF r(iconRect.left() - 3, iconRect.bottom() - d + 3, d, d);
+        disc(r);
+        // A curved arrow pointing up-right.
+        const qreal u = d / 10.0;
+        const QPointF c = r.center();
+        QPainterPath arrow;
+        arrow.moveTo(c + QPointF(-2.6 * u, 2.6 * u));
+        arrow.quadTo(c + QPointF(-2.6 * u, -1.6 * u), c + QPointF(1.8 * u, -1.6 * u));
+        painter->setPen(QPen(m_theme.window, qMax(1.2, 1.3 * u), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawPath(arrow);
+        QPainterPath head;
+        head.moveTo(c + QPointF(0.4 * u, -3.4 * u));
+        head.lineTo(c + QPointF(2.6 * u, -1.6 * u));
+        head.lineTo(c + QPointF(0.4 * u, 0.2 * u));
+        painter->drawPath(head);
+    }
+    if (locked) {
+        const QRectF r(iconRect.left() - 3, iconRect.top() - 2, d, d);
+        disc(r);
+        const qreal u = d / 10.0;
+        const QPointF c = r.center();
+        // Body and shackle.
+        const QRectF body(c.x() - 2.7 * u, c.y() - 0.6 * u, 5.4 * u, 3.8 * u);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(m_theme.window);
+        painter->drawRoundedRect(body, 0.8 * u, 0.8 * u);
+        QPainterPath shackle;
+        shackle.moveTo(c.x() - 1.6 * u, body.top());
+        shackle.lineTo(c.x() - 1.6 * u, c.y() - 1.8 * u);
+        shackle.arcTo(QRectF(c.x() - 1.6 * u, c.y() - 3.4 * u, 3.2 * u, 3.2 * u), 180, -180);
+        shackle.lineTo(c.x() + 1.6 * u, body.top());
+        painter->setPen(QPen(m_theme.window, qMax(1.0, 1.1 * u)));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawPath(shackle);
+    }
     painter->restore();
 }
 

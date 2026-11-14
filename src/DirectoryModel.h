@@ -18,7 +18,8 @@ class QFileSystemWatcher;
 class QSocketNotifier;
 
 // One directory entry. Everything the views need is read once while
-// listing (one stat per file), so painting and sorting never touch the disk.
+// listing (one lstat per file, plus one stat for symlinks), so painting
+// and sorting never touch the disk.
 struct FileEntry
 {
     FileEntry(QString n, QCollatorSortKey k) : name(std::move(n)), key(std::move(k)) {}
@@ -32,7 +33,13 @@ struct FileEntry
     int childCount = -1;      // folders: entries inside, -1 = not counted yet
     bool isDir = false;
     bool isSymLink = false;
+    bool brokenLink = false; // a symlink whose target is gone
     bool isHidden = false;
+    // From the same stat: owner/group/other bits (Access::PermissionMask)
+    // and ids, for the 🔒 emblem and the Owner/Group/Permissions columns.
+    quint16 permissions = 0;
+    uint ownerId = uint(-2);
+    uint groupId = uint(-2);
     // Real type from the first bytes (ContentType), filled in the background.
     ContentType::Verdict verdict = ContentType::Verdict::NotChecked;
     QString contentMime;
@@ -63,7 +70,16 @@ class DirectoryModel : public QAbstractTableModel
     Q_OBJECT
 
 public:
-    enum Column { NameColumn, SizeColumn, TypeColumn, ModifiedColumn, ColumnCount };
+    enum Column {
+        NameColumn,
+        SizeColumn,
+        TypeColumn,
+        ModifiedColumn,
+        OwnerColumn,       // hidden unless chosen (header menu)
+        GroupColumn,       // hidden unless chosen
+        PermissionsColumn, // hidden unless chosen
+        ColumnCount
+    };
     enum Role {
         PathRole = Qt::UserRole + 1, // QString, absolute path
         IsDirRole,                   // bool
@@ -75,6 +91,9 @@ public:
         NameMimeRole,                // QString: what the name says
         ContentMimeRole,             // QString: what the content says (if checked)
         StarredRole,                 // bool
+        SymLinkRole,                 // bool
+        LockedRole,                  // bool: probably not writable by you (🔒)
+        OwnerIdRole,                 // uint (Access::NoId if unknown)
     };
     // Places that aren't folders: lists of items from anywhere. setPath()
     // takes these paths; they're never on disk.
@@ -168,6 +187,7 @@ private:
     void ensureIndex() const; // rebuilds it if stale, on first use
     bool isShown(const FileEntry &e) const { return m_showHidden || !e.isHidden; }
 
+    bool isLocked(const FileEntry &e) const;
     const QString &mimeFor(const FileEntry &e) const;     // effective: content if it knows better
     const QString &nameMimeFor(const FileEntry &e) const; // from the name only
     // Content checks: cached results apply at once; the rest are read on a
