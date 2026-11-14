@@ -4,6 +4,8 @@
 #include "Access.h"
 #include "BatchRenameDialog.h"
 #include "CommandPalette.h"
+#include "ConnectDialog.h"
+#include "Remote.h"
 #include "HelpDialog.h"
 #include "Naming.h"
 
@@ -100,7 +102,8 @@ constexpr int PathRole = Qt::UserRole;
 constexpr int SeparatorRole = Qt::UserRole + 1;
 constexpr int KindRole = Qt::UserRole + 2;  // SidebarKind
 constexpr int EjectRole = Qt::UserRole + 3; // bool: show an eject button
-enum SidebarKind { PlaceItem, BookmarkItem, DriveItem };
+enum SidebarKind { PlaceItem, BookmarkItem, DriveItem, NetworkItem };
+const QString kConnectPlace = QStringLiteral("connect:///"); // the sidebar's "Connect to Server…" row
 
 QStringList localPaths(const QMimeData *mime);
 
@@ -295,6 +298,10 @@ QListWidget#appList::item:selected { background: @itemSel; color: @fg; }
 QListWidget#appList::item:hover:!selected { background: @hover; }
 
 QDialog#preferences { background: @window; }
+QDialog#connectDialog { background: @window; }
+QLineEdit#connectAddress { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+    padding: 7px 9px; selection-background-color: @accent; }
+QLineEdit#connectAddress:disabled { color: @dim; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
 QCheckBox#prefCheck { color: @fg; spacing: 8px; }
@@ -320,6 +327,10 @@ QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid t
 QToolButton#themeCard:hover { background: @hover; }
 QToolButton#themeCard:checked { border-color: @accent; }
 
+QToolButton#searchOption { background: @pathBg; color: @dim; border: none; border-radius: 8px;
+    padding: 0 12px; font-weight: bold; }
+QToolButton#searchOption:hover { color: @fg; }
+QToolButton#searchOption:checked { background: @accent; color: #ffffff; }
 QToolButton#gitBadge { background: transparent; color: @dim; border: none; border-radius: 6px;
     padding: 2px 8px; font-weight: bold; }
 QToolButton#gitBadge:hover { background: @hover; }
@@ -418,6 +429,12 @@ MainWindow::MainWindow(QWidget *parent)
     bookmarksWatcher->addPath(QFileInfo(bookmarksFile).absolutePath()); // atomic saves replace the file
     connect(bookmarksWatcher, &QFileSystemWatcher::directoryChanged, this,
             [this] { scheduleSidebarRefresh(); updateBookmarkAction(); });
+    // Servers connect and disconnect inside one FUSE mount, so /proc/mounts
+    // doesn't change: watch GVfs's folder of mounts instead.
+    if (const QString gvfs = Remote::gvfsRoot(); !gvfs.isEmpty()) {
+        auto *gvfsWatcher = new QFileSystemWatcher({gvfs}, this);
+        connect(gvfsWatcher, &QFileSystemWatcher::directoryChanged, this, &MainWindow::scheduleSidebarRefresh);
+    }
 #if defined(Q_OS_LINUX)
     m_mountsFd = ::open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
     if (m_mountsFd >= 0) {
@@ -792,6 +809,28 @@ void MainWindow::setupActions()
         dialog->activateWindow();
     });
 
+    // Search also inside files (the "Inside files" button while searching).
+    m_searchContentsAct = new QAction(tr("Search Inside Files"), this);
+    m_searchContentsAct->setCheckable(true);
+    m_searchContentsAct->setToolTip(tr("Also find files by the words inside them: text files, and documents "
+                                       "in the folders GNOME's search indexes"));
+    m_searchContentsAct->setChecked(QSettings().value("search/contents", false).toBool());
+    connect(m_searchContentsAct, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("search/contents", on);
+        for (int i = 0; i < m_paneCount; ++i) {
+            DirectoryModel *model = i == m_activePane ? m_model : m_panes[i].model;
+            if (model)
+                model->setSearchContents(on);
+        }
+        updateFloatingBar();
+    });
+    m_connectAct = new QAction(tr("Connect to Server…"), this);
+    connect(m_connectAct, &QAction::triggered, this, [this] {
+        ConnectDialog dialog(this);
+        if (dialog.exec() == QDialog::Accepted)
+            connectToServer(dialog.address());
+    });
+
     m_paletteAct = new QAction(tr("Command Palette…"), this);
     m_paletteAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
     connect(m_paletteAct, &QAction::triggered, this, &MainWindow::showCommandPalette);
@@ -1003,11 +1042,26 @@ QWidget *MainWindow::buildContentPane()
         updateFloatingBar();
     });
 
+    // Search also inside files: next to the field while searching.
+    auto *searchBox = new QWidget(header);
+    auto *searchRow = new QHBoxLayout(searchBox);
+    searchRow->setContentsMargins(0, 0, 0, 0);
+    searchRow->setSpacing(4);
+    searchRow->addWidget(m_searchEdit, 1);
+    auto *contentsButton = new QToolButton(searchBox);
+    contentsButton->setObjectName("searchOption");
+    m_searchContentsAct->setIconText(tr("Inside files")); // the button's label; menus show the full text
+    contentsButton->setDefaultAction(m_searchContentsAct);
+    contentsButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    contentsButton->setFixedHeight(32);
+    contentsButton->setCursor(Qt::PointingHandCursor);
+    searchRow->addWidget(contentsButton);
+
     m_locationStack = new QStackedWidget(header);
     m_locationStack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_locationStack->setFixedHeight(32);
     m_locationStack->addWidget(m_pathBar);
-    m_locationStack->addWidget(m_searchEdit);
+    m_locationStack->addWidget(searchBox);
     row->addWidget(m_locationStack, 1);
     row->addSpacing(4);
 
@@ -1328,6 +1382,8 @@ QString MainWindow::titleFor(const QString &path) const
     }
     if (Trash::isFilesDir(path))
         return tr("Trash");
+    if (const Remote::Mount server = Remote::mountOf(path); server.localPath == path)
+        return server.name; // the top of a server, not "sftp:host=…"
     const QString name = QFileInfo(path).fileName();
     return name.isEmpty() ? QDir::toNativeSeparators(path) : name;
 }
@@ -1755,6 +1811,7 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
 {
     m_model = new DirectoryModel(this);
     m_model->setTreeEnabled(m_expandFolders && !m_grid);
+    m_model->setSearchContents(QSettings().value("search/contents", false).toBool());
     m_proxy = new FileFilterProxy(this);
     m_proxy->setSourceModel(m_model);
     m_model->setShowHidden(m_showHidden);
@@ -2072,6 +2129,27 @@ void MainWindow::populateSidebar()
         Q_UNUSED(item)
 #endif
     }
+
+#if defined(Q_OS_LINUX)
+    // Network: connected servers (and phones), network bookmarks not
+    // connected now, and Connect to Server….
+    addSeparator();
+    QSet<QString> connected;
+    for (const Remote::Mount &m : Remote::mounts()) {
+        QListWidgetItem *item = addItem(m.name, m.localPath, Glyph::Network, NetworkItem);
+        item->setData(EjectRole, true);
+        item->setToolTip(m.address + QLatin1Char('\n') + tr("Disconnect: click ⏏"));
+        connected.insert(QUrl(m.address).host());
+    }
+    for (const Bookmarks::Bookmark &b : Bookmarks::loadRemote()) {
+        const QUrl url(b.path);
+        if (connected.contains(url.host()))
+            continue;
+        QListWidgetItem *item = addItem(b.label.isEmpty() ? url.host() : b.label, b.path, Glyph::Network, NetworkItem);
+        item->setToolTip(b.path);
+    }
+    addItem(tr("Connect to Server…"), kConnectPlace, Glyph::Network, PlaceItem)->setToolTip(tr("sftp, smb, ftp, WebDAV…"));
+#endif
     m_sidebar->verticalScrollBar()->setValue(scroll);
 }
 
@@ -2112,6 +2190,11 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
             scheduleSidebarRefresh();
             updateBookmarkAction();
         });
+    } else if (kind == NetworkItem && item->data(EjectRole).toBool()) {
+        menu->addSeparator();
+        const QString name = item->text();
+        menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Disconnect"), this,
+                        [this, path, name] { ejectDrive(path, name); });
     } else if (kind == DriveItem && item->data(EjectRole).toBool()) {
         menu->addSeparator();
         const QString name = item->text();
@@ -2145,6 +2228,98 @@ void MainWindow::updateBookmarkAction()
     m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash() && !m_model->isVirtual());
 }
 
+// ------------------------------------------------------------- servers ---
+
+void MainWindow::connectToServer(const QString &address)
+{
+#if !defined(Q_OS_LINUX)
+    showMessage(tr("Connecting to servers needs GVfs (Linux)"));
+    Q_UNUSED(address);
+    return;
+#else
+    QString clean = address.trimmed();
+    if (clean.startsWith(QLatin1String("ssh://")))
+        clean.replace(0, 3, QStringLiteral("sftp")); // GVfs knows it as sftp
+    auto *mounter = new Remote::Mounter(clean, this);
+    showMessage(tr("Connecting to %1…").arg(QUrl(clean).host().isEmpty() ? clean : QUrl(clean).host()));
+    connect(mounter, &Remote::Mounter::needLogin, this,
+            [this, mounter](const QString &message, bool askUser, const QString &defaultUser, bool askDomain,
+                            const QString &defaultDomain, bool retry) {
+                LoginDialog dialog(mounter->address(), message, askUser, defaultUser, askDomain, defaultDomain, retry, this);
+                if (dialog.exec() != QDialog::Accepted) {
+                    mounter->cancel();
+                    return;
+                }
+                if (dialog.anonymous()) {
+                    mounter->start(true);
+                    return;
+                }
+                mounter->answer({dialog.user(), dialog.domain(), dialog.password()});
+            });
+    connect(mounter, &Remote::Mounter::question, this,
+            [this, mounter](const QString &message, const QStringList &choices, const QList<int> &numbers) {
+                // E.g. an unknown SSH host key: "Log In Anyway" / "Cancel Login".
+                QMessageBox box(QMessageBox::Question, tr("Connect to Server"), message, QMessageBox::NoButton, this);
+                QList<QAbstractButton *> buttons;
+                for (const QString &choice : choices)
+                    buttons << box.addButton(choice, QMessageBox::AcceptRole);
+                box.exec();
+                const int at = int(buttons.indexOf(box.clickedButton()));
+                if (at < 0) {
+                    mounter->cancel();
+                    return;
+                }
+                mounter->choose(numbers.value(at, at));
+            });
+    connect(mounter, &Remote::Mounter::finished, this, [this, mounter, clean](bool ok, const QString &local, const QString &error) {
+        mounter->deleteLater();
+        scheduleSidebarRefresh();
+        if (!ok) {
+            if (!error.isEmpty())
+                showMessage(error);
+            return;
+        }
+        ConnectDialog::rememberServer(clean);
+        if (local.isEmpty()) {
+            chooseShare(clean); // smb://server/: a list of shares, no folder
+            return;
+        }
+        navigateTo(local);
+    });
+    mounter->start();
+#endif
+}
+
+// smb://server/ has no folder of its own: pick one of its shares.
+void MainWindow::chooseShare(const QString &serverAddress)
+{
+    auto *list = new QProcess(this);
+    connect(list, &QProcess::finished, this, [this, list, serverAddress] {
+        QStringList shares;
+        for (const QString &line : QString::fromUtf8(list->readAllStandardOutput()).split(QLatin1Char('\n'))) {
+            const QString name = line.trimmed();
+            if (!name.isEmpty() && !name.endsWith(QLatin1Char('$'))) // hidden admin shares (C$, IPC$)
+                shares << name;
+        }
+        list->deleteLater();
+        if (shares.isEmpty()) {
+            showMessage(tr("%1 has no shared folders").arg(QUrl(serverAddress).host()));
+            return;
+        }
+        bool ok = false;
+        const QString share = QInputDialog::getItem(this, tr("Shared Folders"),
+                                                    tr("Shared folders on %1:").arg(QUrl(serverAddress).host()), shares,
+                                                    0, false, &ok);
+        if (!ok)
+            return;
+        QString base = serverAddress;
+        if (!base.endsWith(QLatin1Char('/')))
+            base += QLatin1Char('/');
+        connectToServer(base + QString::fromUtf8(QUrl::toPercentEncoding(share)));
+    });
+    list->start(qEnvironmentVariable("KOSMOS_GIO_PROGRAM", QStringLiteral("gio")), {QStringLiteral("list"), serverAddress});
+}
+
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
 void MainWindow::ejectDrive(const QString &root, const QString &name)
 {
@@ -2160,6 +2335,15 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
     if (m_current == root || m_current.startsWith(root + QLatin1Char('/')))
         navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
 
+    if (const Remote::Mount server = Remote::mountOf(root); !server.localPath.isEmpty()) {
+        showMessage(tr("Disconnecting from “%1”…").arg(name));
+        Remote::unmount(server.address, this, [this, name](bool ok, const QString &error) {
+            showMessage(ok ? tr("Disconnected from “%1”").arg(name)
+                           : tr("Couldn't disconnect from “%1”: %2").arg(name, error));
+            scheduleSidebarRefresh();
+        });
+        return;
+    }
     const QString program = qEnvironmentVariable("KOSMOS_EJECT_PROGRAM", QStringLiteral("gio"));
     auto *process = new QProcess(this);
     connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
@@ -2308,6 +2492,15 @@ void MainWindow::showItems(const QStringList &items)
 
 bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 {
+    // A server address (typed, a bookmark, the command line): connect first.
+    if (path == kConnectPlace) {
+        m_connectAct->trigger();
+        return false;
+    }
+    if (Remote::isRemoteAddress(path)) {
+        connectToServer(path);
+        return false; // opens when connected
+    }
     // Recent and Starred aren't folders: lists of items from anywhere.
     const bool place = DirectoryModel::isVirtualPath(path);
     const QFileInfo info(path);
@@ -2619,7 +2812,7 @@ void MainWindow::setSearchActive(bool active)
     if (active) {
         if (m_analyzing)
             setGridMode(m_grid); // search finds files: show the file view
-        m_locationStack->setCurrentWidget(m_searchEdit);
+        m_locationStack->setCurrentWidget(m_searchEdit->parentWidget());
         m_searchEdit->setFocus(Qt::ShortcutFocusReason);
         m_searchEdit->selectAll();
     } else if (m_locationStack->currentWidget() != m_pathBar) {
@@ -3124,8 +3317,26 @@ void MainWindow::trashSelection()
         return;
     }
     const QStringList paths = selectedPaths();
-    if (!paths.isEmpty())
-        m_ops->trash(paths);
+    if (paths.isEmpty())
+        return;
+    // Servers have no Trash (GVfs folders): offer to delete instead.
+    for (const QString &p : paths) {
+        if (!Remote::mountOf(p).localPath.isEmpty()) {
+            QMessageBox box(QMessageBox::Warning, tr("No Trash on This Server"),
+                            paths.size() == 1 ? tr("“%1” can't be moved to the Trash.").arg(QFileInfo(paths.first()).fileName())
+                                              : tr("These %1 items can't be moved to the Trash.").arg(paths.size()),
+                            QMessageBox::NoButton, this);
+            box.setInformativeText(tr("Files on a server can only be deleted forever."));
+            QPushButton *cancel = box.addButton(QMessageBox::Cancel);
+            QPushButton *remove = box.addButton(tr("Delete Permanently"), QMessageBox::DestructiveRole);
+            box.setDefaultButton(cancel);
+            box.exec();
+            if (box.clickedButton() == remove)
+                m_ops->deletePermanently(paths);
+            return;
+        }
+    }
+    m_ops->trash(paths);
 }
 
 bool MainWindow::confirmPermanentDelete(const QStringList &paths, bool wholeTrash)
@@ -3610,6 +3821,7 @@ QWidget *MainWindow::buildMenuBar()
     view->addSeparator();
     view->addAction(m_splitAct);
     view->addSeparator();
+    view->addAction(m_searchContentsAct);
     view->addAction(m_paletteAct);
     view->addSeparator();
     view->addAction(m_zoomInAct);
@@ -3636,6 +3848,7 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_homeAct);
     go->addSeparator();
     go->addAction(m_bookmarkAct);
+    go->addAction(m_connectAct);
     go->addSeparator();
     go->addAction(m_locationAct);
     go->addAction(m_searchAct);

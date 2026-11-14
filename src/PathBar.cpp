@@ -1,5 +1,7 @@
 #include "PathBar.h"
 
+#include "Remote.h"
+
 #include "DirectoryModel.h"
 #include "Trash.h"
 
@@ -169,6 +171,11 @@ void PathBar::rebuild()
         segments.append({tr("Trash"), Trash::homeFilesDir(), Glyph::Trash, true});
         base = trash;
         rest = m_path.mid(trash.size());
+    } else if (const Remote::Mount server = Remote::mountOf(m_path); !server.localPath.isEmpty()) {
+        // A server (GVfs): its name, not /run/user/1000/gvfs/sftp:host=….
+        segments.append({server.name, server.localPath, Glyph::Network, true});
+        base = server.localPath;
+        rest = m_path.mid(server.localPath.size());
     } else if (m_path == home || m_path.startsWith(home + '/')) {
         segments.append({tr("Home"), home, Glyph::Home, true});
         base = home;

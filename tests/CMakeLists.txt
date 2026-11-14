@@ -90,3 +90,16 @@ set_tests_properties(git PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_TRASH_HOME_ONLY=1;GIT_CONFIG_NOSYSTEM=1"
     TIMEOUT 120
 )
+
+qt_add_executable(tst_contentsearch tst_contentsearch.cpp)
+target_link_libraries(tst_contentsearch PRIVATE kosmos_core Qt6::Test)
+add_test(NAME contentsearch COMMAND tst_contentsearch)
+set_tests_properties(contentsearch PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_TRASH_HOME_ONLY=1"
+    TIMEOUT 120
+)
+
+qt_add_executable(tst_remote tst_remote.cpp)
+target_link_libraries(tst_remote PRIVATE kosmos_core Qt6::Test)
+add_test(NAME remote COMMAND tst_remote)
+set_tests_properties(remote PROPERTIES TIMEOUT 60)

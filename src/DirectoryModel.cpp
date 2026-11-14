@@ -1,6 +1,7 @@
 #include "DirectoryModel.h"
 
 #include "Access.h"
+#include "ContentSearch.h"
 
 #include "Format.h"
 
@@ -427,6 +428,11 @@ void DirectoryModel::startScan(bool initial)
     const QStringList words = isSearch() ? foldForSearch(m_query).split(QLatin1Char(' '), Qt::SkipEmptyParts)
                                          : QStringList();
     const bool search = !words.isEmpty();
+    // Inside files: plain text is read only on this computer's own disks
+    // (reading every file of a USB stick or a server is slow).
+    const bool contents = search && m_searchContents && !m_trash;
+    const bool scanText = contents && !needsSafeWrites(m_path) && !isNetworkFilesystem(m_path);
+    const QStringList indexWords = contents ? ContentSearch::queryWords(m_query) : QStringList();
     const bool showHidden = m_showHidden;
     const Place place = m_place;
     QList<RecentFiles::Item> listed; // Starred: read here, on the GUI thread
@@ -434,7 +440,8 @@ void DirectoryModel::startScan(bool initial)
         for (const QString &p : Starred::instance().paths())
             listed.append({p, 0});
     }
-    m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed] {
+    m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed, contents,
+                  scanText, indexWords] {
         const QCollator collator = naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
@@ -486,6 +493,7 @@ void DirectoryModel::startScan(bool initial)
         // skips hidden folders unless hidden files are shown.
         QStringList queue = dirs;
         int found = 0;
+        QSet<QString> emitted; // content search: what the walk already found
 #if defined(Q_OS_UNIX)
         struct stat rootStat;
         const bool haveRoot = ::stat(QFile::encodeName(dirs.first()).constData(), &rootStat) == 0;
@@ -514,8 +522,26 @@ void DirectoryModel::startScan(bool initial)
                         if (sameDrive)
                             queue.append(it.filePath());
                     }
-                    if (!matchesSearch(name, words))
+                    if (!matchesSearch(name, words)) {
+                        // Not by name: maybe by its text (plain text files
+                        // here; indexed documents after the walk).
+                        if (!scanText || fi.isDir())
+                            continue;
+                        std::optional<FileEntry> made = makeEntry(dir, name, collator);
+                        if (!made || made->isDir || !ContentSearch::isTextFile(name, made->size)
+                            || !ContentSearch::textMatches(made->path(), words, &made->snippet))
+                            continue;
+                        if (++found > MaxSearchResults) {
+                            truncated = true;
+                            break;
+                        }
+                        made->contentMatch = true;
+                        emitted.insert(made->path());
+                        batch.push_back(std::move(*made));
+                        if (initial && sinceSend.elapsed() > interval)
+                            send(false);
                         continue;
+                    }
                     if (++found > MaxSearchResults) {
                         truncated = true;
                         break;
@@ -525,6 +551,8 @@ void DirectoryModel::startScan(bool initial)
                 if (!made)
                     continue; // removed since the folder was read
                 FileEntry &e = *made;
+                if (contents)
+                    emitted.insert(e.path());
                 if (trash) {
                     const Trash::Info info = Trash::info(e.path());
                     e.originalPath = info.originalPath;
@@ -540,8 +568,50 @@ void DirectoryModel::startScan(bool initial)
             if (truncated)
                 break;
         }
+
+        // Documents GNOME's search index found by their text (PDF, office…),
+        // with the walk's rules: under the folder, not in hidden folders.
+        if (contents && !truncated && !indexWords.isEmpty()) {
+            const QString root = dirs.first();
+            const QString prefix = root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
+            const QHash<QString, QString> hits =
+                ContentSearch::indexMatches(root, indexWords, [&] { return m_generation != generation; });
+            for (auto it = hits.constBegin(); it != hits.constEnd(); ++it) {
+                if (m_generation != generation)
+                    return;
+                const QString &path = it.key();
+                if (emitted.contains(path) || !path.startsWith(prefix))
+                    continue;
+                const QStringList parts = path.mid(prefix.size()).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+                const bool hidden = std::any_of(parts.cbegin(), parts.cend(), [](const QString &p) {
+                    return p.startsWith(QLatin1Char('.')) || p.endsWith(QLatin1Char('~'));
+                });
+                if (hidden && !showHidden)
+                    continue;
+                const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+                std::optional<FileEntry> made = makeEntry(path.left(slash), path.mid(slash + 1), collator);
+                if (!made || made->isDir)
+                    continue; // gone since it was indexed
+                if (++found > MaxSearchResults) {
+                    truncated = true;
+                    break;
+                }
+                made->contentMatch = true;
+                made->snippet = it.value();
+                batch.push_back(std::move(*made));
+            }
+        }
         send(true);
     });
+}
+
+void DirectoryModel::setSearchContents(bool on)
+{
+    if (m_searchContents == on)
+        return;
+    m_searchContents = on;
+    if (isSearch())
+        relist();
 }
 
 void DirectoryModel::applyBatch(quint64 generation, Entries batch, bool done)
@@ -1292,8 +1362,12 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             return formatSize(e.size);
         case TypeColumn:
-            if ((isSearch() || isVirtual()) && !m_trash)
+            if ((isSearch() || isVirtual()) && !m_trash) {
+                if (e.contentMatch) // where it is, and the text that matched
+                    return e.snippet.isEmpty() ? tr("%1 · in its text").arg(searchLocation(e))
+                                               : QStringLiteral("%1 · “%2”").arg(searchLocation(e), e.snippet);
                 return searchLocation(e);
+            }
             if (m_trash) {
                 // Folder it came from, with ~ for home (like Nautilus).
                 QString where = QFileInfo(e.originalPath).absolutePath();
@@ -1361,6 +1435,9 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             QString tip = e.isDir ? QString() : ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
             if ((isSearch() || isVirtual()) && !m_trash) // the grid has no Location column
                 tip = tr("In %1").arg(searchLocation(e)) + (tip.isEmpty() ? QString() : QLatin1Char('\n') + tip);
+            if (e.contentMatch)
+                tip = (e.snippet.isEmpty() ? tr("Found in its text") : tr("Found in its text: “%1”").arg(e.snippet))
+                      + QLatin1Char('\n') + tip;
             QStringList extra;
             if (e.isSymLink) { // read only when hovered: one readlink
                 const QString target = QFileInfo(e.path()).symLinkTarget();

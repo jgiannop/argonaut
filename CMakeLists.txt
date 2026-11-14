@@ -50,6 +50,10 @@ qt_add_library(kosmos_core STATIC
     src/Access.cpp
     src/GitStatus.h
     src/GitStatus.cpp
+    src/ContentSearch.h
+    src/ContentSearch.cpp
+    src/Remote.h
+    src/Remote.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
 target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml)
@@ -116,6 +120,8 @@ qt_add_executable(kosmos
     src/AboutDialog.cpp
     src/CommandPalette.h
     src/CommandPalette.cpp
+    src/ConnectDialog.h
+    src/ConnectDialog.cpp
 )
 
 target_link_libraries(kosmos PRIVATE kosmos_core Qt6::Widgets)

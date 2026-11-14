@@ -405,6 +405,14 @@ results appear as you type.</p>
 <li>Hidden folders are searched only while hidden files are shown. Other drives and links aren't followed.</li>
 <li>[[Esc]] or clearing the field shows the folder again.</li>
 </ul>
+<h2>Inside files</h2>
+<p>Click <b>Inside files</b> next to the search field (or View → Search Inside Files) to also find files by
+the words in them. The Location column then shows the text around the match.</p>
+<ul>
+<li>Text files (notes, code, csv, json…) are read wherever you search, on this computer's own disks.</li>
+<li>Documents such as PDFs and office files are found through GNOME's search index, in the folders it
+indexes (Settings → Search → Search Locations). There, upper and lower case don't matter, but accents do.</li>
+</ul>
 )"));
 
     QString places = tr(R"(
@@ -418,6 +426,13 @@ when you rename or move them.</p>
 <h2>Bookmarks</h2>
 <p>[[Ctrl+D]] bookmarks the open folder (press it again to remove it). You can also drop a folder on empty
 space in the sidebar. Right-click a bookmark to rename or remove it. Bookmarks are shared with GNOME Files.</p>
+<h2>Servers</h2>
+<p><b>Connect to Server…</b> (in the sidebar and the Go menu) opens folders on other computers:
+<code>sftp://me@example.com</code> (SSH), <code>smb://nas/photos</code> (Windows and NAS shares),
+<code>ftp://…</code> and <code>davs://…</code> (WebDAV). You can also type an address in the path bar ([[Ctrl+L]]).
+Kosmos asks for a login when the server needs one; <code>smb://server</code> on its own lists its shared folders.</p>
+<p>Connected servers appear under the drives; the ⏏ button disconnects. Copying, moving, renaming and
+previews work there like anywhere else. Servers have no Trash, so deleting there is permanent (Kosmos asks first).</p>
 <h2>Drives</h2>
 <p>Plugged-in drives appear in the sidebar. The ⏏ button ejects one safely. While a copy to or from the drive is still running, Kosmos asks you to wait.</p>
 )");

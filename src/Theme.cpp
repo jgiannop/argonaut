@@ -383,6 +383,14 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
         line(4.25, 8, 7.75, 8);
         filled([&] { p->drawEllipse(QPointF(11.25, 8), 0.95, 0.95); });
         break;
+    case Glyph::Network: // a server: two stacked boxes with lights
+        p->drawRoundedRect(QRectF(2.25, 2.25, 11.5, 5), 1.25, 1.25);
+        p->drawRoundedRect(QRectF(2.25, 8.75, 11.5, 5), 1.25, 1.25);
+        filled([&] {
+            p->drawEllipse(QPointF(11, 4.75), 0.85, 0.85);
+            p->drawEllipse(QPointF(11, 11.25), 0.85, 0.85);
+        });
+        break;
     case Glyph::Removable:
         p->drawRoundedRect(QRectF(4.25, 5.5, 7.5, 8.75), 1.5, 1.5);
         p->drawRect(QRectF(6, 1.75, 4, 3.75));

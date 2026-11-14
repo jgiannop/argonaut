@@ -49,6 +49,9 @@ struct FileEntry
     qint64 deleted = 0; // ms since epoch
     // Recent view only: when it was last used (ms since epoch).
     qint64 used = 0;
+    // Search inside files: found by its text, and the text around the match.
+    bool contentMatch = false;
+    QString snippet;
     QString fullPath; // dir + name, built once when listed (hashing and lookups use it a lot)
     const QString &path() const { return fullPath; }
     void setDir(const QString &folder)
@@ -131,6 +134,10 @@ public:
     // query shows the folder again. setPath() always ends the search.
     void setSearch(const QString &query);
     QString searchQuery() const { return m_query; }
+    // Also look inside files (GNOME's search index for documents, and plain
+    // text files read during the walk). Searches again if one is running.
+    void setSearchContents(bool on);
+    bool searchContents() const { return m_searchContents; }
     bool isSearch() const { return !m_query.isEmpty(); }
     bool searchTruncated() const { return m_searchTruncated; } // hit MaxSearchResults
     static constexpr int MaxSearchResults = 10000;
@@ -271,6 +278,7 @@ private:
     QList<int> m_watchIds;
     QHash<QString, int> m_watchByDir; // inotify id per watched folder
     bool m_treeEnabled = false;
+    bool m_searchContents = false;
     GitStatus *m_git = nullptr;
     QSet<QString> m_expanded; // opened folders (tree); each is also in m_dirs
     QTimer m_rescanTimer;
