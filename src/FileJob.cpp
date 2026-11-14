@@ -90,8 +90,8 @@ bool isNetworkFilesystem(const QString &path)
 
 bool needsSafeWrites(const QString &dir)
 {
-    if (qEnvironmentVariableIsSet("KOSMOS_SAFE_WRITES"))
-        return qEnvironmentVariableIntValue("KOSMOS_SAFE_WRITES") != 0;
+    if (qEnvironmentVariableIsSet("ARGONAUT_SAFE_WRITES"))
+        return qEnvironmentVariableIntValue("ARGONAUT_SAFE_WRITES") != 0;
 
     const QStorageInfo storage(dir);
     if (!storage.isValid())
@@ -125,7 +125,7 @@ bool needsSafeWrites(const QString &dir)
 #endif
 }
 
-#if !defined(KOSMOS_ARCHIVES)
+#if !defined(ARGONAUT_ARCHIVES)
 // Built without libarchive: no archive support.
 bool FileJob::archivesSupported() { return false; }
 QString FileJob::archiveSuffix(ArchiveFormat) { return {}; }

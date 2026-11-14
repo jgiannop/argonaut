@@ -530,7 +530,7 @@ QIcon glyphIcon(Glyph glyph, const QColor &color)
 }
 
 // The app icon: a blue folder with a white K. Same geometry as
-// data/kosmos.svg (128x128), drawn in code so no SVG plugin is needed.
+// data/argonaut.svg (128x128), drawn in code so no SVG plugin is needed.
 QIcon applicationIcon()
 {
     QIcon icon;

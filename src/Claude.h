@@ -9,7 +9,7 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 
-// Calls to the Claude API (core code, no widgets). Kosmos is C++ and there
+// Calls to the Claude API (core code, no widgets). Argonaut is C++ and there
 // is no official C++ SDK, so this is the HTTP API directly:
 // POST /v1/messages, POST /v1/messages/count_tokens, GET /v1/models.
 namespace Claude {
@@ -41,7 +41,7 @@ void setModel(const QString &id);
 
 // Dollars for a request's tokens on a model.
 double cost(const QString &modelId, qint64 inputTokens, qint64 outputTokens);
-// What Kosmos has spent (from the usage of every response), and reset.
+// What Argonaut has spent (from the usage of every response), and reset.
 double spent();
 void addSpent(double dollars);
 void resetSpent();
@@ -77,7 +77,7 @@ public:
     // The key to use (KeyStore by default); tests set one directly.
     void setApiKey(const QString &key) { m_key = key; }
     QString apiKey() const;
-    // https://api.anthropic.com, or KOSMOS_CLAUDE_BASE_URL (tests).
+    // https://api.anthropic.com, or ARGONAUT_CLAUDE_BASE_URL (tests).
     static QString baseUrl();
 
     // Lists models: checks a key without spending anything.

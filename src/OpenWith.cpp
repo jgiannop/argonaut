@@ -10,7 +10,7 @@ namespace {
 
 QString gioProgram()
 {
-    return qEnvironmentVariable("KOSMOS_GIO_PROGRAM", QStringLiteral("gio"));
+    return qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio"));
 }
 
 } // namespace

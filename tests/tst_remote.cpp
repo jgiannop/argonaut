@@ -1,5 +1,5 @@
 // Tests for remote locations: addresses, GVfs mount folder names, and the
-// Mounter driving a fake `gio mount` (KOSMOS_GIO_PROGRAM) through its
+// Mounter driving a fake `gio mount` (ARGONAUT_GIO_PROGRAM) through its
 // prompts the way the real one asks them (checked against gvfs 1.54).
 
 #include "Remote.h"
@@ -60,7 +60,7 @@ void TestRemote::fakeGio(const QString &mountScript)
     f.close();
     QFile::setPermissions(m_bin, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QFile::remove(m_log);
-    qputenv("KOSMOS_GIO_PROGRAM", QFile::encodeName(m_bin));
+    qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(m_bin));
 }
 
 void TestRemote::addresses()
@@ -112,7 +112,7 @@ void TestRemote::listsMounts()
     QDir().mkpath(root + "/sftp:host=example.com,user=john/home/john");
     QDir().mkpath(root + "/smb-share:server=nas,share=photos");
     QDir().mkpath(root + "/weird");
-    qputenv("KOSMOS_GVFS_ROOT", QFile::encodeName(root));
+    qputenv("ARGONAUT_GVFS_ROOT", QFile::encodeName(root));
     const QList<Remote::Mount> list = Remote::mounts();
     QCOMPARE(list.size(), 2);
     QCOMPARE(list[0].localPath, root + "/sftp:host=example.com,user=john");
@@ -120,7 +120,7 @@ void TestRemote::listsMounts()
     QCOMPARE(m.name, QStringLiteral("john@example.com"));
     QCOMPARE(m.localPath, root + "/sftp:host=example.com,user=john");
     QVERIFY(Remote::mountOf("/home/john").localPath.isEmpty());
-    qunsetenv("KOSMOS_GVFS_ROOT");
+    qunsetenv("ARGONAUT_GVFS_ROOT");
 }
 
 void TestRemote::loginWithRetry()

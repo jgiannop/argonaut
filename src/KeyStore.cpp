@@ -6,7 +6,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -27,7 +27,7 @@ QString keyFile()
 
 bool forceFile()
 {
-    return qEnvironmentVariable("KOSMOS_KEYSTORE") == QLatin1String("file");
+    return qEnvironmentVariable("ARGONAUT_KEYSTORE") == QLatin1String("file");
 }
 
 QString readFile()
@@ -57,7 +57,7 @@ bool writeFile(const QString &key, QString *error)
     return true;
 }
 
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
 // ------------------------------------------------- freedesktop Secret Service
 
 const QString kService = QStringLiteral("org.freedesktop.secrets");
@@ -96,9 +96,9 @@ Q_DECLARE_METATYPE(Secret)
 Q_DECLARE_METATYPE(SecretMap)
 namespace {
 
-Attributes ourAttributes()
+Attributes ourAttributes(const QString &application = QStringLiteral("argonaut"))
 {
-    return {{QStringLiteral("application"), QStringLiteral("kosmos")},
+    return {{QStringLiteral("application"), application},
             {QStringLiteral("type"), QStringLiteral("anthropic-api-key")}};
 }
 
@@ -174,10 +174,10 @@ QList<QDBusObjectPath> paths(const QVariant &v)
 }
 
 // Unlocked items carrying our attributes (unlocking them if needed).
-QList<QDBusObjectPath> findItems()
+QList<QDBusObjectPath> findItems(const Attributes &attributes = ourAttributes())
 {
     const QDBusMessage reply = call(kPath, kServiceIface, QStringLiteral("SearchItems"),
-                                    {QVariant::fromValue(ourAttributes())});
+                                    {QVariant::fromValue(attributes)});
     if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() < 2)
         return {};
     QList<QDBusObjectPath> unlocked = paths(reply.arguments().at(0));
@@ -193,9 +193,28 @@ QList<QDBusObjectPath> findItems()
     return unlocked;
 }
 
+bool keyringSave(const QString &key, QString *error);
+
+QString readSecret(const QList<QDBusObjectPath> &items);
+
 QString keyringLoad()
 {
     const QList<QDBusObjectPath> items = findItems();
+    if (items.isEmpty()) {
+        // Saved under the app's old name (Kosmos): move it to the new one.
+        const QList<QDBusObjectPath> old = findItems(ourAttributes(QStringLiteral("kosmos")));
+        const QString key = readSecret(old);
+        if (!key.isEmpty() && keyringSave(key, nullptr)) {
+            for (const QDBusObjectPath &item : old)
+                call(item.path(), QStringLiteral("org.freedesktop.Secret.Item"), QStringLiteral("Delete"), {});
+        }
+        return key;
+    }
+    return readSecret(items);
+}
+
+QString readSecret(const QList<QDBusObjectPath> &items)
+{
     QDBusObjectPath session;
     if (items.isEmpty() || !openSession(&session))
         return {};
@@ -222,7 +241,7 @@ bool keyringSave(const QString &key, QString *error)
     if (collection.path().isEmpty() || collection.path() == QLatin1String("/"))
         collection = QDBusObjectPath(QStringLiteral("/org/freedesktop/secrets/aliases/default"));
     QVariantMap props;
-    props.insert(QStringLiteral("org.freedesktop.Secret.Item.Label"), QObject::tr("Kosmos: Anthropic API key"));
+    props.insert(QStringLiteral("org.freedesktop.Secret.Item.Label"), QObject::tr("Argonaut: Anthropic API key"));
     props.insert(QStringLiteral("org.freedesktop.Secret.Item.Attributes"), QVariant::fromValue(ourAttributes()));
     const Secret secret{session, QByteArray(), key.toUtf8(), QStringLiteral("text/plain")};
     QDBusMessage reply = call(collection.path(), QStringLiteral("org.freedesktop.Secret.Collection"),
@@ -284,7 +303,7 @@ QString load(Where *where)
             *where = Where::Environment;
         return env;
     }
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
     registerTypes();
     if (haveKeyring()) {
         const QString key = keyringLoad();
@@ -302,7 +321,7 @@ QString load(Where *where)
 
 bool save(const QString &key, Where *where, QString *error)
 {
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
     registerTypes();
     if (haveKeyring()) {
         if (keyringSave(key, error)) {
@@ -324,7 +343,7 @@ bool save(const QString &key, Where *where, QString *error)
 bool remove(QString *error)
 {
     bool ok = true;
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
     registerTypes();
     if (haveKeyring())
         ok = keyringRemove();
@@ -353,6 +372,6 @@ QString describe(Where where)
 
 } // namespace KeyStore
 
-#if defined(KOSMOS_DBUS)
+#if defined(ARGONAUT_DBUS)
 #include "KeyStore.moc"
 #endif

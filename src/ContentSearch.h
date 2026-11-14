@@ -25,7 +25,7 @@ QStringList queryWords(const QString &query);
 // Documents under `root` whose indexed text has every word: path -> a
 // short snippet ("…the invoice for March…", may be empty). Blocking (run
 // it on a worker); empty if there's no index. `cancelled` is polled.
-// KOSMOS_TRACKER_PROGRAM replaces `tracker3` (tests).
+// ARGONAUT_TRACKER_PROGRAM replaces `tracker3` (tests).
 QHash<QString, QString> indexMatches(const QString &root, const QStringList &words,
                                      const std::function<bool()> &cancelled = {});
 

@@ -15,7 +15,7 @@ namespace {
 
 constexpr const char *FolderMime = "inode/directory";
 constexpr const char *NautilusId = "org.gnome.Nautilus.desktop";
-constexpr const char *Marker = "# Written by Kosmos (kosmos --make-default).";
+constexpr const char *Marker = "# Written by Argonaut (argonaut --make-default).";
 
 QString tr(const char *text)
 {
@@ -28,7 +28,7 @@ namespace DefaultFileManager {
 
 QString desktopId()
 {
-    return QStringLiteral("kosmos.desktop");
+    return QStringLiteral("argonaut.desktop");
 }
 
 QString installedDesktopFile()
@@ -64,7 +64,7 @@ QString currentDefault()
     return id;
 }
 
-bool isKosmosDefault()
+bool isArgonautDefault()
 {
     return currentDefault() == desktopId();
 }
@@ -78,7 +78,11 @@ QString serviceFilePath()
 bool serviceFileIsOurs()
 {
     QFile file(serviceFilePath());
-    return file.open(QIODevice::ReadOnly) && file.readAll().contains(Marker);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray text = file.readAll();
+    // Also ours: written under the app's earlier names.
+    return text.contains(Marker) || text.contains("# Written by Kosmos") || text.contains("# Written by Kaftilous");
 }
 
 bool makeDefault(QString *error)
@@ -91,14 +95,16 @@ bool makeDefault(QString *error)
     const QString desktop = installedDesktopFile();
     const QString exe = installedExecutable();
     if (desktop.isEmpty() || exe.isEmpty() || !QFileInfo(exe).isExecutable())
-        return fail(tr("Kosmos isn't installed yet (no kosmos.desktop). Install it first."));
+        return fail(tr("Argonaut isn't installed yet (no argonaut.desktop). Install it first."));
     // A file we didn't write (another file manager's): leave it alone.
     if (QFile::exists(serviceFilePath()) && !serviceFileIsOurs())
         return fail(tr("Another program already handles “Show in folder” (%1). Remove that file first.")
                         .arg(serviceFilePath()));
 
     const QString previous = currentDefault();
-    if (!previous.isEmpty() && previous != desktopId())
+    // Never remember ourselves under an old name as "the previous one".
+    if (!previous.isEmpty() && previous != desktopId() && previous != QLatin1String("kosmos.desktop")
+        && previous != QLatin1String("kaftilous.desktop"))
         QSettings().setValue("system/previousFileManager", previous);
 
     if (!OpenWith::setDefault(QString::fromLatin1(FolderMime), OpenWith::appFromDesktopFile(desktop)))
@@ -108,7 +114,7 @@ bool makeDefault(QString *error)
     QSaveFile service(serviceFilePath());
     if (!service.open(QIODevice::WriteOnly))
         return fail(tr("Couldn't write %1").arg(serviceFilePath()));
-    service.write(QByteArray(Marker) + "\n# Undo: kosmos --restore-nautilus (or Preferences).\n"
+    service.write(QByteArray(Marker) + "\n# Undo: argonaut --restore-nautilus (or Preferences).\n"
                   "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec="
                   + QFile::encodeName(exe) + " --service\n");
     if (!service.commit())

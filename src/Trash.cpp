@@ -62,7 +62,7 @@ QStringList filesDirs()
         return {};
     QStringList dirs{homeFilesDir()};
     // Tests set this so they can never touch real drives' trash folders.
-    if (qEnvironmentVariableIsSet("KOSMOS_TRASH_HOME_ONLY"))
+    if (qEnvironmentVariableIsSet("ARGONAUT_TRASH_HOME_ONLY"))
         return dirs;
     const QString uid = uidString();
     for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {

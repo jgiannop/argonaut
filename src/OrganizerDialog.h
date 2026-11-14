@@ -18,7 +18,7 @@ class QWidget;
 //     the estimated cost (count_tokens, free). Nothing is sent before Start.
 //  2. Working: progress; in Ask mode, "Claude would like to read…" with
 //     Allow / Don't share.
-//  3. Result: the report, and the plan as a checklist (moves Kosmos can't
+//  3. Result: the report, and the plan as a checklist (moves Argonaut can't
 //     do are shown with the reason, unticked). Apply returns the kept moves.
 class OrganizerDialog : public QDialog
 {

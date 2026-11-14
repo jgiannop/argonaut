@@ -272,7 +272,7 @@ void TestFileOperations::moveAcrossFilesystemsAndUndo()
 #if defined(Q_OS_LINUX)
     if (!QFileInfo(QStringLiteral("/dev/shm")).isWritable())
         QSKIP("/dev/shm is not available");
-    QTemporaryDir other(QStringLiteral("/dev/shm/kosmos-test-XXXXXX"));
+    QTemporaryDir other(QStringLiteral("/dev/shm/argonaut-test-XXXXXX"));
     QVERIFY(other.isValid());
     if (QStorageInfo(other.path()).device() == QStorageInfo(m_dir).device())
         QSKIP("the sandbox and /dev/shm are on the same filesystem");
@@ -386,11 +386,11 @@ void TestFileOperations::clipboardRoundTrip()
 void TestFileOperations::safeWritesDetection()
 {
     // The forced answer is what tests and users can rely on everywhere.
-    qputenv("KOSMOS_SAFE_WRITES", "1");
+    qputenv("ARGONAUT_SAFE_WRITES", "1");
     QVERIFY(needsSafeWrites(m_dir));
-    qputenv("KOSMOS_SAFE_WRITES", "0");
+    qputenv("ARGONAUT_SAFE_WRITES", "0");
     QVERIFY(!needsSafeWrites(m_dir));
-    qunsetenv("KOSMOS_SAFE_WRITES");
+    qunsetenv("ARGONAUT_SAFE_WRITES");
 #if defined(Q_OS_LINUX)
     // RAM-backed /dev/shm is never a removable drive.
     if (QFileInfo(QStringLiteral("/dev/shm")).isDir())
@@ -402,7 +402,7 @@ void TestFileOperations::safeWritesDetection()
 // correct, go through the "writing to the drive" phase, and report the drive.
 void TestFileOperations::safeWritesCopyAndMove()
 {
-    qputenv("KOSMOS_SAFE_WRITES", "1");
+    qputenv("ARGONAUT_SAFE_WRITES", "1");
     writeFile(m_dir + "/src/big.bin", 70 << 20); // > 2 flush intervals
     writeFile(m_dir + "/src/small.txt", 100);
     QDir().mkpath(m_dir + "/stick");
@@ -430,7 +430,7 @@ void TestFileOperations::safeWritesCopyAndMove()
     QVERIFY(o.errors.isEmpty());
     QVERIFY(exists(m_dir + "/src/small (copy).txt")); // src already had small.txt
     QVERIFY(!exists(m_dir + "/stick/small.txt"));
-    qunsetenv("KOSMOS_SAFE_WRITES");
+    qunsetenv("ARGONAUT_SAFE_WRITES");
 }
 
 void TestFileOperations::restoreFromTrash()
@@ -752,7 +752,7 @@ int main(int argc, char **argv)
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     // Never look at (or empty) the trash folders of real mounted drives.
-    qputenv("KOSMOS_TRASH_HOME_ONLY", "1");
+    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QDir().mkpath(sandbox.path() + "/home");

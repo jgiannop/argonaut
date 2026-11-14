@@ -293,7 +293,7 @@ int main(int argc, char **argv)
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
     qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
     qputenv("GIT_CONFIG_NOSYSTEM", "1");
-    qputenv("KOSMOS_TRASH_HOME_ONLY", "1");
+    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QDir().mkpath(sandbox.path() + "/home");

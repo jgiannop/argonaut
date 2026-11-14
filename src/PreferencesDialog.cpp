@@ -126,7 +126,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
 
     auto *heading = new QLabel(tr("Appearance"), this);
     heading->setObjectName("prefHeading");
-    auto *hint = new QLabel(tr("Choose how Kosmos looks."), this);
+    auto *hint = new QLabel(tr("Choose how Argonaut looks."), this);
     hint->setObjectName("prefHint");
     layout->addWidget(heading);
     layout->addWidget(hint);
@@ -223,7 +223,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addWidget(gitCheck);
     layout->addWidget(gitHint);
 
-    // Default file manager: Kosmos or Nautilus, switchable both ways.
+    // Default file manager: Argonaut or Nautilus, switchable both ways.
     layout->addSpacing(18);
     auto *defaultHeading = new QLabel(tr("Default File Manager"), this);
     defaultHeading->setObjectName("prefHeading");
@@ -238,30 +238,30 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     defaultRow->addStretch();
     auto refresh = [defaultHint, defaultButton] {
         const bool installed = !DefaultFileManager::installedDesktopFile().isEmpty();
-        const bool ours = installed && DefaultFileManager::isKosmosDefault();
+        const bool ours = installed && DefaultFileManager::isArgonautDefault();
         if (!installed) {
-            defaultHint->setText(tr("Install Kosmos (cmake --install) to make it the file manager "
+            defaultHint->setText(tr("Install Argonaut (cmake --install) to make it the file manager "
                                     "for folders and “Show in folder”."));
-            defaultButton->setText(tr("Make Kosmos the Default"));
+            defaultButton->setText(tr("Make Argonaut the Default"));
             defaultButton->setEnabled(false);
         } else if (ours) {
-            defaultHint->setText(tr("Kosmos opens your folders, also from other apps, Super+E and "
+            defaultHint->setText(tr("Argonaut opens your folders, also from other apps, Super+E and "
                                     "“Show in folder”. You can always go back (or run "
-                                    "“kosmos --restore-nautilus” in a terminal)."));
+                                    "“argonaut --restore-nautilus” in a terminal)."));
             defaultButton->setText(tr("Use Nautilus Again"));
             defaultButton->setEnabled(true);
         } else {
-            defaultHint->setText(tr("Another file manager opens your folders now. Kosmos can take "
+            defaultHint->setText(tr("Another file manager opens your folders now. Argonaut can take "
                                     "over folders, Super+E and “Show in folder”; Nautilus stays "
                                     "installed and you can switch back at any time."));
-            defaultButton->setText(tr("Make Kosmos the Default"));
+            defaultButton->setText(tr("Make Argonaut the Default"));
             defaultButton->setEnabled(true);
         }
     };
     refresh();
     connect(defaultButton, &QPushButton::clicked, this, [this, refresh, defaultHint] {
         QString error;
-        const bool ok = DefaultFileManager::isKosmosDefault()
+        const bool ok = DefaultFileManager::isArgonautDefault()
                             ? DefaultFileManager::restorePrevious(&error)
                             : DefaultFileManager::makeDefault(&error);
         refresh();
@@ -284,7 +284,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
 }
 
 // Claude: the API key (kept in the keyring), what may be sent, the model,
-// and what Kosmos has spent. Nothing is sent from here except the free
+// and what Argonaut has spent. Nothing is sent from here except the free
 // key test.
 void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
 {
@@ -292,7 +292,7 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
     auto *heading = new QLabel(tr("Claude"), this);
     heading->setObjectName("prefHeading");
     layout->addWidget(heading);
-    auto *intro = new QLabel(tr("Kosmos can ask Claude, Anthropic's AI, to organize a folder. Nothing is sent "
+    auto *intro = new QLabel(tr("Argonaut can ask Claude, Anthropic's AI, to organize a folder. Nothing is sent "
                                 "until you start it yourself, and you see the cost first. You need an API key "
                                 "from the <a href=\"https://platform.claude.com/\">Claude Console</a>."),
                              this);
@@ -430,7 +430,7 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
     auto *spentRow = new QHBoxLayout;
     auto *spent = new QLabel(this);
     spent->setObjectName("prefHint");
-    auto showSpent = [spent] { spent->setText(tr("Spent in Kosmos so far: $%1").arg(Claude::spent(), 0, 'f', 2)); };
+    auto showSpent = [spent] { spent->setText(tr("Spent in Argonaut so far: $%1").arg(Claude::spent(), 0, 'f', 2)); };
     showSpent();
     auto *reset = new QPushButton(tr("Reset"), this);
     reset->setObjectName("prefButton");

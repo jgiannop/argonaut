@@ -75,7 +75,7 @@ HelpDialog::HelpDialog(const QList<ShortcutGroup> &shortcuts, QWidget *parent)
     : QDialog(parent), m_shortcuts(shortcuts)
 {
     setObjectName("helpDialog");
-    setWindowTitle(tr("Kosmos User Guide"));
+    setWindowTitle(tr("Argonaut User Guide"));
     setAttribute(Qt::WA_DeleteOnClose);
 
     auto *layout = new QHBoxLayout(this);
@@ -293,7 +293,7 @@ void HelpDialog::buildTopics()
     };
 
     add("start", tr("Getting Started"), tr(R"(
-<p class="lead">Kosmos is a fast file manager. It works like GNOME Files (Nautilus), shares its
+<p class="lead">Argonaut is a fast file manager. It works like GNOME Files (Nautilus), shares its
 bookmarks, recent files, thumbnails and Trash, and adds a few things of its own.</p>
 <h2>The window</h2>
 <ul>
@@ -379,13 +379,13 @@ files in your Templates folder; put any document there (a letter, a spreadsheet)
 Drop onto a folder, a tab, a sidebar entry or the Trash. Hold a dragged item still over a folder (or a sidebar
 entry) for a moment and it opens, so you can go deeper before dropping.</p>
 <h2>Nothing is ever overwritten</h2>
-<p>When a name is taken, Kosmos asks: <b>Replace</b> (the old item goes to the Trash, it isn't deleted),
+<p>When a name is taken, Argonaut asks: <b>Replace</b> (the old item goes to the Trash, it isn't deleted),
 <b>Skip</b>, <b>Keep Both</b> or, for folders, <b>Merge</b>. Copies inside the same folder become “name (copy)”.</p>
 <h2>Progress</h2>
 <p>Long operations show a card at the bottom left with the time left and a Cancel button. A cancelled
 copy leaves nothing half-finished behind.</p>
 <h2>USB sticks</h2>
-<p>On removable drives Kosmos says “done” only after the data has really been written to the drive,
+<p>On removable drives Argonaut says “done” only after the data has really been written to the drive,
 so it's safe to unplug it then. Use the ⏏ button in the sidebar to eject it.</p>
 <h2>Undo and redo</h2>
 <p>[[Ctrl+Z]] undoes copies, moves, trashing, renames, new items, extracting and compressing.
@@ -396,7 +396,7 @@ Cut, Move to Trash, Rename and Delete are greyed out; you can still copy them.</
 )"));
 
     add("search", tr("Searching"), tr(R"(
-<p>Press [[Ctrl+F]] and type. Kosmos searches the open folder <b>and all its sub-folders</b>, and
+<p>Press [[Ctrl+F]] and type. Argonaut searches the open folder <b>and all its sub-folders</b>, and
 results appear as you type.</p>
 <ul>
 <li>Several words narrow the search down: “invoice 2024” finds names that contain both.</li>
@@ -423,8 +423,8 @@ indexes (Settings → Search → Search Locations). There, upper and lower case 
     QString places = tr(R"(
 <p class="lead">Recent, Starred, bookmarks, drives and the Trash: the sidebar's places.</p>
 <h2>Recent</h2>
-<p>What you opened lately, in Kosmos or in any other app, newest first. Right-click → <b>Remove from Recent</b>.
-If you turned off “remember recent files” in GNOME's privacy settings, Kosmos doesn't add to it.</p>
+<p>What you opened lately, in Argonaut or in any other app, newest first. Right-click → <b>Remove from Recent</b>.
+If you turned off “remember recent files” in GNOME's privacy settings, Argonaut doesn't add to it.</p>
 <h2>Starred</h2>
 <p>Right-click → <b>Star</b> marks a file or folder with ★ and lists it under Starred. Stars follow items
 when you rename or move them.</p>
@@ -435,11 +435,11 @@ space in the sidebar. Right-click a bookmark to rename or remove it. Bookmarks a
 <p><b>Connect to Server…</b> (in the sidebar and the Go menu) opens folders on other computers:
 <code>sftp://me@example.com</code> (SSH), <code>smb://nas/photos</code> (Windows and NAS shares),
 <code>ftp://…</code> and <code>davs://…</code> (WebDAV). You can also type an address in the path bar ([[Ctrl+L]]).
-Kosmos asks for a login when the server needs one; <code>smb://server</code> on its own lists its shared folders.</p>
+Argonaut asks for a login when the server needs one; <code>smb://server</code> on its own lists its shared folders.</p>
 <p>Connected servers appear under the drives; the ⏏ button disconnects. Copying, moving, renaming and
-previews work there like anywhere else. Servers have no Trash, so deleting there is permanent (Kosmos asks first).</p>
+previews work there like anywhere else. Servers have no Trash, so deleting there is permanent (Argonaut asks first).</p>
 <h2>Drives</h2>
-<p>Plugged-in drives appear in the sidebar. The ⏏ button ejects one safely. While a copy to or from the drive is still running, Kosmos asks you to wait.</p>
+<p>Plugged-in drives appear in the sidebar. The ⏏ button ejects one safely. While a copy to or from the drive is still running, Argonaut asks you to wait.</p>
 )");
 #if defined(Q_OS_LINUX)
     places += tr(R"(
@@ -455,7 +455,7 @@ items from every drive, trashed by any app.</p>
     if (FileJob::archivesSupported()) {
         add("archives", tr("Archives"), tr(R"(
 <h2>Extracting</h2>
-<p>Right-click an archive → <b>Extract Here</b> or <b>Extract to…</b>. Kosmos opens zip, 7z, tar.gz/xz/bz2/zst,
+<p>Right-click an archive → <b>Extract Here</b> or <b>Extract to…</b>. Argonaut opens zip, 7z, tar.gz/xz/bz2/zst,
 rar, iso, deb and more. One item inside comes out as it is; several go into a folder named after the archive.</p>
 <p>It's safe: nothing is overwritten, and entries that try to write outside the folder are skipped and reported.
 Password-protected archives aren't supported yet.</p>
@@ -479,11 +479,11 @@ so existing scripts work unchanged. Make a script executable to see it there.</l
 )"));
 
     add("types", tr("Real File Types and Safety"), tr(R"(
-<p class="lead">Most file managers trust a file's name. Kosmos also looks at what's inside.</p>
+<p class="lead">Most file managers trust a file's name. Argonaut also looks at what's inside.</p>
 <ul>
 <li>An <b>amber ! badge</b> means the content doesn't match the name, for example a “.pdf” that is really a web page
 from a failed download. Hover over it for details. Right-click → <b>Rename to “…”</b> fixes the name.</li>
-<li>A <b>red ! badge</b> means a <b>program disguised as a document</b>. Kosmos warns you and never runs it.</li>
+<li>A <b>red ! badge</b> means a <b>program disguised as a document</b>. Argonaut warns you and never runs it.</li>
 <li>Files open with the app for what they really are, so a mislabelled file still opens correctly.</li>
 <li><b>Properties</b> ([[Ctrl+I]]) shows both what the name says and what the file is, and for photos, music,
 videos and PDFs their details: size in pixels, camera and exposure, date taken, length, artist, pages…</li>
@@ -524,7 +524,7 @@ before anything is sent; nothing is sent until you press <b>Start</b>.</li>
 <b>Allow</b> or <b>Don't share</b>. Programs are never read.</li>
 <li>Read the report, untick any change you don't want, and press <b>Apply</b>.</li>
 </ol>
-<p>Claude never touches your files: it only proposes. Kosmos creates the folders and moves and renames the items
+<p>Claude never touches your files: it only proposes. Argonaut creates the folders and moves and renames the items
 you kept, never overwriting anything. [[Ctrl+Z]] puts everything back (once for the moves, once more for the new folders).</p>
 <h2>Privacy and cost</h2>
 <p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
@@ -533,7 +533,7 @@ default (names only, ask, or read when needed) and the model, and shows what you
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(
-<p>Inside a Git repository, Kosmos shows what changed, like a code editor does.</p>
+<p>Inside a Git repository, Argonaut shows what changed, like a code editor does.</p>
 <ul>
 <li>A letter after the name in the list (a small tag on the icon in the grid):
 <b>M</b> changed, <b>A</b> added, <b>U</b> new and not added yet, <b>C</b> a merge conflict.</li>
@@ -546,7 +546,7 @@ is not checked; the path bar then says “git: off”. Very big repositories tha
 Turn the badges off in Preferences if you don't want them.</p>
 )"));
 
-#if defined(KOSMOS_TERMINAL)
+#if defined(ARGONAUT_TERMINAL)
     add("terminal", tr("Terminal"), tr(R"(
 <p>[[Ctrl+`]] opens a terminal under the files, in the open folder. When you go to another folder, the
 terminal follows, but only while the shell is waiting for a command, so a running program is never interrupted.</p>
@@ -570,7 +570,7 @@ reading files over USB or the network is slow; Preferences can change that.</p>
 #if defined(Q_OS_LINUX)
     prefs += tr(R"(
 <h2>Default file manager</h2>
-<p>Preferences can make Kosmos open your folders everywhere: from other apps, “Show in folder” in browsers,
+<p>Preferences can make Argonaut open your folders everywhere: from other apps, “Show in folder” in browsers,
 and the Super+E key. The same button switches back to GNOME Files.</p>
 )");
 #endif

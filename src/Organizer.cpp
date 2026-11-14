@@ -109,7 +109,7 @@ void Organizer::scan()
 QString Organizer::systemPrompt()
 {
     return QStringLiteral(
-        "You help someone tidy one folder on their computer in Kosmos, a file manager.\n"
+        "You help someone tidy one folder on their computer in Argonaut, a file manager.\n"
         "\n"
         "You get an inventory of the folder's items: name, file or folder, size, last modified date, and the real "
         "file type (detected from the contents, not the name). Folders show how many items they hold and a few "

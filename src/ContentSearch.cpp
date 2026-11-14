@@ -15,7 +15,7 @@ namespace {
 
 QString trackerProgram()
 {
-    const QString overridden = qEnvironmentVariable("KOSMOS_TRACKER_PROGRAM");
+    const QString overridden = qEnvironmentVariable("ARGONAUT_TRACKER_PROGRAM");
     if (!overridden.isEmpty())
         return overridden;
     static const QString found = QStandardPaths::findExecutable(QStringLiteral("tracker3"));

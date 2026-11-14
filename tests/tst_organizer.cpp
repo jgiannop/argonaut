@@ -73,7 +73,7 @@ void TestOrganizer::init()
     writeFile(m_dir + "/scan0001.pdf", "%PDF-1.4\n");
     writeFile(m_dir + "/notes.txt", "Electricity bill March 2024: 84.20 EUR\n");
     writeFile(m_dir + "/invoice.pdf", QByteArray("\x7f" "ELF\x02\x01\x01", 7) + QByteArray(100, '\0')); // a program
-    writeFile(m_dir + "/kosmos/CMakeLists.txt", "project(x)\n");
+    writeFile(m_dir + "/argonaut/CMakeLists.txt", "project(x)\n");
     writeFile(m_dir + "/Invoices/old.pdf", "%PDF-1.4\n");
     writeFile(m_dir + "/.hidden", "x");
     writeFile(m_dir + "/weird\tname.txt", "x");
@@ -93,8 +93,8 @@ void TestOrganizer::scanDescribesItems()
     for (const auto &i : org.items())
         byName.insert(i.name, i);
     QCOMPARE(byName.size(), 6); // not .hidden
-    QVERIFY(byName.value("kosmos").project);
-    QVERIFY(byName.value("kosmos").isDir);
+    QVERIFY(byName.value("argonaut").project);
+    QVERIFY(byName.value("argonaut").isDir);
     QVERIFY(byName.value("invoice.pdf").dangerous);
     QVERIFY(!byName.value("scan0001.pdf").dangerous);
     QCOMPARE(byName.value("Invoices").childCount, 1);
@@ -143,7 +143,7 @@ void TestOrganizer::validatePlans()
         {"Invoices", "Invoices/2024", "", "", {}},                                     // 4 into itself
         {"invoice.pdf", "Invoices", "old.pdf", "", {}},                                // 5 exists there
         {"notes.txt", "Bills/2024", "Electricity bill 2024-03.pdf", "", {}},           // 6 same target as 0
-        {"kosmos", "", "", "", {}},                                                    // 7 nothing
+        {"argonaut", "", "", "", {}},                                                    // 7 nothing
         {"weird\tname.txt", "Misc/", "a/b.txt", "", {}},                               // 8 bad name
     };
     Organizer::validate(m_dir, org.items(), &moves);
@@ -177,7 +177,7 @@ void TestOrganizer::excerptsOfFiles()
     Claude::Client client;
     Organizer org(m_dir, &client);
     org.scan();
-    const QJsonArray blocks = Organizer::excerpts(m_dir, org.items(), {"notes.txt", "invoice.pdf", "IMG_4521.jpg", "kosmos", "nope"});
+    const QJsonArray blocks = Organizer::excerpts(m_dir, org.items(), {"notes.txt", "invoice.pdf", "IMG_4521.jpg", "argonaut", "nope"});
     QString all;
     int images = 0;
     for (const QJsonValue &b : blocks) {
@@ -217,7 +217,7 @@ void TestOrganizer::excerptOfPdf()
 void TestOrganizer::wholeConversation()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, toolUse("read_files", {{"files", QJsonArray{"scan0001.pdf", "notes.txt"}}, {"reason", "Their names say nothing"}}), {}});
     api.replies.append({200, toolUse("propose_plan", {{"report", "## What's here\nBills and notes."},
                                                       {"moves", QJsonArray{QJsonObject{{"item", "notes.txt"}, {"folder", "Bills/2024"},
@@ -263,7 +263,7 @@ void TestOrganizer::wholeConversation()
 void TestOrganizer::declinedReading()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, toolUse("read_files", {{"files", QJsonArray{"notes.txt"}}, {"reason", "r"}}), {}});
     api.replies.append({200, toolUse("propose_plan", {{"report", "ok"}, {"moves", QJsonArray()}}, "toolu_2"), {}});
     Claude::Client client;
@@ -285,7 +285,7 @@ void TestOrganizer::declinedReading()
 void TestOrganizer::autoModeReadsWithoutAsking()
 {
     FakeApi api;
-    qputenv("KOSMOS_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
     api.replies.append({200, toolUse("read_files", {{"files", QJsonArray{"notes.txt"}}, {"reason", "r"}}), {}});
     api.replies.append({200, toolUse("propose_plan", {{"report", "ok"}, {"moves", QJsonArray()}}, "toolu_2"), {}});
     Claude::Client client;
@@ -308,13 +308,13 @@ int main(int argc, char **argv)
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
     qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
-    qputenv("KOSMOS_KEYSTORE", "file");
+    qputenv("ARGONAUT_KEYSTORE", "file");
     qunsetenv("ANTHROPIC_API_KEY");
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
-    QApplication::setOrganizationName("KosmosTest");
-    QApplication::setApplicationName("KosmosTest");
+    QApplication::setOrganizationName("ArgonautTest");
+    QApplication::setApplicationName("ArgonautTest");
     qRegisterMetaType<QList<Organizer::Move>>();
     TestOrganizer test;
     return QTest::qExec(&test, argc, argv);

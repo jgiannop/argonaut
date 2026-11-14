@@ -120,7 +120,7 @@ QString Client::apiKey() const
 
 QString Client::baseUrl()
 {
-    const QString overridden = qEnvironmentVariable("KOSMOS_CLAUDE_BASE_URL");
+    const QString overridden = qEnvironmentVariable("ARGONAUT_CLAUDE_BASE_URL");
     return overridden.isEmpty() ? QStringLiteral("https://api.anthropic.com") : overridden;
 }
 

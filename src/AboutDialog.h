@@ -4,7 +4,7 @@
 
 class QStackedWidget;
 
-// Help → About Kosmos: the app's icon, name and version, then three pages:
+// Help → About Argonaut: the app's icon, name and version, then three pages:
 // About (what it is), System (versions, features and paths, with Copy for
 // bug reports) and Credits (what it is built with).
 class AboutDialog : public QDialog
