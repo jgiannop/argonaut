@@ -1,5 +1,8 @@
 #include "MainWindow.h"
 
+#include "BatchRenameDialog.h"
+#include "Naming.h"
+
 #include "Format.h"
 
 #include "Bookmarks.h"
@@ -38,6 +41,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFileIconProvider>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -519,6 +523,18 @@ void MainWindow::setupActions()
             m_view->selectAll();
     });
 
+    m_selectMatchingAct = new QAction(tr("Select Items Matching…"), this);
+    m_selectMatchingAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+    connect(m_selectMatchingAct, &QAction::triggered, this, &MainWindow::selectMatching);
+
+    m_invertSelectionAct = new QAction(tr("Invert Selection"), this);
+    m_invertSelectionAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
+    connect(m_invertSelectionAct, &QAction::triggered, this, &MainWindow::invertSelection);
+
+    m_newDocumentMenu = makeMenu();
+    m_newDocumentMenu->setTitle(tr("New Document"));
+    connect(m_newDocumentMenu, &QMenu::aboutToShow, this, &MainWindow::fillNewDocumentMenu);
+
     m_closeAct = new QAction(tr("Close Tab"), this);
     m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // the last tab closes the window
     connect(m_closeAct, &QAction::triggered, this, [this] { closeTab(m_activeTab); });
@@ -731,7 +747,7 @@ void MainWindow::setupActions()
                 m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_redoAct, m_zoomInAct, m_zoomOutAct,
                 m_zoomResetAct, m_newFolderAct, m_newFileAct, m_renameAct,
-                m_selectAllAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
+                m_selectAllAct, m_selectMatchingAct, m_invertSelectionAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
                 m_extractHereAct, m_extractToAct, m_openLocationAct, m_starAct, m_removeRecentAct,
                 m_splitAct, m_copyToOtherAct, m_moveToOtherAct});
@@ -2811,7 +2827,11 @@ void MainWindow::updateEditActions()
     m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
-    m_renameAct->setEnabled(!inTrash && m_view && selectedViewIndexes().size() == 1);
+    m_renameAct->setEnabled(!inTrash && m_view && !selectedViewIndexes().isEmpty());
+    m_newDocumentMenu->menuAction()->setEnabled(writable);
+    const bool fileView = !m_analyzing && m_view && m_model->rowCount() > 0;
+    m_selectMatchingAct->setEnabled(fileView);
+    m_invertSelectionAct->setEnabled(fileView);
     const bool archives = FileJob::archivesSupported();
     m_compressAct->setVisible(archives);
     m_compressAct->setEnabled(archives && writable && hasSelection);
@@ -2914,6 +2934,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
     } else {
         menu->addAction(m_newFolderAct);
         menu->addAction(m_newFileAct);
+        menu->addMenu(m_newDocumentMenu);
         menu->addSeparator();
         if (m_openTerminalHereAct) {
             menu->addAction(m_openTerminalHereAct);
@@ -3147,6 +3168,7 @@ QWidget *MainWindow::buildMenuBar()
     QMenu *file = addMenu(tr("&File"));
     file->addAction(m_newFolderAct);
     file->addAction(m_newFileAct);
+    file->addMenu(m_newDocumentMenu);
     file->addSeparator();
     file->addAction(m_openAct);
     file->addAction(m_propertiesAct);
@@ -3180,6 +3202,9 @@ QWidget *MainWindow::buildMenuBar()
     edit->addAction(m_pasteAct);
     edit->addSeparator();
     edit->addAction(m_selectAllAct);
+    edit->addAction(m_selectMatchingAct);
+    edit->addAction(m_invertSelectionAct);
+    edit->addSeparator();
     edit->addAction(m_renameAct);
     edit->addAction(m_trashAct);
     edit->addAction(m_deleteAct);
@@ -3269,6 +3294,148 @@ void MainWindow::renameSelection()
     const QModelIndexList selected = selectedViewIndexes();
     if (selected.size() == 1)
         startRename(selected.first());
+    else if (selected.size() > 1)
+        batchRename(selectedPaths());
+}
+
+void MainWindow::batchRename(const QStringList &paths)
+{
+    cancelRename();
+    BatchRenameDialog dialog(paths, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const QList<Naming::RenameItem> items = dialog.items();
+    QString error;
+    const QList<TransferResult> steps = Naming::applyBatch(items, &error);
+    if (steps.isEmpty()) {
+        if (!error.isEmpty())
+            showMessage(error + tr(" — nothing was renamed"));
+        return;
+    }
+    for (const TransferResult &step : steps)
+        Starred::instance().renamed(step.source, step.target);
+    // Undo runs the steps backwards, so chains and swaps come back too.
+    m_ops->recordUndo(FileJob::Kind::Move, steps, tr("Rename"));
+    QStringList renamed;
+    for (const Naming::RenameItem &item : items)
+        renamed << QFileInfo(item.path).absolutePath() + '/' + item.newName;
+    selectPaths(renamed);
+    showMessage(renamed.size() == 1 ? tr("Renamed 1 item") : tr("Renamed %1 items").arg(renamed.size()));
+}
+
+// ------------------------------------------------------- selection tools ---
+
+void MainWindow::selectMatching()
+{
+    if (m_analyzing || !m_view)
+        return;
+    bool ok = false;
+    const QString pattern = QInputDialog::getText(
+        this, tr("Select Items Matching"),
+        tr("Pattern, e.g. *.jpg or IMG_20??* (text without * or ? matches names containing it):"),
+        QLineEdit::Normal, m_lastPattern, &ok);
+    if (!ok || pattern.trimmed().isEmpty())
+        return;
+    m_lastPattern = pattern.trimmed();
+
+    QItemSelection selection;
+    QModelIndex first;
+    const int rows = m_proxy->rowCount();
+    for (int row = 0; row < rows; ++row) {
+        const QModelIndex index = m_proxy->index(row, 0);
+        if (!Naming::matchesPattern(m_model->fileName(toSource(index)), m_lastPattern))
+            continue;
+        selection.select(index, index.siblingAtColumn(DirectoryModel::ColumnCount - 1));
+        if (!first.isValid())
+            first = index;
+    }
+    QItemSelectionModel *model = m_view->selectionModel();
+    model->select(selection, QItemSelectionModel::ClearAndSelect);
+    if (!first.isValid()) {
+        showMessage(tr("No items match “%1”").arg(m_lastPattern));
+        return;
+    }
+    model->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
+    m_view->scrollTo(first);
+    m_view->setFocus();
+}
+
+void MainWindow::invertSelection()
+{
+    if (m_analyzing || !m_view)
+        return;
+    const int rows = m_proxy->rowCount();
+    if (rows == 0)
+        return;
+    QItemSelection all;
+    all.select(m_proxy->index(0, 0), m_proxy->index(rows - 1, DirectoryModel::ColumnCount - 1));
+    m_view->selectionModel()->select(all, QItemSelectionModel::Toggle);
+    m_view->setFocus();
+}
+
+// ------------------------------------------------------- new from template ---
+
+void MainWindow::fillNewDocumentMenu()
+{
+    m_newDocumentMenu->clear();
+    for (QMenu *old : m_newDocumentMenu->findChildren<QMenu *>(Qt::FindDirectChildrenOnly))
+        old->deleteLater(); // sub-menus from last time
+    const QString folder = Templates::folder();
+    const QList<Templates::Entry> entries = Templates::list(folder);
+    std::function<void(QMenu *, const QList<Templates::Entry> &)> fill =
+        [this, &fill](QMenu *menu, const QList<Templates::Entry> &list) {
+            QMimeDatabase mimes;
+            QFileIconProvider icons;
+            for (const Templates::Entry &entry : list) {
+                if (entry.isFolder) {
+                    // Owned by the top menu, so the next fill deletes it.
+                    auto *sub = new QMenu(m_newDocumentMenu);
+                    sub->setWindowFlags(sub->windowFlags() | Qt::FramelessWindowHint
+                                        | Qt::NoDropShadowWindowHint);
+                    sub->setAttribute(Qt::WA_TranslucentBackground);
+                    sub->setTitle(entry.name);
+                    fill(sub, entry.children);
+                    menu->addMenu(sub);
+                    continue;
+                }
+                QAction *action = menu->addAction(entry.name, this, [this, path = entry.path] {
+                    createFromTemplate(path);
+                });
+                action->setIcon(icons.icon(QFileInfo(entry.path)));
+            }
+        };
+    fill(m_newDocumentMenu, entries);
+    if (entries.isEmpty()) {
+        QAction *none = m_newDocumentMenu->addAction(tr("No Templates"));
+        none->setEnabled(false);
+    }
+    m_newDocumentMenu->addSeparator();
+    if (!folder.isEmpty()) {
+        m_newDocumentMenu->addAction(tr("Open Templates Folder"), this, [this, folder] { navigateTo(folder); });
+    } else {
+        // Nothing to open yet: say where documents to offer here belong.
+        QAction *hint = m_newDocumentMenu->addAction(
+            tr("Put files in %1 to see them here").arg(QDir::toNativeSeparators(QDir::homePath() + QStringLiteral("/Templates"))));
+        hint->setEnabled(false);
+    }
+}
+
+void MainWindow::createFromTemplate(const QString &templatePath)
+{
+    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable()) {
+        showMessage(tr("You can't create items in this folder"));
+        return;
+    }
+    QString error;
+    const QString path = Templates::create(templatePath, m_current, &error);
+    if (path.isEmpty()) {
+        showMessage(error);
+        return;
+    }
+    // Undo trashes it (same as undoing a copy).
+    m_ops->recordUndo(FileJob::Kind::Copy, {{templatePath, path}}, tr("New Document"));
+    m_pendingRename = path;
+    selectPaths({path});
 }
 
 void MainWindow::startRename(const QModelIndex &viewIndex)

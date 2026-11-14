@@ -1,5 +1,7 @@
 #include "FileOperations.h"
 
+#include <algorithm>
+
 #include "Trash.h"
 
 #include <QApplication>
@@ -262,6 +264,9 @@ void FileOperations::runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, 
         job = startJob(FileJob::Kind::Trash, transfersInto(created, QString()), false, false);
         break;
     case FileJob::Kind::Move:
+        // Backwards: steps that depend on each other (a batch rename's
+        // "b -> c" before "a -> b") must be undone in reverse order.
+        std::reverse(back.begin(), back.end());
         job = startJob(FileJob::Kind::Move, back, false, false);
         break;
     case FileJob::Kind::Trash:
