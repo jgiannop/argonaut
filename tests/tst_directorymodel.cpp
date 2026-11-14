@@ -78,6 +78,8 @@ private slots:
     void treeHiddenItems();
     void treeOnlyForPlainFolders();
     void treeOpenRacesRescan();
+    void filterRules();
+    void searchWithFilters();
 
 private:
     bool load(const QString &path);
@@ -762,6 +764,84 @@ void TestDirectoryModel::treeOpenRacesRescan()
     QVERIFY(m_model->indexForPath(m_dir + "/A/inside.txt").isValid());
     QCOMPARE(m_model->index(1, 0).data().toString(), QStringLiteral("inside.txt"));
     QCOMPARE(m_model->rowCount(), 300 + 1 + 1 + 2);
+}
+
+void TestDirectoryModel::filterRules()
+{
+    using T = DirectoryModel::TypeFilter;
+    using D = DirectoryModel::DateFilter;
+    const qint64 now = QDateTime(QDate(2026, 11, 14), QTime(12, 0)).toMSecsSinceEpoch();
+    const qint64 day = 24LL * 3600 * 1000;
+    auto pass = [&](T t, D d, const QString &name, bool dir, qint64 mtime) {
+        return DirectoryModel::passesFilters(t, d, name, dir, mtime, now);
+    };
+    QVERIFY(pass(T::Images, D::Any, "a.JPG", false, now));
+    QVERIFY(!pass(T::Images, D::Any, "a.pdf", false, now));
+    QVERIFY(pass(T::Documents, D::Any, "a.pdf", false, now));
+    QVERIFY(pass(T::Documents, D::Any, "a.docx", false, now));
+    QVERIFY(pass(T::Documents, D::Any, "a.odt", false, now));
+    QVERIFY(pass(T::Audio, D::Any, "a.mp3", false, now));
+    QVERIFY(pass(T::Video, D::Any, "a.mkv", false, now));
+    QVERIFY(pass(T::Archives, D::Any, "a.tar.gz", false, now));
+    QVERIFY(pass(T::Text, D::Any, "main.cpp", false, now));
+    QVERIFY(pass(T::Folders, D::Any, "x", true, now));
+    QVERIFY(!pass(T::Folders, D::Any, "x.txt", false, now));
+    QVERIFY(!pass(T::Images, D::Any, "pics.jpg", true, now)); // a folder isn't an image
+    QVERIFY(pass(T::Any, D::Today, "a", false, now - 3600 * 1000));
+    QVERIFY(!pass(T::Any, D::Today, "a", false, now - day));
+    QVERIFY(pass(T::Any, D::Week, "a", false, now - 6 * day));
+    QVERIFY(!pass(T::Any, D::Week, "a", false, now - 8 * day));
+    QVERIFY(pass(T::Any, D::Month, "a", false, now - 29 * day));
+    QVERIFY(pass(T::Any, D::Year, "a", false, QDateTime(QDate(2026, 1, 2), QTime(0, 0)).toMSecsSinceEpoch()));
+    QVERIFY(!pass(T::Any, D::Year, "a", false, QDateTime(QDate(2025, 12, 31), QTime(0, 0)).toMSecsSinceEpoch()));
+    QVERIFY(pass(T::Any, D::OlderThanYear, "a", false, now - 400 * day));
+    QVERIFY(!pass(T::Any, D::OlderThanYear, "a", false, now - 10 * day));
+    QVERIFY(pass(T::Images, D::Week, "b.png", false, now - day));
+    QVERIFY(!pass(T::Images, D::Week, "b.png", false, now - 20 * day));
+}
+
+void TestDirectoryModel::searchWithFilters()
+{
+    touch(m_dir + "/beach.jpg");
+    touch(m_dir + "/trip/beach2.png");
+    touch(m_dir + "/trip/notes.txt");
+    touch(m_dir + "/report.pdf");
+    QDir().mkpath(m_dir + "/beach-folder");
+    // An old photo.
+    touch(m_dir + "/old.jpg");
+    QFile old(m_dir + "/old.jpg");
+    QVERIFY(old.open(QIODevice::ReadWrite));
+    QVERIFY(old.setFileTime(QDateTime::currentDateTime().addYears(-2), QFileDevice::FileModificationTime));
+    old.close();
+    QVERIFY(load(m_dir));
+
+    // Filters alone search, in sub-folders too.
+    QSignalSpy loaded(m_model, &DirectoryModel::loaded);
+    m_model->setSearchFilters(DirectoryModel::TypeFilter::Images, DirectoryModel::DateFilter::Any);
+    QVERIFY(loaded.wait(10000));
+    QVERIFY(m_model->isSearch());
+    QStringList found = names(*m_model);
+    found.sort();
+    QCOMPARE(found, QStringList({"beach.jpg", "beach2.png", "old.jpg"}));
+
+    QVERIFY(search("beach")); // words and filters together
+    found = names(*m_model);
+    found.sort();
+    QCOMPARE(found, QStringList({"beach.jpg", "beach2.png"})); // not the folder
+
+    QSignalSpy again(m_model, &DirectoryModel::loaded);
+    m_model->setSearchFilters(DirectoryModel::TypeFilter::Images, DirectoryModel::DateFilter::Week);
+    QVERIFY(again.wait(10000));
+    QVERIFY(search(""));
+    found = names(*m_model);
+    found.sort();
+    QCOMPARE(found, QStringList({"beach.jpg", "beach2.png"})); // not the old one
+
+    QSignalSpy off(m_model, &DirectoryModel::loaded);
+    m_model->setSearchFilters(DirectoryModel::TypeFilter::Any, DirectoryModel::DateFilter::Any);
+    QVERIFY(off.wait(10000));
+    QVERIFY(!m_model->isSearch());
+    QCOMPARE(m_model->rowCount(), 5); // the folder again
 }
 
 int main(int argc, char **argv)

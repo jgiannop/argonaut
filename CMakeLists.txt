@@ -60,6 +60,10 @@ qt_add_library(kosmos_core STATIC
     src/Claude.cpp
     src/Organizer.h
     src/Organizer.cpp
+    src/Sandbox.h
+    src/Sandbox.cpp
+    src/MediaInfo.h
+    src/MediaInfo.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
 target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml Qt6::Network)

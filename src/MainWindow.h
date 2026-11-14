@@ -270,6 +270,17 @@ private:
     QAction *m_paletteAct = nullptr;   // Ctrl+Shift+P: run any command by name
     QAction *m_connectAct = nullptr;   // Connect to Server…
     QAction *m_organizeAct = nullptr;  // Organize with Claude…
+    QAction *m_restoreAllAct = nullptr;  // Trash: Restore All
+    QToolButton *m_trashRestoreAllButton = nullptr;
+    // Dragging: hold still over a folder and it opens (or expands in place).
+    QTimer *m_springTimer = nullptr;
+    QString m_springPath;
+    int m_springPane = 0;
+    void springOver(const QString &folder, int pane);
+    // Right-click extras: Send by Email…, Set as Background, Scripts ▸.
+    void sendByEmail(const QStringList &paths);
+    void setAsBackground(const QString &image);
+    QMenu *scriptsMenu(const QStringList &selection);
     void organizeWithClaude();
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
     // Remote locations: mounts with GVfs (asking for logins), then opens the
@@ -277,6 +288,10 @@ private:
     void connectToServer(const QString &address);
     void chooseShare(const QString &serverAddress);
     QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
+    QToolButton *m_filterButton = nullptr;  // search filters: type and date
+    QActionGroup *m_typeFilters = nullptr;
+    QActionGroup *m_dateFilters = nullptr;
+    void applySearchFilters();
     class CommandPalette *m_palette = nullptr;
     void showCommandPalette();
     QAction *m_guideAct = nullptr;     // F1: the built-in user guide

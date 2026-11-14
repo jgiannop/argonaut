@@ -113,3 +113,8 @@ qt_add_executable(tst_organizer tst_organizer.cpp FakeApi.h)
 target_link_libraries(tst_organizer PRIVATE kosmos_core Qt6::Test)
 add_test(NAME organizer COMMAND tst_organizer)
 set_tests_properties(organizer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_KEYSTORE=file" TIMEOUT 120)
+
+qt_add_executable(tst_mediainfo tst_mediainfo.cpp)
+target_link_libraries(tst_mediainfo PRIVATE kosmos_core Qt6::Test)
+add_test(NAME mediainfo COMMAND tst_mediainfo)
+set_tests_properties(mediainfo PROPERTIES TIMEOUT 60)

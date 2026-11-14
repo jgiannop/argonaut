@@ -138,7 +138,16 @@ public:
     // text files read during the walk). Searches again if one is running.
     void setSearchContents(bool on);
     bool searchContents() const { return m_searchContents; }
-    bool isSearch() const { return !m_query.isEmpty(); }
+    bool isSearch() const { return !m_query.isEmpty() || m_typeFilter != TypeFilter::Any || m_dateFilter != DateFilter::Any; }
+    // Search filters (the search bar's Filters button). They search on their
+    // own too, without words: "images changed this week, anywhere below".
+    enum class TypeFilter { Any, Folders, Documents, Images, Audio, Video, Archives, Text };
+    enum class DateFilter { Any, Today, Week, Month, Year, OlderThanYear };
+    void setSearchFilters(TypeFilter type, DateFilter date);
+    TypeFilter typeFilter() const { return m_typeFilter; }
+    DateFilter dateFilter() const { return m_dateFilter; }
+    // Whether an item passes the filters (exposed for tests; `now` in ms).
+    static bool passesFilters(TypeFilter type, DateFilter date, const QString &name, bool isDir, qint64 mtime, qint64 now);
     bool searchTruncated() const { return m_searchTruncated; } // hit MaxSearchResults
     static constexpr int MaxSearchResults = 10000;
     // Matching, exposed for tests: words = foldForSearch(query).split(' ').
@@ -279,6 +288,8 @@ private:
     QHash<QString, int> m_watchByDir; // inotify id per watched folder
     bool m_treeEnabled = false;
     bool m_searchContents = false;
+    TypeFilter m_typeFilter = TypeFilter::Any;
+    DateFilter m_dateFilter = DateFilter::Any;
     GitStatus *m_git = nullptr;
     QSet<QString> m_expanded; // opened folders (tree); each is also in m_dirs
     QTimer m_rescanTimer;

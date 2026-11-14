@@ -376,7 +376,8 @@ files in your Templates folder; put any document there (a letter, a spreadsheet)
 <p>[[Ctrl+C]], [[Ctrl+X]] and [[Ctrl+V]] work as usual, also with files copied in other file managers.</p>
 <h2>Drag and drop</h2>
 <p>Dropping on the same drive moves, onto another drive copies. Hold [[Ctrl]] to copy or [[Shift]] to move.
-Drop onto a folder, a tab, a sidebar entry or the Trash.</p>
+Drop onto a folder, a tab, a sidebar entry or the Trash. Hold a dragged item still over a folder (or a sidebar
+entry) for a moment and it opens, so you can go deeper before dropping.</p>
 <h2>Nothing is ever overwritten</h2>
 <p>When a name is taken, Kosmos asks: <b>Replace</b> (the old item goes to the Trash, it isn't deleted),
 <b>Skip</b>, <b>Keep Both</b> or, for folders, <b>Merge</b>. Copies inside the same folder become “name (copy)”.</p>
@@ -405,6 +406,10 @@ results appear as you type.</p>
 <li>Hidden folders are searched only while hidden files are shown. Other drives and links aren't followed.</li>
 <li>[[Esc]] or clearing the field shows the folder again.</li>
 </ul>
+<h2>Filters</h2>
+<p><b>Filters</b> next to the search field narrows results by type (folders, documents, images, audio, video,
+archives, text and code) and by when they changed. Filters also work without typing anything: “all images changed
+in the last 7 days, anywhere below here”. They're cleared when the search closes.</p>
 <h2>Inside files</h2>
 <p>Click <b>Inside files</b> next to the search field (or View → Search Inside Files) to also find files by
 the words in them. The Location column then shows the text around the match.</p>
@@ -440,7 +445,8 @@ previews work there like anywhere else. Servers have no Trash, so deleting there
     places += tr(R"(
 <h2>Trash</h2>
 <p>[[Delete]] moves items to the Trash, and [[Shift+Delete]] deletes them for good after asking. In the Trash,
-<b>Restore</b> puts items back where they came from, and <b>Empty Trash</b> deletes everything. The Trash shows
+<b>Restore</b> puts items back where they came from, <b>Restore All</b> does that for everything, and
+<b>Empty Trash</b> deletes everything. The Trash shows
 items from every drive, trashed by any app.</p>
 )");
 #endif
@@ -461,6 +467,17 @@ or .7z (smallest). Both directions show progress, can be cancelled and can be un
 )"));
     }
 
+    add("extras", tr("Email, Background and Scripts"), tr(R"(
+<ul>
+<li><b>Send by Email…</b> (right-click files) opens your email app with the files attached; you write and send
+the message there. Folders can't be attached: compress them first.</li>
+<li><b>Set as Background</b> (right-click a picture) copies it into your backgrounds folder and puts it on the desktop.</li>
+<li><b>Scripts ▸</b> lists the programs in <code>~/.local/share/nautilus/scripts</code>, the same folder GNOME Files
+uses, and runs them on the selected items with the same variables (<code>NAUTILUS_SCRIPT_SELECTED_FILE_PATHS</code>…),
+so existing scripts work unchanged. Make a script executable to see it there.</li>
+</ul>
+)"));
+
     add("types", tr("Real File Types and Safety"), tr(R"(
 <p class="lead">Most file managers trust a file's name. Kosmos also looks at what's inside.</p>
 <ul>
@@ -468,7 +485,8 @@ or .7z (smallest). Both directions show progress, can be cancelled and can be un
 from a failed download. Hover over it for details. Right-click → <b>Rename to “…”</b> fixes the name.</li>
 <li>A <b>red ! badge</b> means a <b>program disguised as a document</b>. Kosmos warns you and never runs it.</li>
 <li>Files open with the app for what they really are, so a mislabelled file still opens correctly.</li>
-<li><b>Properties</b> ([[Ctrl+I]]) shows both what the name says and what the file is.</li>
+<li><b>Properties</b> ([[Ctrl+I]]) shows both what the name says and what the file is, and for photos, music,
+videos and PDFs their details: size in pixels, camera and exposure, date taken, length, artist, pages…</li>
 </ul>
 <h2>Badges</h2>
 <ul>
