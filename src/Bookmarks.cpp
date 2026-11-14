@@ -1,5 +1,7 @@
 #include "Bookmarks.h"
 
+#include "Remote.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -36,6 +38,27 @@ QList<Line> readLines()
     }
     return lines;
 }
+
+} // namespace
+
+QList<Bookmarks::Bookmark> Bookmarks::loadRemote()
+{
+    QList<Bookmark> out;
+    QFile file(filePath());
+    if (!file.open(QIODevice::ReadOnly))
+        return out;
+    for (const QByteArray &raw : file.readAll().split('\n')) {
+        const QByteArray line = raw.trimmed();
+        const int space = int(line.indexOf(' '));
+        const QString address = QString::fromUtf8(space < 0 ? line : line.left(space));
+        if (!Remote::isRemoteAddress(address))
+            continue;
+        out.append({address, space < 0 ? QString() : QString::fromUtf8(line.mid(space + 1)).trimmed()});
+    }
+    return out;
+}
+
+namespace {
 
 QByteArray encode(const QString &path, const QString &label)
 {

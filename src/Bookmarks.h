@@ -19,6 +19,9 @@ struct Bookmark
 
 QString filePath();
 QList<Bookmark> load(); // local ones, in file order
+// Network bookmarks (sftp://, smb://… lines, as Nautilus saves them):
+// `path` is the address. Shown under Network; opening one connects.
+QList<Bookmark> loadRemote();
 bool contains(const QString &path);
 bool add(const QString &path);
 bool remove(const QString &path);

@@ -268,6 +268,12 @@ private:
     QAction *m_prefsAct = nullptr;
     QAction *m_aboutAct = nullptr;
     QAction *m_paletteAct = nullptr;   // Ctrl+Shift+P: run any command by name
+    QAction *m_connectAct = nullptr;   // Connect to Server…
+    // Remote locations: mounts with GVfs (asking for logins), then opens the
+    // folder. navigateTo() sends addresses (sftp://…) here.
+    void connectToServer(const QString &address);
+    void chooseShare(const QString &serverAddress);
+    QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
     class CommandPalette *m_palette = nullptr;
     void showCommandPalette();
     QAction *m_guideAct = nullptr;     // F1: the built-in user guide
