@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build qt6-base-dev qt6-tools-dev \
+            libvterm-dev libarchive-dev dbus git
+
+      - name: Configure
+        run: cmake --preset debug
+
+      - name: Build
+        run: cmake --build build/debug
+
+      - name: Test
+        run: ctest --preset debug

@@ -233,6 +233,9 @@ QWidget *AboutDialog::buildAboutPage()
     layout->addWidget(paragraph(tr("Named after the Argonauts, who sailed on the <i>Argo</i> into the unknown, "
                                    "and the <i>argonauta</i>, whose shell is called the paper nautilus."),
                                 page, "aboutDim"));
+    layout->addWidget(paragraph(tr("<a href=\"https://github.com/jgiannop/argonaut\">Website</a> · "
+                                   "<a href=\"https://github.com/jgiannop/argonaut/issues\">Report a problem</a>"),
+                                page));
     layout->addStretch();
     return page;
 }
