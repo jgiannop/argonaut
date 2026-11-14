@@ -339,10 +339,12 @@ void TestFileOperations::cancelRemovesPartialCopy()
     QDir().mkpath(m_dir + "/dest");
 
     FileJob *job = m_ops->copy({m_dir + "/huge.bin"}, m_dir + "/dest");
+    // Direct: cancel on the worker thread, mid-copy. A queued cancel could
+    // arrive after a fast disk (CI) had already copied the whole file.
     connect(job, &FileJob::progressChanged, job, [job] {
         if (job->progress().bytesDone > (20 << 20))
             job->cancel();
-    });
+    }, Qt::DirectConnection);
     const Outcome o = waitForJob();
 
     QVERIFY(o.canceled);
