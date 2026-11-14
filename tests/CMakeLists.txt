@@ -74,3 +74,11 @@ qt_add_executable(tst_preview tst_preview.cpp)
 target_link_libraries(tst_preview PRIVATE kosmos_core Qt6::Test)
 add_test(NAME preview COMMAND tst_preview)
 set_tests_properties(preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+qt_add_executable(tst_naming tst_naming.cpp)
+target_link_libraries(tst_naming PRIVATE kosmos_core Qt6::Test)
+add_test(NAME naming COMMAND tst_naming)
+set_tests_properties(naming PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_TRASH_HOME_ONLY=1"
+    TIMEOUT 60
+)

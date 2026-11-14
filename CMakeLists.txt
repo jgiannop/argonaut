@@ -44,6 +44,8 @@ qt_add_library(kosmos_core STATIC
     src/FileJob.cpp
     src/FileOperations.h
     src/FileOperations.cpp
+    src/Naming.h
+    src/Naming.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
 target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml)
@@ -102,6 +104,8 @@ qt_add_executable(kosmos
     src/UsageDelegate.h
     src/CompressDialog.h
     src/PropertiesDialog.cpp
+    src/BatchRenameDialog.h
+    src/BatchRenameDialog.cpp
 )
 
 target_link_libraries(kosmos PRIVATE kosmos_core Qt6::Widgets)

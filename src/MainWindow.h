@@ -172,6 +172,14 @@ private:
     void updateEditActions();
     void showContextMenu(const QPoint &pos);
     void createNewItem(bool folder);
+    // New Document ▸ (files in the Templates folder), rebuilt when opened.
+    void fillNewDocumentMenu();
+    void createFromTemplate(const QString &templatePath);
+    // Edit → Select Items Matching (Ctrl+S) and Invert Selection.
+    void selectMatching();
+    void invertSelection();
+    // F2 with several items selected.
+    void batchRename(const QStringList &paths);
 
     // Embedded terminal (bottom panel). Built only with libvterm.
     QWidget *buildTerminalPanel();
@@ -286,6 +294,10 @@ private:
     QAction *m_newFileAct = nullptr;
     QAction *m_renameAct = nullptr;
     QAction *m_selectAllAct = nullptr;
+    QAction *m_selectMatchingAct = nullptr;
+    QAction *m_invertSelectionAct = nullptr;
+    QMenu *m_newDocumentMenu = nullptr;
+    QString m_lastPattern; // Select Items Matching remembers it
     QAction *m_closeAct = nullptr;
     QAction *m_quitAct = nullptr;
     QAction *m_sidebarAct = nullptr;
