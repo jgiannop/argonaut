@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(kosmos VERSION 0.2.0 LANGUAGES CXX)
+project(kosmos VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -188,6 +188,30 @@ if(UNIX AND NOT APPLE)
         endif()
     ]])
 endif()
+install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+
+# ------------------------------------------------------------- package ---
+# A .deb for Ubuntu and Debian: `cmake --preset package && cmake --build
+# build/package && cpack --config build/package/CPackConfig.cmake`.
+# Library dependencies are worked out by dpkg-shlibdeps; the tools Kosmos
+# uses when they're there are Recommends.
+set(CPACK_PACKAGE_NAME "kosmos")
+set(CPACK_PACKAGE_VENDOR "johngiannop")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast file manager inspired by GNOME Files")
+set(CPACK_PACKAGE_DESCRIPTION "Kosmos is a fast file manager written in C++ and Qt 6, with tabs, split view, \
+Quick Look, disk usage analysis, archives, an embedded terminal, real file-type checks and \
+undo for every file operation. It shares bookmarks, recent files, thumbnails and the Trash \
+with GNOME Files.")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "johngiannop")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
+    "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git")
+include(CPack)
+
 add_custom_target(uninstall
     COMMAND ${CMAKE_COMMAND} -DMANIFEST=${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Uninstall.cmake

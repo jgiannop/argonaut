@@ -289,6 +289,11 @@ QWidget *AboutDialog::buildCreditsPage()
                               "<a href=\"https://gnome.pages.gitlab.gnome.org/libadwaita/\">libadwaita</a> look, "
                               "redrawn with Qt alone. Terminal colours from GNOME Console."),
                            page));
+    layout->addWidget(card(tr("License"),
+                           tr("Copyright © 2026 johngiannop. Kosmos is free software: you can share and change it "
+                              "under the <a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">GNU General Public "
+                              "License, version 3 or later</a>. It comes with no warranty."),
+                           page));
     layout->addWidget(card(tr("Works with your desktop"),
                            tr("Follows the freedesktop.org standards for the Trash, thumbnails, recent files "
                               "and default apps, so it shares them with other apps."),
