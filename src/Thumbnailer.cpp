@@ -45,7 +45,7 @@ QString uriHash(const QString &path)
 
 QString failPathFor(const QString &path)
 {
-    return cacheBase() + "fail/kaftilous/" + uriHash(path) + ".png";
+    return cacheBase() + "fail/kosmos/" + uriHash(path) + ".png";
 }
 
 bool matchesFile(const QImage &img, const QDateTime &mtime)
@@ -104,8 +104,8 @@ bool saveToCache(QImage img, const QString &target, const QString &path, const Q
     img.setText("Thumb::URI", QString::fromUtf8(QUrl::fromLocalFile(path).toEncoded()));
     img.setText("Thumb::MTime", QString::number(mtime.toSecsSinceEpoch()));
     img.setText("Thumb::Size", QString::number(QFileInfo(path).size()));
-    img.setText("Software", "Kaftilous");
-    const QString temp = target + QStringLiteral(".kaftilous-%1.tmp").arg(QCoreApplication::applicationPid());
+    img.setText("Software", "Kosmos");
+    const QString temp = target + QStringLiteral(".kosmos-%1.tmp").arg(QCoreApplication::applicationPid());
     if (!img.save(temp, "PNG"))
         return false;
     QFile::setPermissions(temp, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
@@ -117,7 +117,7 @@ bool saveToCache(QImage img, const QString &target, const QString &path, const Q
 QImage runProgram(const Thumbnailer::Program &program, const QString &path, const QString &mimeType,
                   int size = Thumbnailer::GenerateSize)
 {
-    QTemporaryDir work(QDir::tempPath() + "/kaftilous-thumb-XXXXXX");
+    QTemporaryDir work(QDir::tempPath() + "/kosmos-thumb-XXXXXX");
     if (!work.isValid())
         return {};
     const bool sandbox = Thumbnailer::sandboxAvailable();
@@ -253,7 +253,7 @@ void Thumbnailer::setPolicy(Policy policy)
 bool Thumbnailer::sandboxAvailable()
 {
 #if defined(Q_OS_LINUX)
-    if (qEnvironmentVariable("KAFTILOUS_THUMBNAIL_SANDBOX") == QLatin1String("0"))
+    if (qEnvironmentVariable("KOSMOS_THUMBNAIL_SANDBOX") == QLatin1String("0"))
         return false; // tests with fake thumbnailers outside /usr
     static const bool found = !QStandardPaths::findExecutable("bwrap").isEmpty();
     return found;

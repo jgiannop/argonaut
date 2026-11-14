@@ -33,7 +33,7 @@ Starred::Starred()
 QString Starred::filePath() const
 {
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-           + QStringLiteral("/kaftilous/starred");
+           + QStringLiteral("/kosmos/starred");
 }
 
 void Starred::load()

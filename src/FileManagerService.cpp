@@ -71,7 +71,7 @@ bool FileManagerService::registerOn(const QDBusConnection &bus)
         return false;
     if (!connection.registerObject(QString::fromLatin1(ObjectPath), this, QDBusConnection::ExportAdaptors))
         return false;
-    // No queueing: if Nautilus (or another Kaftilous) has it, we don't.
+    // No queueing: if Nautilus (or another Kosmos) has it, we don't.
     const auto reply = connection.interface()->registerService(
         QString::fromLatin1(ServiceName), QDBusConnectionInterface::DontQueueService,
         QDBusConnectionInterface::AllowReplacement);

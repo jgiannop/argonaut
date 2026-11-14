@@ -1,19 +1,19 @@
 [Desktop Entry]
 Type=Application
-Name=Kaftilous
+Name=Kosmos
 GenericName=File Manager
 Comment=Browse and organize your files
 Keywords=folder;manager;explore;disk;filesystem;files;nautilus;
-Exec=@KAFTILOUS_EXE@ %U
-TryExec=@KAFTILOUS_EXE@
-Icon=kaftilous
+Exec=@KOSMOS_EXE@ %U
+TryExec=@KOSMOS_EXE@
+Icon=kosmos
 Terminal=false
 StartupNotify=true
-StartupWMClass=kaftilous
+StartupWMClass=kosmos
 Categories=Qt;System;FileTools;FileManager;
 MimeType=inode/directory;
 Actions=new-window;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=@KAFTILOUS_EXE@
+Exec=@KOSMOS_EXE@

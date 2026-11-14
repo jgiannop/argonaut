@@ -96,8 +96,8 @@ void TestPlaces::init()
     m_home = QDir::homePath();
     QVERIFY(m_home.contains(QDir::tempPath())); // sandboxed
     QVERIFY(RecentFiles::filePath().startsWith(QDir::tempPath()));
-    qunsetenv("KAFTILOUS_REMEMBER_RECENT");
-    qputenv("KAFTILOUS_REMEMBER_RECENT", "1");
+    qunsetenv("KOSMOS_REMEMBER_RECENT");
+    qputenv("KOSMOS_REMEMBER_RECENT", "1");
     QFile::remove(RecentFiles::filePath());
     Starred::instance().setStarred(Starred::instance().paths(), false);
 }
@@ -136,7 +136,7 @@ void TestPlaces::addKeepsOtherApps()
         QVERIFY2(text.contains(QStringLiteral("name=\"%1\"").arg(app)), app); // others untouched
     QVERIFY(text.contains("https://example.com/page"));
     // Our own application entry (attribute order doesn't matter in XML).
-    const QRegularExpression ours(R"(<bookmark:application [^>]*name="Kaftilous"[^>]*>)");
+    const QRegularExpression ours(R"(<bookmark:application [^>]*name="Kosmos"[^>]*>)");
     const QRegularExpressionMatch m = ours.match(text);
     QVERIFY(m.hasMatch());
     QVERIFY(m.captured(0).contains("count=\"1\""));
@@ -157,7 +157,7 @@ void TestPlaces::addRespectsPrivacy()
 {
     writeXbel(gtkXbel(m_home));
     const QByteArray before = [] { QFile f(RecentFiles::filePath()); f.open(QIODevice::ReadOnly); return f.readAll(); }();
-    qputenv("KAFTILOUS_REMEMBER_RECENT", "0"); // "remember recent files" is off
+    qputenv("KOSMOS_REMEMBER_RECENT", "0"); // "remember recent files" is off
     QVERIFY(!RecentFiles::add(m_home + "/old.txt", "text/plain"));
     QFile f(RecentFiles::filePath());
     f.open(QIODevice::ReadOnly);

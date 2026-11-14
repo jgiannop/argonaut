@@ -224,7 +224,7 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
                                      : tr("Folder with %1 items").arg(QLocale().toString(result.items)));
         break;
     case Preview::Kind::Blocked:
-        showInfo(tr("This is a program disguised as a document.\nKaftilous doesn't preview or run it."));
+        showInfo(tr("This is a program disguised as a document.\nKosmos doesn't preview or run it."));
         m_infoText->setStyleSheet(QStringLiteral("color: #e01b24;"));
         return;
     case Preview::Kind::Generic:

@@ -19,7 +19,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
-static const char *FakeMime = "application/x-kaftilous-test";
+static const char *FakeMime = "application/x-kosmos-test";
 
 class TestThumbnailer : public QObject
 {
@@ -78,8 +78,8 @@ void TestThumbnailer::initTestCase()
 void TestThumbnailer::init()
 {
     qputenv("XDG_DATA_DIRS", QFile::encodeName(m_share));
-    qputenv("KAFTILOUS_THUMBNAIL_SANDBOX", "0"); // the fake lives outside /usr
-    qunsetenv("KAFTILOUS_SAFE_WRITES");
+    qputenv("KOSMOS_THUMBNAIL_SANDBOX", "0"); // the fake lives outside /usr
+    qunsetenv("KOSMOS_SAFE_WRITES");
     Thumbnailer::setPolicy(Thumbnailer::Policy::LocalOnly);
     QDir(m_sandbox + "/cache").removeRecursively();
     QFile::remove(m_sandbox + "/runs.log");
@@ -189,7 +189,7 @@ void TestThumbnailer::policy()
         QCOMPARE(runs(), 0);
     }
     Thumbnailer::setPolicy(Thumbnailer::Policy::LocalOnly);
-    qputenv("KAFTILOUS_SAFE_WRITES", "1"); // pretend this is a USB stick
+    qputenv("KOSMOS_SAFE_WRITES", "1"); // pretend this is a USB stick
     {
         Thumbnailer t;
         t.thumbnail(path, mtime, FakeMime);
@@ -235,7 +235,7 @@ void TestThumbnailer::realPdfInSandbox()
     if (QStandardPaths::findExecutable("bwrap").isEmpty() || QStandardPaths::findExecutable("evince-thumbnailer").isEmpty())
         QSKIP("needs bwrap and evince-thumbnailer");
     qputenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-    qunsetenv("KAFTILOUS_THUMBNAIL_SANDBOX");
+    qunsetenv("KOSMOS_THUMBNAIL_SANDBOX");
     QVERIFY(Thumbnailer::sandboxAvailable());
     const QString path = m_dir + "/report.pdf";
     {
@@ -259,7 +259,7 @@ void TestThumbnailer::realVideoInSandbox()
         || QStandardPaths::findExecutable("gst-launch-1.0").isEmpty())
         QSKIP("needs bwrap, totem-video-thumbnailer and gstreamer");
     qputenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-    qunsetenv("KAFTILOUS_THUMBNAIL_SANDBOX");
+    qunsetenv("KOSMOS_THUMBNAIL_SANDBOX");
     const QString path = m_dir + "/clip.webm";
     QProcess::execute("gst-launch-1.0", {"-q", "videotestsrc", "num-buffers=60", "pattern=smpte", "!",
                                          "video/x-raw,width=320,height=240", "!", "vp8enc", "!", "webmmux",
