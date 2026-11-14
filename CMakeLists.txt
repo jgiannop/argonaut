@@ -204,6 +204,8 @@ Quick Look, disk usage analysis, archives, an embedded terminal, real file-type 
 undo for every file operation. It shares bookmarks, recent files, thumbnails and the Trash \
 with GNOME Files.")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+# Into the build folder, not wherever cpack is run from.
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(CPACK_GENERATOR "DEB")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "johngiannop")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
