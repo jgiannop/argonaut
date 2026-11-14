@@ -108,3 +108,8 @@ qt_add_executable(tst_claude tst_claude.cpp)
 target_link_libraries(tst_claude PRIVATE kosmos_core Qt6::Test)
 add_test(NAME claude COMMAND tst_claude)
 set_tests_properties(claude PROPERTIES ENVIRONMENT "KOSMOS_KEYSTORE=file" TIMEOUT 60)
+
+qt_add_executable(tst_organizer tst_organizer.cpp FakeApi.h)
+target_link_libraries(tst_organizer PRIVATE kosmos_core Qt6::Test)
+add_test(NAME organizer COMMAND tst_organizer)
+set_tests_properties(organizer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_KEYSTORE=file" TIMEOUT 120)

@@ -54,6 +54,11 @@ FileJob *FileOperations::move(const QStringList &paths, const QString &targetDir
     return startJob(FileJob::Kind::Move, transfersInto(paths, targetDir), true, true);
 }
 
+FileJob *FileOperations::moveItems(const QList<Transfer> &transfers, const QString &action)
+{
+    return startJob(FileJob::Kind::Move, transfers, true, true, action);
+}
+
 FileJob *FileOperations::trash(const QStringList &paths)
 {
     return startJob(FileJob::Kind::Trash, transfersInto(paths, QString()), true, true);
@@ -140,7 +145,7 @@ void FileOperations::cancelAll()
 }
 
 FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
-                                  bool userAction)
+                                  bool userAction, const QString &undoName)
 {
     if (transfers.isEmpty())
         return nullptr;
@@ -152,11 +157,11 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
         emit conflictRaised(job, source, existing);
     });
     m_active.append(job);
-    connect(job, &FileJob::finished, this, [this, job, recordUndo] {
+    connect(job, &FileJob::finished, this, [this, job, recordUndo, undoName] {
         m_active.removeOne(job);
         const QList<TransferResult> results = job->results();
         if (recordUndo && !results.isEmpty()) {
-            pushUndo({job->kind(), results, job->kind(), QString()});
+            pushUndo({job->kind(), results, job->kind(), undoName});
             m_redo.clear(); // a new action: the old future is gone
             emit undoChanged();
         }

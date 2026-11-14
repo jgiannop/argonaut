@@ -5,6 +5,7 @@
 #include "BatchRenameDialog.h"
 #include "CommandPalette.h"
 #include "ConnectDialog.h"
+#include "OrganizerDialog.h"
 #include "Remote.h"
 #include "HelpDialog.h"
 #include "Naming.h"
@@ -831,6 +832,9 @@ void MainWindow::setupActions()
         if (dialog.exec() == QDialog::Accepted)
             connectToServer(dialog.address());
     });
+
+    m_organizeAct = new QAction(tr("Organize with Claude…"), this);
+    connect(m_organizeAct, &QAction::triggered, this, &MainWindow::organizeWithClaude);
 
     m_paletteAct = new QAction(tr("Command Palette…"), this);
     m_paletteAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
@@ -2229,6 +2233,57 @@ void MainWindow::updateBookmarkAction()
     m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash() && !m_model->isVirtual());
 }
 
+// ------------------------------------------------------------ organize ---
+
+void MainWindow::organizeWithClaude()
+{
+    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable() || m_model->isVirtual())
+        return;
+    const QString folder = m_current;
+    OrganizerDialog dialog(folder, this);
+    connect(&dialog, &OrganizerDialog::openPreferences, this, [this] { m_prefsAct->trigger(); });
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QList<QPair<QString, QPair<QString, QString>>> moves;
+    for (const Organizer::Move &m : dialog.keptMoves())
+        moves.append({m.item, {m.folder, m.newName}});
+    applyOrganizePlan(folder, moves);
+}
+
+// The kept moves: new folders first (undoable on their own), then one move
+// job with renames ("Undo Organize" puts everything back).
+void MainWindow::applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves)
+{
+    QList<TransferResult> created; // the top-most folders made for the plan
+    QList<Transfer> transfers;
+    for (const auto &m : moves) {
+        const QString &item = m.first;
+        const QString &sub = m.second.first;
+        const QString &newName = m.second.second;
+        QString dir = folder;
+        for (const QString &part : sub.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+            dir += QLatin1Char('/') + part;
+            if (!QFileInfo::exists(dir)) {
+                if (!QDir().mkdir(dir)) {
+                    showMessage(tr("Couldn't create the folder “%1”").arg(part));
+                    return;
+                }
+                bool inside = false;
+                for (const TransferResult &c : std::as_const(created))
+                    inside = inside || dir.startsWith(c.target + QLatin1Char('/'));
+                if (!inside)
+                    created.append({QString(), dir});
+            }
+        }
+        transfers.append({folder + QLatin1Char('/') + item, dir, newName.isEmpty() ? item : newName});
+    }
+    if (!created.isEmpty())
+        m_ops->recordUndo(FileJob::Kind::Copy, created, tr("New Folders"));
+    if (!transfers.isEmpty())
+        m_ops->moveItems(transfers, tr("Organize"));
+    showMessage(transfers.size() == 1 ? tr("Organizing 1 item…") : tr("Organizing %1 items…").arg(transfers.size()));
+}
+
 // ------------------------------------------------------------- servers ---
 
 void MainWindow::connectToServer(const QString &address)
@@ -3427,6 +3482,7 @@ void MainWindow::updateEditActions()
     m_newFileAct->setEnabled(writable);
     m_renameAct->setEnabled(!inTrash && changeable);
     m_newDocumentMenu->menuAction()->setEnabled(writable);
+    m_organizeAct->setEnabled(writable && !m_model->isSearch() && !m_model->isVirtual());
     const bool fileView = !m_analyzing && m_view && m_model->rowCount() > 0;
     m_selectMatchingAct->setEnabled(fileView);
     m_invertSelectionAct->setEnabled(fileView);
@@ -3544,6 +3600,8 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addSeparator();
         menu->addAction(m_copyLocationAct);
         menu->addAction(m_hiddenAct);
+        menu->addSeparator();
+        menu->addAction(m_organizeAct);
         menu->addSeparator();
         menu->addAction(m_propertiesAct);
     }
@@ -3768,6 +3826,8 @@ QWidget *MainWindow::buildMenuBar()
     file->addAction(m_newFolderAct);
     file->addAction(m_newFileAct);
     file->addMenu(m_newDocumentMenu);
+    file->addSeparator();
+    file->addAction(m_organizeAct);
     file->addSeparator();
     file->addAction(m_openAct);
     file->addAction(m_propertiesAct);
