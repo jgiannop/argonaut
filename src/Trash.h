@@ -24,6 +24,9 @@ bool isSupported();
 QString homeFilesDir();
 // Every existing "files" folder: the home one first, then mounted drives'.
 QStringList filesDirs();
+// The trash "files" folders on the drive mounted at `root` that are safe to
+// use: real folders of ours, no symlinks (see the .cpp). Used by filesDirs().
+QStringList filesDirsOn(const QString &root);
 // Is `dir` one of the trash "files" folders?
 bool isFilesDir(const QString &dir);
 // The trash "files" folder that `path` is inside of, or empty.

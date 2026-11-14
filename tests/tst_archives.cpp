@@ -114,6 +114,7 @@ private slots:
     void roundTrip_data();
     void roundTrip();
     void severalItemsGoIntoAFolder();
+    void removableDrivesAreSynced();
     void extractNeverOverwrites();
     void maliciousEntriesStayInside();
     void symlinkEscapeBlocked();
@@ -397,6 +398,28 @@ void TestArchives::archiveMimeTypes()
     QVERIFY(FileOperations::isArchive("application/x-compressed-tar"));
     QVERIFY(!FileOperations::isArchive("application/pdf"));
     QVERIFY(!FileOperations::isArchive("application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+}
+
+// On a removable drive (forced here), compress and extract must sync the
+// drive before they say "done", like copies do.
+void TestArchives::removableDrivesAreSynced()
+{
+    qputenv("ARGONAUT_SAFE_WRITES", "1");
+    writeFile(m_dir + "/src/a.txt", "hello");
+    QStringList drives;
+    connect(m_ops, &FileOperations::jobFinished, this, [&](FileJob *j) { drives = j->flushedDrives(); });
+
+    m_ops->compress({m_dir + "/src/a.txt"}, m_dir, "A.zip", Format::Zip);
+    QVERIFY(waitForJob().errors.isEmpty());
+    QCOMPARE(drives.size(), 1);
+
+    drives.clear();
+    QVERIFY(QDir().mkpath(m_dir + "/out"));
+    m_ops->extract({m_dir + "/A.zip"}, m_dir + "/out");
+    QVERIFY(waitForJob().errors.isEmpty());
+    QVERIFY(QFile::exists(m_dir + "/out/a.txt"));
+    QCOMPARE(drives.size(), 1);
+    qunsetenv("ARGONAUT_SAFE_WRITES");
 }
 
 int main(int argc, char **argv)

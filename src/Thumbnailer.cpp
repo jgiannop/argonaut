@@ -1,5 +1,7 @@
 #include "Thumbnailer.h"
 
+#include "Sandbox.h"
+
 #include "FileJob.h"
 
 #include <QCoreApplication>
@@ -159,6 +161,7 @@ QImage runProgram(const Thumbnailer::Program &program, const QString &path, cons
     process.setProcessChannelMode(QProcess::ForwardedErrorChannel);
     process.setStandardOutputFile(QProcess::nullDevice());
     process.setStandardInputFile(QProcess::nullDevice());
+    process.setProcessEnvironment(Sandbox::cleanEnvironment()); // no secrets for a file parser
 #if defined(Q_OS_UNIX)
     process.setChildProcessModifier([] {
         if (::nice(10) == -1) {

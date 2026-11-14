@@ -6,6 +6,22 @@
 
 namespace Sandbox {
 
+QProcessEnvironment cleanEnvironment()
+{
+    const QProcessEnvironment all = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env;
+    for (const QString &key : all.keys()) {
+        static const QStringList keep = {QStringLiteral("PATH"),          QStringLiteral("HOME"),
+                                         QStringLiteral("USER"),          QStringLiteral("LOGNAME"),
+                                         QStringLiteral("LANG"),          QStringLiteral("LANGUAGE"),
+                                         QStringLiteral("TZ"),            QStringLiteral("XDG_CACHE_HOME"),
+                                         QStringLiteral("XDG_DATA_DIRS"), QStringLiteral("XDG_DATA_HOME")};
+        if (keep.contains(key) || key.startsWith(QLatin1String("LC_")))
+            env.insert(key, all.value(key));
+    }
+    return env;
+}
+
 bool available()
 {
     static const bool found = !QStandardPaths::findExecutable(QStringLiteral("bwrap")).isEmpty();
@@ -43,7 +59,7 @@ QByteArray run(const QString &program, const QStringList &args, const QString &f
         box << (a == QLatin1String("@FILE@") ? inside : a);
 
     QProcess process;
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env = cleanEnvironment();
     env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C.UTF-8"));
     process.setProcessEnvironment(env);
     process.setStandardInputFile(QProcess::nullDevice());

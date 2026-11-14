@@ -19,6 +19,7 @@ private slots:
     void parsesPhoto();
     void parsesSong();
     void realPhoto();
+    void sandboxHidesSecrets();
 };
 
 static QString valueOf(const MediaInfo::Details &d, const QString &label)
@@ -72,6 +73,33 @@ void TestMediaInfo::realPhoto()
     QCOMPARE(valueOf(d, "Dimensions"), QStringLiteral("640 × 480 pixels"));
     QCOMPARE(valueOf(d, "Camera"), QStringLiteral("Canon EOS R6"));
     QVERIFY(valueOf(d, "Exposure").contains("f/5.6"));
+}
+
+// A tool reading an untrusted file gets a minimal environment: no API keys
+// or tokens that happen to be set for Argonaut.
+void TestMediaInfo::sandboxHidesSecrets()
+{
+    qputenv("ANTHROPIC_API_KEY", "sk-ant-test-secret");
+    qputenv("SOME_TOKEN", "hunter2");
+    const QProcessEnvironment env = Sandbox::cleanEnvironment();
+    QVERIFY(!env.contains("ANTHROPIC_API_KEY"));
+    QVERIFY(!env.contains("SOME_TOKEN"));
+    QVERIFY(env.contains("PATH"));
+
+    if (!Sandbox::available() || QStandardPaths::findExecutable("env").isEmpty())
+        QSKIP("needs bubblewrap");
+    QTemporaryDir dir;
+    QFile file(dir.path() + "/x.txt");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+    bool ok = false;
+    const QByteArray out = Sandbox::run("env", {}, file.fileName(), &ok);
+    QVERIFY(ok);
+    QVERIFY2(!out.contains("sk-ant-test-secret") && !out.contains("hunter2"), out.constData());
+    QVERIFY(out.contains("PATH="));
+    qunsetenv("ANTHROPIC_API_KEY");
+    qunsetenv("SOME_TOKEN");
 }
 
 QTEST_GUILESS_MAIN(TestMediaInfo)

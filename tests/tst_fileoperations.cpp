@@ -17,6 +17,9 @@
 #include <QTimer>
 #include <QtTest>
 
+#include <QLocalServer>
+
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -105,6 +108,11 @@ private slots:
     void redoTrash();
     void redoRenameAndNewFolder();
     void newActionClearsRedo();
+    void driveTrashRejectsLinks();
+    void copyKeepsRelativeLinks();
+    void copyFolderWithPipeAndSocket();
+    void unreadableFolderIsAnError();
+    void replaceWithItemFromInside();
 
 private:
     Outcome waitForJob();
@@ -742,6 +750,128 @@ void TestFileOperations::newActionClearsRedo()
     m_ops->redo(); // nothing happens
     QTest::qWait(200);
     QVERIFY(exists(m_dir + "/a.txt"));
+}
+
+// A drive's trash folder that is (or goes through) a symlink must never be
+// used: Empty Trash would delete what the link points to.
+void TestFileOperations::driveTrashRejectsLinks()
+{
+    const QString uid = QString::number(::getuid());
+    writeFile(m_dir + "/victim/thesis.odt", 10);
+
+    // 1. A proper .Trash-<uid>/files is accepted.
+    const QString good = m_dir + "/good";
+    QVERIFY(QDir().mkpath(good + "/.Trash-" + uid + "/files"));
+    QCOMPARE(Trash::filesDirsOn(good), QStringList{good + "/.Trash-" + uid + "/files"});
+
+    // 2. "files" is a link to someone's folder.
+    const QString a = m_dir + "/a";
+    QVERIFY(QDir().mkpath(a + "/.Trash-" + uid));
+    QVERIFY(QFile::link(m_dir + "/victim", a + "/.Trash-" + uid + "/files"));
+    QVERIFY(Trash::filesDirsOn(a).isEmpty());
+
+    // 3. ".Trash-<uid>" itself is a link.
+    const QString b = m_dir + "/b";
+    QVERIFY(QDir().mkpath(b));
+    QVERIFY(QDir().mkpath(m_dir + "/elsewhere/files"));
+    QVERIFY(QFile::link(m_dir + "/elsewhere", b + "/.Trash-" + uid));
+    QVERIFY(Trash::filesDirsOn(b).isEmpty());
+
+    // 4. The shared ".Trash/<uid>": only with the sticky bit, and not a link.
+    const QString c = m_dir + "/c";
+    QVERIFY(QDir().mkpath(c + "/.Trash/" + uid + "/files"));
+    QVERIFY(Trash::filesDirsOn(c).isEmpty()); // no sticky bit
+    QCOMPARE(::chmod(QFile::encodeName(c + "/.Trash").constData(), 01777), 0);
+    QCOMPARE(Trash::filesDirsOn(c), QStringList{c + "/.Trash/" + uid + "/files"});
+    const QString d = m_dir + "/d";
+    QVERIFY(QDir().mkpath(d));
+    QVERIFY(QFile::link(c + "/.Trash", d + "/.Trash"));
+    QVERIFY(Trash::filesDirsOn(d).isEmpty());
+
+    QVERIFY(exists(m_dir + "/victim/thesis.odt"));
+}
+
+void TestFileOperations::copyKeepsRelativeLinks()
+{
+    writeFile(m_dir + "/proj/lib/tool.sh", 10);
+    QVERIFY(QDir().mkpath(m_dir + "/proj/bin"));
+    QCOMPARE(::symlink("../lib/tool.sh", QFile::encodeName(m_dir + "/proj/bin/tool").constData()), 0);
+    QCOMPARE(::symlink("/etc/hostname", QFile::encodeName(m_dir + "/proj/abs").constData()), 0);
+    QCOMPARE(::symlink("nowhere", QFile::encodeName(m_dir + "/proj/broken").constData()), 0);
+    QVERIFY(QDir().mkpath(m_dir + "/dest"));
+
+    m_ops->copy({m_dir + "/proj"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QVERIFY2(o.errors.isEmpty(), qPrintable(o.errors.join('\n')));
+    auto text = [](const QString &link) {
+        char buffer[512];
+        const ssize_t n = ::readlink(QFile::encodeName(link).constData(), buffer, sizeof buffer);
+        return n < 0 ? QByteArray("<not a link>") : QByteArray(buffer, n);
+    };
+    // The same text, so the copy's link points inside the copy.
+    QCOMPARE(text(m_dir + "/dest/proj/bin/tool"), QByteArray("../lib/tool.sh"));
+    QCOMPARE(QFileInfo(m_dir + "/dest/proj/bin/tool").canonicalFilePath(),
+             QFileInfo(m_dir + "/dest/proj/lib/tool.sh").canonicalFilePath());
+    QCOMPARE(text(m_dir + "/dest/proj/abs"), QByteArray("/etc/hostname"));
+    QCOMPARE(text(m_dir + "/dest/proj/broken"), QByteArray("nowhere"));
+}
+
+// Opening a pipe blocks until someone writes to it: the copy used to hang,
+// and Cancel couldn't stop it.
+void TestFileOperations::copyFolderWithPipeAndSocket()
+{
+    writeFile(m_dir + "/run/data.txt", 10);
+    QCOMPARE(::mkfifo(QFile::encodeName(m_dir + "/run/pipe").constData(), 0640), 0);
+    QLocalServer server;
+    QVERIFY(server.listen(m_dir + "/run/sock"));
+    QVERIFY(QDir().mkpath(m_dir + "/dest"));
+
+    m_ops->copy({m_dir + "/run"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    QVERIFY(exists(m_dir + "/dest/run/data.txt"));
+    struct stat st;
+    QCOMPARE(::lstat(QFile::encodeName(m_dir + "/dest/run/pipe").constData(), &st), 0);
+    QVERIFY(S_ISFIFO(st.st_mode)); // a new pipe, same permissions
+    QCOMPARE(int(st.st_mode & 0777), 0640);
+    QVERIFY(!exists(m_dir + "/dest/run/sock")); // left out, and said so
+    QCOMPARE(o.errors.size(), 1);
+    QVERIFY2(o.errors.first().contains("sock"), qPrintable(o.errors.first()));
+    server.close();
+}
+
+void TestFileOperations::unreadableFolderIsAnError()
+{
+    if (::getuid() == 0)
+        QSKIP("root can read everything");
+    writeFile(m_dir + "/src/open/a.txt", 10);
+    writeFile(m_dir + "/src/locked/secret.txt", 10);
+    QVERIFY(QDir().mkpath(m_dir + "/dest"));
+    QCOMPARE(::chmod(QFile::encodeName(m_dir + "/src/locked").constData(), 0), 0);
+
+    m_ops->copy({m_dir + "/src"}, m_dir + "/dest");
+    const Outcome o = waitForJob();
+    ::chmod(QFile::encodeName(m_dir + "/src/locked").constData(), 0700);
+    // Not a silent, incomplete copy that looks whole.
+    QCOMPARE(o.errors.size(), 1);
+    QVERIFY2(o.errors.first().contains("locked"), qPrintable(o.errors.first()));
+    QVERIFY(!exists(m_dir + "/dest/src"));
+    QVERIFY(o.results.isEmpty());
+}
+
+// Replace sends the existing item to the Trash first. If the item being
+// copied lives inside it, that would trash the source too.
+void TestFileOperations::replaceWithItemFromInside()
+{
+    writeFile(m_dir + "/box/box/inner.txt", 10);
+    writeFile(m_dir + "/box/other.txt", 10);
+    answerConflicts({{Action::Replace, false, {}}});
+    m_ops->copy({m_dir + "/box/box"}, m_dir);
+    const Outcome o = waitForJob();
+    QCOMPARE(m_asked, 1);
+    QCOMPARE(o.errors.size(), 1);
+    QVERIFY(exists(m_dir + "/box/box/inner.txt")); // nothing moved to the Trash
+    QVERIFY(exists(m_dir + "/box/other.txt"));
+    QVERIFY(o.results.isEmpty());
 }
 
 int main(int argc, char **argv)

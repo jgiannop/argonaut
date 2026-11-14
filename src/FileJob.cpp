@@ -14,6 +14,7 @@
 
 #if defined(Q_OS_UNIX)
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -377,6 +378,13 @@ bool FileJob::transferItem(const QString &source, const QString &dir, const QStr
                 return mergeInto(source, target);
             [[fallthrough]]; // not two folders: merging means replacing
         case ConflictAction::Replace: {
+            // Replacing a folder with something inside it would send the
+            // source to the Trash together with the folder.
+            if (QDir::cleanPath(source).startsWith(target + QLatin1Char('/'))) {
+                addError(tr("“%1” wasn't replaced: the item to put there is inside it.").arg(name));
+                addBytes(bytes);
+                return true;
+            }
             // Never destroy the existing item: it goes to the Trash.
             if (!QFile::moveToTrash(target)) {
                 addError(tr("Couldn't move the existing “%1” to the Trash, so it wasn't replaced.")
@@ -389,13 +397,17 @@ bool FileJob::transferItem(const QString &source, const QString &dir, const QStr
         }
     }
 
+    m_createdTarget = false;
     const bool ok = moveOrCopy(source, target, bytes, dir);
     if (ok) {
         if (m_kind == Kind::Restore && topLevel)
             removeTrashInfo(source);
-        addResult(source, target);
-    } else if (pathExists(target)) {
-        removeTree(target); // incomplete copy: it didn't exist before
+        if (pathExists(target)) // not for a skipped socket or device file
+            addResult(source, target);
+    } else if (m_createdTarget && pathExists(target)) {
+        // An incomplete copy that this job started. If the name was taken by
+        // another program in the meantime, what's there isn't ours to remove.
+        removeTree(target);
     }
     return true;
 }
@@ -405,6 +417,11 @@ bool FileJob::transferItem(const QString &source, const QString &dir, const QStr
 // never touches what was already there.
 bool FileJob::mergeInto(const QString &sourceDir, const QString &targetDir)
 {
+    const QFileInfo sourceInfo(sourceDir);
+    if (!sourceInfo.isReadable() || !sourceInfo.isExecutable()) {
+        addError(tr("Couldn't read the folder “%1” (no permission).").arg(sourceInfo.fileName()));
+        return true; // nothing was moved or copied from it
+    }
     const QFileInfoList children = QDir(sourceDir).entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const QFileInfo &child : children) {
@@ -499,19 +516,69 @@ bool FileJob::copyTree(const QString &source, const QString &target)
         return false;
     const QFileInfo info(source);
 
+#if defined(Q_OS_UNIX)
+    struct stat st;
+    const QByteArray sourceBytes = QFile::encodeName(source);
+    const QByteArray targetBytes = QFile::encodeName(target);
+    if (::lstat(sourceBytes.constData(), &st) != 0) {
+        addError(tr("Couldn't read “%1”.").arg(info.fileName()));
+        return false;
+    }
+    if (S_ISLNK(st.st_mode)) {
+        // The link's own text, unchanged: "../lib/tool.sh" stays relative.
+        // (QFileInfo::symLinkTarget() gives an absolute path, which would
+        // point back into the original folder.)
+        QByteArray text(qMax<qint64>(st.st_size, 255) + 1, Qt::Uninitialized);
+        qint64 n = ::readlink(sourceBytes.constData(), text.data(), text.size());
+        while (n == text.size()) { // longer than lstat said
+            text.resize(text.size() * 2);
+            n = ::readlink(sourceBytes.constData(), text.data(), text.size());
+        }
+        if (n < 0 || (text.truncate(n), ::symlink(text.constData(), targetBytes.constData())) != 0) {
+            addError(tr("Couldn't copy the link “%1”.").arg(info.fileName()));
+            return false;
+        }
+        m_createdTarget = true;
+        return true;
+    }
+    if (S_ISFIFO(st.st_mode)) {
+        // Opening a pipe to read it would wait forever: make a new one.
+        if (::mkfifo(targetBytes.constData(), st.st_mode & 07777) != 0) {
+            addError(tr("Couldn't copy the pipe “%1”.").arg(info.fileName()));
+            return false;
+        }
+        m_createdTarget = true;
+        return true;
+    }
+    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
+        // Sockets and device files can't be copied (and opening one can
+        // hang). A copy goes on without it; a move stops, so the original
+        // is never deleted without its copy.
+        addError(tr("“%1” is a socket or device file and wasn't copied.").arg(info.fileName()));
+        return m_kind == Kind::Copy;
+    }
+#else
     if (info.isSymbolicLink()) {
         if (!QFile::link(info.symLinkTarget(), target)) {
             addError(tr("Couldn't copy the link “%1”.").arg(info.fileName()));
             return false;
         }
+        m_createdTarget = true;
         return true;
     }
+#endif
 
     if (info.isDir()) {
+        // A folder we can't list would otherwise copy as an empty one.
+        if (!info.isReadable() || !info.isExecutable()) {
+            addError(tr("Couldn't read the folder “%1” (no permission).").arg(info.fileName()));
+            return false;
+        }
         if (!QDir().mkdir(target)) {
             addError(tr("Couldn't create the folder “%1”.").arg(QFileInfo(target).fileName()));
             return false;
         }
+        m_createdTarget = true;
         const QFileInfoList entries = QDir(source).entryInfoList(
             QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
         for (const QFileInfo &entry : entries) {
@@ -538,6 +605,7 @@ bool FileJob::copyFile(const QString &source, const QString &target, const QFile
                      .arg(QFileInfo(target).fileName(), out.errorString()));
         return false;
     }
+    m_createdTarget = true;
 
     QByteArray buffer(ChunkSize, Qt::Uninitialized);
     qint64 sinceFlush = 0;

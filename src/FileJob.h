@@ -142,6 +142,7 @@ private:
     QElapsedTimer m_elapsed;     // started in start(), read from the GUI thread
     QElapsedTimer m_notifyTimer; // worker thread only
     bool m_safeWrites = false;   // worker thread only: current target is removable
+    bool m_createdTarget = false; // worker thread only: this item's copy made something at its target
     bool m_interactive = false;
     ArchiveFormat m_archiveFormat = ArchiveFormat::Zip;
     std::optional<ConflictAction> m_fileChoice;   // "apply to all", worker thread only

@@ -4,6 +4,7 @@
 #include "FileJob.h"
 
 #include <QDir>
+#include <QSet>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -143,6 +144,7 @@ void FileJob::runExtract()
     }
     notify(true);
 
+    QSet<QString> safeDirsUsed;
     for (const Transfer &t : m_transfers) {
         if (isCanceled())
             break;
@@ -150,6 +152,8 @@ void FileJob::runExtract()
         const QString dest = QDir::cleanPath(t.targetDir);
         setCurrent(archiveInfo.fileName());
         m_safeWrites = needsSafeWrites(dest);
+        if (m_safeWrites)
+            safeDirsUsed.insert(dest);
         if (!QFileInfo(dest).isDir()) {
             addError(tr("The destination folder “%1” doesn't exist.").arg(QDir::toNativeSeparators(dest)));
             itemDone();
@@ -284,6 +288,9 @@ void FileJob::runExtract()
         addBytes(archiveInfo.size() - lastPosition);
         itemDone();
     }
+    // Removable drives: don't report "done" while data is still in RAM.
+    for (const QString &dir : std::as_const(safeDirsUsed))
+        flushDrive(dir);
 }
 
 // All sources into one archive, written to a hidden ".part" file and renamed
@@ -399,4 +406,6 @@ void FileJob::runCompress()
         return;
     }
     addResult(QString(), target);
+    if (m_safeWrites) // a removable drive: written for real before "done"
+        flushDrive(dir);
 }

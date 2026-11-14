@@ -52,8 +52,8 @@ QString TestPreview::write(const QString &name, const QByteArray &data)
     const QString path = m_dir->path() + '/' + name;
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile f(path);
-    f.open(QIODevice::WriteOnly);
-    f.write(data);
+    if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size())
+        qFatal("couldn't write %s", qPrintable(path));
     return path;
 }
 

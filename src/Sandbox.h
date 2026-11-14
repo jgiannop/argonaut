@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QProcessEnvironment>
 #include <QString>
 #include <QStringList>
 
@@ -11,6 +12,13 @@
 namespace Sandbox {
 
 bool available(); // bwrap is installed
+
+// The environment for a program that reads an untrusted file: only what it
+// needs to run (PATH, HOME, the language and time zone, the XDG cache and
+// data folders). Everything else stays out, so secrets in the environment
+// (ANTHROPIC_API_KEY, tokens, D-Bus and display addresses) never reach a
+// parser. Also used for thumbnailers.
+QProcessEnvironment cleanEnvironment();
 
 // Runs `program` with `args`, where "@FILE@" stands for the file inside the
 // box. Returns its standard output (at most `maxBytes`); `ok` is false if

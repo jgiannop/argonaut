@@ -8,6 +8,7 @@
 #include <QUrl>
 
 #if defined(Q_OS_UNIX)
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -37,6 +38,14 @@ QString topDirOf(const QString &filesDir)
     return parentOf(parentOf(base));
 }
 
+#if defined(Q_OS_UNIX)
+// A real folder at `path` itself: lstat, so a symlink to a folder is not one.
+bool realDir(const QString &path, struct stat *st)
+{
+    return ::lstat(QFile::encodeName(path).constData(), st) == 0 && S_ISDIR(st->st_mode);
+}
+#endif
+
 } // namespace
 
 namespace Trash {
@@ -64,19 +73,43 @@ QStringList filesDirs()
     // Tests set this so they can never touch real drives' trash folders.
     if (qEnvironmentVariableIsSet("ARGONAUT_TRASH_HOME_ONLY"))
         return dirs;
-    const QString uid = uidString();
     for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
         if (!volume.isValid() || !volume.isReady() || volume.isReadOnly())
             continue;
-        const QString root = volume.rootPath();
-        for (const QString &candidate :
-             {root + QStringLiteral("/.Trash-") + uid + QStringLiteral("/files"),
-              root + QStringLiteral("/.Trash/") + uid + QStringLiteral("/files")}) {
-            const QString dir = QDir::cleanPath(candidate);
-            if (!dirs.contains(dir) && QFileInfo(dir).isDir())
+        for (const QString &dir : filesDirsOn(volume.rootPath()))
+            if (!dirs.contains(dir))
                 dirs.append(dir);
-        }
     }
+    return dirs;
+}
+
+// Anyone who can write to a drive can put a ".Trash-<uid>" there. If any
+// part of it were a link, the folder it points to would be listed as trash
+// and Empty Trash would delete its contents. So, as the freedesktop spec
+// asks: every part is a real folder (never a symlink) that belongs to us,
+// and the shared ".Trash" must have the sticky bit.
+QStringList filesDirsOn(const QString &root)
+{
+    QStringList dirs;
+#if defined(Q_OS_UNIX)
+    const QString uid = uidString();
+    const uid_t me = ::getuid();
+    struct stat st;
+    auto mine = [&](const QString &path) { return realDir(path, &st) && st.st_uid == me; };
+
+    const QString own = QDir::cleanPath(root + QStringLiteral("/.Trash-") + uid);
+    if (mine(own) && mine(own + QStringLiteral("/files")))
+        dirs.append(own + QStringLiteral("/files"));
+
+    const QString shared = QDir::cleanPath(root + QStringLiteral("/.Trash"));
+    if (realDir(shared, &st) && (st.st_mode & S_ISVTX)) {
+        const QString sub = shared + QLatin1Char('/') + uid;
+        if (mine(sub) && mine(sub + QStringLiteral("/files")))
+            dirs.append(sub + QStringLiteral("/files"));
+    }
+#else
+    Q_UNUSED(root)
+#endif
     return dirs;
 }
 
