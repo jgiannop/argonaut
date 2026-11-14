@@ -46,6 +46,8 @@ qt_add_library(kosmos_core STATIC
     src/FileOperations.cpp
     src/Naming.h
     src/Naming.cpp
+    src/Access.h
+    src/Access.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
 target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml)

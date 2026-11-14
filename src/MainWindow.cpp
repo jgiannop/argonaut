@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "Access.h"
 #include "BatchRenameDialog.h"
 #include "Naming.h"
 
@@ -466,7 +467,7 @@ void MainWindow::setupActions()
     auto *sortGroup = new QActionGroup(this);
     const char *sortNames[] = {QT_TR_NOOP("By Name"), QT_TR_NOOP("By Size"), QT_TR_NOOP("By Type"),
                                QT_TR_NOOP("By Modification Date")};
-    for (int column = 0; column < DirectoryModel::ColumnCount; ++column) {
+    for (int column = 0; column < int(std::size(sortNames)); ++column) { // Owner… sort from the header
         auto *act = new QAction(tr(sortNames[column]), this);
         act->setCheckable(true);
         sortGroup->addAction(act);
@@ -1287,6 +1288,62 @@ void MainWindow::refreshChrome()
     updateFloatingBar();
 }
 
+void MainWindow::applyListColumns()
+{
+    for (int i = 0; i < m_paneCount; ++i) {
+        QTreeView *view = i == m_activePane ? m_detailView : m_panes[i].detailView;
+        if (!view)
+            continue;
+        QHeaderView *header = view->header();
+        for (int column : {DirectoryModel::OwnerColumn, DirectoryModel::GroupColumn,
+                           DirectoryModel::PermissionsColumn}) {
+            const bool shown = m_listColumns.contains(QString::number(column));
+            header->setSectionHidden(column, !shown);
+            if (shown && header->sectionSize(column) < 40)
+                header->resizeSection(column, 110); // a header saved before these columns existed
+        }
+    }
+}
+
+void MainWindow::showListHeaderMenu(QHeaderView *header, const QPoint &pos)
+{
+    if (!Access::hasOwners())
+        return; // no Unix owners or permission bits to show
+    QMenu *menu = makeMenu();
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->addSection(tr("Show Columns"));
+    for (int column : {DirectoryModel::OwnerColumn, DirectoryModel::GroupColumn,
+                       DirectoryModel::PermissionsColumn}) {
+        QAction *act = menu->addAction(m_model->headerData(column, Qt::Horizontal).toString());
+        act->setCheckable(true);
+        const QString key = QString::number(column);
+        act->setChecked(m_listColumns.contains(key));
+        connect(act, &QAction::toggled, this, [this, key](bool on) {
+            m_listColumns.removeAll(key);
+            if (on)
+                m_listColumns.append(key);
+            applyListColumns();
+        });
+    }
+    menu->popup(header->viewport()->mapToGlobal(pos));
+}
+
+bool MainWindow::canChangeSelection() const
+{
+    if (m_model->isTrash())
+        return true; // the Trash's own folders
+    QHash<QString, Access::FolderAccess> folders;
+    for (const QModelIndex &viewIndex : selectedViewIndexes()) {
+        const QModelIndex source = toSource(viewIndex);
+        const QString path = m_model->filePath(source);
+        const int slash = int(path.lastIndexOf(QLatin1Char('/')));
+        const QString dir = slash <= 0 ? QStringLiteral("/") : path.left(slash);
+        if (!Access::canChangeItemsIn(dir, source.data(DirectoryModel::OwnerIdRole).toUInt(), &folders))
+            return false;
+    }
+    return true;
+}
+
 void MainWindow::fitListColumns()
 {
     if (!m_detailView)
@@ -1515,6 +1572,15 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     columns->resizeSection(DirectoryModel::SizeColumn, 110);
     columns->resizeSection(DirectoryModel::TypeColumn, 170);
     columns->resizeSection(DirectoryModel::ModifiedColumn, 130);
+    columns->resizeSection(DirectoryModel::OwnerColumn, 110);
+    columns->resizeSection(DirectoryModel::GroupColumn, 110);
+    columns->resizeSection(DirectoryModel::PermissionsColumn, 110);
+    for (int column : {DirectoryModel::OwnerColumn, DirectoryModel::GroupColumn,
+                       DirectoryModel::PermissionsColumn})
+        columns->setSectionHidden(column, !m_listColumns.contains(QString::number(column)));
+    columns->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(columns, &QWidget::customContextMenuRequested, this,
+            [this, columns](const QPoint &pos) { showListHeaderMenu(columns, pos); });
     // Header clicks sort the model (FileFilterProxy forwards sort()).
     columns->setSortIndicator(DirectoryModel::NameColumn, Qt::AscendingOrder);
     m_detailView->setSortingEnabled(true);
@@ -1843,6 +1909,8 @@ void MainWindow::loadSettings()
     m_terminalHeight = settings.value("window/terminalHeight", 0).toInt();
     if (settings.contains("view/listHeader"))
         m_detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
+    m_listColumns = settings.value("view/listColumns").toStringList();
+    applyListColumns(); // after restoreState: an older saved header knows only 4 columns
         fitListColumns(); // the saved layout may hide columns this width has room for
     sortBy(settings.value("view/sortColumn", DirectoryModel::NameColumn).toInt(),
            Qt::SortOrder(settings.value("view/sortOrder", int(Qt::AscendingOrder)).toInt()));
@@ -1887,6 +1955,7 @@ void MainWindow::saveSettings()
         m_terminalHeight = m_terminalPanel->height();
     settings.setValue("window/terminalHeight", m_terminalHeight);
     settings.setValue("view/listHeader", m_detailView->header()->saveState());
+    settings.setValue("view/listColumns", m_listColumns);
     settings.setValue("view/sortColumn", m_recentSort ? m_sortColumnBefore : m_model->sortColumn());
     settings.setValue("view/sortOrder", int(m_recentSort ? m_sortOrderBefore : m_model->sortOrder()));
     settings.setValue("view/showHidden", m_showHidden);
@@ -2815,11 +2884,15 @@ void MainWindow::updateEditActions()
     if (m_background)
         return; // actions act on the active pane
     const bool hasSelection = !m_analyzing && m_view && m_view->selectionModel()->hasSelection();
-    for (QAction *action : {m_openAct, m_cutAct, m_copyAct, m_trashAct})
-        action->setEnabled(hasSelection);
     const bool inTrash = m_model && m_model->isTrash();
+    // Items in a folder you can't change can be copied, not moved or trashed.
+    const bool changeable = hasSelection && (inTrash || canChangeSelection());
+    for (QAction *action : {m_openAct, m_copyAct})
+        action->setEnabled(hasSelection);
+    for (QAction *action : {m_cutAct, m_trashAct})
+        action->setEnabled(changeable);
     const bool writable = !m_analyzing && !inTrash && !m_current.isEmpty() && QFileInfo(m_current).isWritable();
-    m_deleteAct->setEnabled(hasSelection);
+    m_deleteAct->setEnabled(changeable);
     m_restoreAct->setEnabled(inTrash && hasSelection);
     if (m_trashRestoreButton)
         m_trashRestoreButton->setText(tr("Restore")); // setDefaultAction resets it
@@ -2827,7 +2900,7 @@ void MainWindow::updateEditActions()
     m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
-    m_renameAct->setEnabled(!inTrash && m_view && !selectedViewIndexes().isEmpty());
+    m_renameAct->setEnabled(!inTrash && changeable);
     m_newDocumentMenu->menuAction()->setEnabled(writable);
     const bool fileView = !m_analyzing && m_view && m_model->rowCount() > 0;
     m_selectMatchingAct->setEnabled(fileView);
@@ -2846,7 +2919,7 @@ void MainWindow::updateEditActions()
     m_redoAct->setText(m_ops->redoText());
     const bool toOther = hasSelection && !inTrash && !otherPaneFolder().isEmpty();
     m_copyToOtherAct->setEnabled(toOther);
-    m_moveToOtherAct->setEnabled(toOther);
+    m_moveToOtherAct->setEnabled(toOther && changeable);
 }
 
 void MainWindow::showContextMenu(const QPoint &pos)

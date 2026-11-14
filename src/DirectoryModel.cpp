@@ -1,5 +1,7 @@
 #include "DirectoryModel.h"
 
+#include "Access.h"
+
 #include "Format.h"
 
 #include "FileJob.h"
@@ -23,6 +25,7 @@
 #include <QStorageInfo>
 
 #include <algorithm>
+#include <optional>
 
 #if defined(Q_OS_LINUX)
 #include <sys/inotify.h>
@@ -52,16 +55,84 @@ QCollator naturalCollator()
     return collator;
 }
 
-FileEntry makeEntry(const QFileInfo &fi, const QCollator &collator)
+#if defined(Q_OS_UNIX)
+quint16 permissionBits(mode_t mode)
 {
-    const QString name = fi.fileName();
+    QFile::Permissions p;
+    const std::pair<mode_t, QFile::Permission> bits[] = {
+        {S_IRUSR, QFile::ReadOwner}, {S_IWUSR, QFile::WriteOwner}, {S_IXUSR, QFile::ExeOwner},
+        {S_IRGRP, QFile::ReadGroup}, {S_IWGRP, QFile::WriteGroup}, {S_IXGRP, QFile::ExeGroup},
+        {S_IROTH, QFile::ReadOther}, {S_IWOTH, QFile::WriteOther}, {S_IXOTH, QFile::ExeOther}};
+    for (const auto &[bit, flag] : bits) {
+        if (mode & bit)
+            p |= flag;
+    }
+    return quint16(p.toInt());
+}
+
+qint64 msecs(const struct stat &st)
+{
+#if defined(Q_OS_MACOS)
+    return qint64(st.st_mtimespec.tv_sec) * 1000 + st.st_mtimespec.tv_nsec / 1000000;
+#else
+    return qint64(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
+#endif
+}
+#endif
+
+// Reads one entry. On Unix it is one lstat (plus a stat for symlinks), not
+// QFileInfo: QFileInfo::lastModified() converts to local time, and glibc
+// stats /etc/localtime twice per call, which tripled the system calls of a
+// listing. Nothing if the item is gone.
+std::optional<FileEntry> makeEntry(const QString &dir, const QString &name, const QCollator &collator)
+{
     FileEntry e(name, collator.sortKey(name));
+    e.setDir(dir);
+#if defined(Q_OS_UNIX)
+    const QByteArray native = QFile::encodeName(e.path());
+    struct stat st;
+    if (::lstat(native.constData(), &st) != 0)
+        return std::nullopt;
+    e.isSymLink = S_ISLNK(st.st_mode);
+    if (e.isSymLink) {
+        struct stat target;
+        if (::stat(native.constData(), &target) == 0)
+            st = target; // like QFileInfo: a link shows what it points to
+        else
+            e.brokenLink = true; // the bits below are the link's own
+    }
+    e.isDir = S_ISDIR(st.st_mode);
+    e.size = e.isDir || S_ISLNK(st.st_mode) ? 0 : qint64(st.st_size); // broken link: 0
+    e.mtime = msecs(st);
+    e.permissions = permissionBits(st.st_mode);
+    e.ownerId = uint(st.st_uid);
+    e.groupId = uint(st.st_gid);
+    // Dot-files and editor backups ("file~"); macOS also has a hidden flag.
+    e.isHidden = name.startsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char('~'));
+#if defined(Q_OS_MACOS)
+    e.isHidden = e.isHidden || (st.st_flags & UF_HIDDEN);
+#endif
+#else
+    const QFileInfo fi(e.path());
+    if (!fi.exists() && !fi.isSymLink())
+        return std::nullopt;
     e.isSymLink = fi.isSymLink();
+    e.brokenLink = e.isSymLink && !fi.exists();
     e.isDir = fi.isDir();
     e.size = e.isDir ? 0 : fi.size();
     e.mtime = fi.lastModified().toMSecsSinceEpoch();
-    // Dot-files, Windows hidden attribute, and editor backups ("file~").
+    // Only the owner/group/other bits: the "User" ones cost an access() each.
+    QFile::Permissions p;
+    for (QFile::Permission bit : {QFile::ReadOwner, QFile::WriteOwner, QFile::ExeOwner,
+                                  QFile::ReadGroup, QFile::WriteGroup, QFile::ExeGroup,
+                                  QFile::ReadOther, QFile::WriteOther, QFile::ExeOther}) {
+        if (fi.permission(bit))
+            p |= bit;
+    }
+    e.permissions = quint16(p.toInt());
+    // Hidden attribute, dot-files and editor backups ("file~").
     e.isHidden = fi.isHidden() || name.endsWith(QLatin1Char('~'));
+#endif
     return e;
 }
 
@@ -350,11 +421,13 @@ void DirectoryModel::startScan(bool initial)
             for (const RecentFiles::Item &item : items) {
                 if (m_generation != generation)
                     return;
-                const QFileInfo fi(item.path);
-                if (!fi.exists() || (search && !matchesSearch(fi.fileName(), words)))
+                const QFileInfo fi(item.path); // path strings only, no disk access
+                if (search && !matchesSearch(fi.fileName(), words))
                     continue;
-                FileEntry e = makeEntry(fi, collator);
-                e.setDir(fi.absolutePath());
+                std::optional<FileEntry> made = makeEntry(fi.absolutePath(), fi.fileName(), collator);
+                if (!made)
+                    continue; // gone
+                FileEntry &e = *made;
                 e.used = item.used;
                 e.isHidden = false; // you used or starred it: show it
                 batch.push_back(std::move(e));
@@ -405,8 +478,10 @@ void DirectoryModel::startScan(bool initial)
                         break;
                     }
                 }
-                FileEntry e = makeEntry(it.fileInfo(), collator);
-                e.setDir(dir);
+                std::optional<FileEntry> made = makeEntry(dir, it.fileName(), collator);
+                if (!made)
+                    continue; // removed since the folder was read
+                FileEntry &e = *made;
                 if (trash) {
                     const Trash::Info info = Trash::info(e.path());
                     e.originalPath = info.originalPath;
@@ -529,8 +604,16 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
         for (size_t row = 0; row < m_rows.size(); ++row) {
             FileEntry &cur = m_rows[row];
             const FileEntry &now = fresh[freshByPath.value(cur.path())];
+            if (cur.permissions != now.permissions || cur.ownerId != now.ownerId
+                || cur.groupId != now.groupId) {
+                // chmod/chown: only the emblem and columns change.
+                cur.permissions = now.permissions;
+                cur.ownerId = now.ownerId;
+                cur.groupId = now.groupId;
+                emit dataChanged(index(int(row), 0), index(int(row), ColumnCount - 1));
+            }
             if (cur.size == now.size && cur.mtime == now.mtime && cur.isDir == now.isDir
-                && cur.isSymLink == now.isSymLink)
+                && cur.isSymLink == now.isSymLink && cur.brokenLink == now.brokenLink)
                 continue;
             if (cur.isDir != now.isDir || cur.mtime != now.mtime)
                 cur.childCount = -1; // recount
@@ -540,6 +623,7 @@ void DirectoryModel::applyRescan(quint64 generation, Entries fresh)
             cur.mtime = now.mtime;
             cur.isDir = now.isDir;
             cur.isSymLink = now.isSymLink;
+            cur.brokenLink = now.brokenLink;
             cur.mimeName.clear();
             sortKeyChanged = true;
             emit dataChanged(index(int(row), 0), index(int(row), ColumnCount - 1));
@@ -703,6 +787,17 @@ bool DirectoryModel::lessThan(const FileEntry &a, const FileEntry &b) const
             : m_place == Place::Recent ? compare3(a.used, b.used)
                                        : compare3(a.mtime, b.mtime);
         break;
+    case OwnerColumn:
+        if (a.ownerId != b.ownerId)
+            c = Access::userName(a.ownerId).compare(Access::userName(b.ownerId), Qt::CaseInsensitive);
+        break;
+    case GroupColumn:
+        if (a.groupId != b.groupId)
+            c = Access::groupName(a.groupId).compare(Access::groupName(b.groupId), Qt::CaseInsensitive);
+        break;
+    case PermissionsColumn:
+        c = compare3(a.permissions, b.permissions);
+        break;
     default:
         break;
     }
@@ -860,6 +955,12 @@ QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, in
         return isSearch() || isVirtual() ? tr("Location") : m_trash ? tr("Original Location") : tr("Type");
     case ModifiedColumn:
         return m_trash ? tr("Deleted") : m_place == Place::Recent ? tr("Last Used") : tr("Modified");
+    case OwnerColumn:
+        return tr("Owner");
+    case GroupColumn:
+        return tr("Group");
+    case PermissionsColumn:
+        return tr("Permissions");
     }
     return {};
 }
@@ -905,6 +1006,15 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
                 return locale.toString(when.time(), QLocale::ShortFormat);
             return locale.toString(when.date(), QLocale::ShortFormat);
         }
+        case OwnerColumn:
+            return Access::userName(e.ownerId);
+        case GroupColumn:
+            return Access::groupName(e.groupId);
+        case PermissionsColumn:
+            return Access::hasOwners()
+                       ? Access::permissionString(QFile::Permissions::fromInt(e.permissions), e.isDir,
+                                                  e.brokenLink)
+                       : QString();
         }
         break;
     case Qt::EditRole:
@@ -925,6 +1035,12 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return nameMimeFor(e);
     case StarredRole:
         return Starred::instance().isStarred(e.path());
+    case SymLinkRole:
+        return e.isSymLink;
+    case LockedRole:
+        return isLocked(e);
+    case OwnerIdRole:
+        return e.ownerId;
     case ContentMimeRole:
         return e.contentMime;
     case Qt::ToolTipRole:
@@ -932,6 +1048,18 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             QString tip = e.isDir ? QString() : ContentType::describe({nameMimeFor(e), e.contentMime, e.verdict});
             if ((isSearch() || isVirtual()) && !m_trash) // the grid has no Location column
                 tip = tr("In %1").arg(searchLocation(e)) + (tip.isEmpty() ? QString() : QLatin1Char('\n') + tip);
+            QStringList extra;
+            if (e.isSymLink) { // read only when hovered: one readlink
+                const QString target = QFileInfo(e.path()).symLinkTarget();
+                const QString shown = QDir::toNativeSeparators(target);
+                extra << (QFileInfo::exists(target) ? tr("Link to %1").arg(shown)
+                                                    : tr("Broken link to %1").arg(shown));
+            }
+            if (isLocked(e))
+                extra << (Access::hasOwners() ? tr("Read-only (owner: %1)").arg(Access::userName(e.ownerId))
+                                              : tr("Read-only"));
+            if (!extra.isEmpty())
+                tip = extra.join(QLatin1Char('\n')) + (tip.isEmpty() ? QString() : QLatin1Char('\n') + tip);
             return tip.isEmpty() ? QVariant() : tip;
         }
         break;
@@ -945,6 +1073,14 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return e.name;
     }
     return {};
+}
+
+// Probably not writable by you: drawn as a 🔒 emblem. In memory only.
+bool DirectoryModel::isLocked(const FileEntry &e) const
+{
+    if (m_trash)
+        return false; // nothing in the Trash is edited in place
+    return !Access::likelyWritable(QFile::Permissions::fromInt(e.permissions), e.ownerId, e.groupId);
 }
 
 // Mime type from the name only (no file access). Cached per name pattern:
@@ -991,8 +1127,20 @@ QIcon DirectoryModel::iconFor(const FileEntry &e) const
     const QString key = e.isDir ? QStringLiteral("dir:") + e.path()
                                 : QStringLiteral("mime:") + mimeFor(e);
     auto it = m_iconCache.constFind(key);
-    if (it == m_iconCache.constEnd())
-        it = m_iconCache.insert(key, m_iconProvider.icon(QFileInfo(e.path())));
+    if (it == m_iconCache.constEnd()) {
+        QIcon icon;
+        if (!e.isSymLink) {
+            icon = m_iconProvider.icon(QFileInfo(e.path()));
+        } else {
+            // Qt gives every symlink a generic "link" icon, which the cache
+            // would then reuse for real files of that type. Use the target's
+            // icon; the link emblem is drawn by FileItemDelegate.
+            const QString target = QFileInfo(e.path()).canonicalFilePath(); // empty if broken
+            icon = target.isEmpty() ? m_iconProvider.icon(QAbstractFileIconProvider::File)
+                                    : m_iconProvider.icon(QFileInfo(target));
+        }
+        it = m_iconCache.insert(key, icon);
+    }
     return *it;
 }
 
