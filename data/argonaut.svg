@@ -1,13 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
     <linearGradient id="front" x1="0" y1="44" x2="0" y2="114" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#62a0ea"/>
-      <stop offset="1" stop-color="#3584e4"/>
+      <stop offset="0" stop-color="#ffa348"/>
+      <stop offset="1" stop-color="#ff7800"/>
     </linearGradient>
   </defs>
-  <path d="M14 26a10 10 0 0 1 10-10h26l10 10h44a10 10 0 0 1 10 10v8H14z" fill="#1a5fb4"/>
-  <rect x="14" y="36" width="100" height="78" rx="10" fill="#1c71d8"/>
+  <path d="M14 26a10 10 0 0 1 10-10h26l10 10h44a10 10 0 0 1 10 10v8H14z" fill="#c64600"/>
+  <rect x="14" y="36" width="100" height="78" rx="10" fill="#e66100"/>
   <rect x="10" y="44" width="108" height="70" rx="10" fill="url(#front)"/>
-  <path d="M50 58v42M50 82l24-24M58 74l18 26" fill="none" stroke="#fff" stroke-width="9"
-        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- The Argo: mast, mainsail, jib and hull -->
+  <path d="M66 54v36" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M70 55l22 31H70z" fill="#fff"/>
+  <path d="M62 61v25H44z" fill="#fff" fill-opacity=".85"/>
+  <path d="M34 92h64l-9 12H43z" fill="#fff"/>
 </svg>
