@@ -108,9 +108,18 @@ qt_add_executable(kosmos
     src/PropertiesDialog.cpp
     src/BatchRenameDialog.h
     src/BatchRenameDialog.cpp
+    src/HelpDialog.h
+    src/HelpDialog.cpp
+    src/AboutDialog.h
+    src/AboutDialog.cpp
 )
 
 target_link_libraries(kosmos PRIVATE kosmos_core Qt6::Widgets)
+# One version number for the app, the About box and the installer.
+target_compile_definitions(kosmos PRIVATE KOSMOS_VERSION="${PROJECT_VERSION}")
+if(LIBARCHIVE_FOUND)
+    target_compile_definitions(kosmos PRIVATE KOSMOS_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
+endif()
 
 # Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
 # Without them the app builds normally, just without the terminal panel.
@@ -120,7 +129,7 @@ if(PkgConfig_FOUND)
 endif()
 if(VTERM_FOUND AND UNIX)
     target_sources(kosmos PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
-    target_compile_definitions(kosmos PRIVATE KOSMOS_TERMINAL=1)
+    target_compile_definitions(kosmos PRIVATE KOSMOS_TERMINAL=1 KOSMOS_VTERM_VERSION="${VTERM_VERSION}")
     target_link_libraries(kosmos PRIVATE PkgConfig::VTERM)
     find_library(UTIL_LIBRARY util)
     if(UTIL_LIBRARY)
