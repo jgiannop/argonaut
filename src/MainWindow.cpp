@@ -3,6 +3,7 @@
 #include "AboutDialog.h"
 #include "Access.h"
 #include "BatchRenameDialog.h"
+#include "CommandPalette.h"
 #include "HelpDialog.h"
 #include "Naming.h"
 
@@ -319,6 +320,13 @@ QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid t
 QToolButton#themeCard:hover { background: @hover; }
 QToolButton#themeCard:checked { border-color: @accent; }
 
+QToolButton#gitBadge { background: transparent; color: @dim; border: none; border-radius: 6px;
+    padding: 2px 8px; font-weight: bold; }
+QToolButton#gitBadge:hover { background: @hover; }
+QFrame#commandPalette { background: @popup; border: 1px solid @border; border-radius: 12px; }
+QLineEdit#paletteEdit { background: @pathBg; color: @fg; border: none; border-radius: 8px;
+    padding: 8px 10px; font-size: 14px; selection-background-color: @accent; }
+QListWidget#paletteList { background: transparent; color: @fg; outline: 0; }
 QDialog#helpDialog { background: @window; }
 QWidget#helpSide { background: @sidebar; border-right: 1px solid @border; }
 QLabel#helpTitle { color: @fg; font-weight: bold; font-size: 15px; padding: 2px 4px; }
@@ -784,6 +792,10 @@ void MainWindow::setupActions()
         dialog->activateWindow();
     });
 
+    m_paletteAct = new QAction(tr("Command Palette…"), this);
+    m_paletteAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
+    connect(m_paletteAct, &QAction::triggered, this, &MainWindow::showCommandPalette);
+
     m_guideAct = new QAction(tr("User Guide"), this);
     m_guideAct->setShortcut(QKeySequence::HelpContents); // F1
     connect(m_guideAct, &QAction::triggered, this, [this] { showGuide(QStringLiteral("start")); });
@@ -800,7 +812,7 @@ void MainWindow::setupActions()
                 m_selectAllAct, m_selectMatchingAct, m_invertSelectionAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
                 m_extractHereAct, m_extractToAct, m_openLocationAct, m_starAct, m_removeRecentAct,
-                m_splitAct, m_copyToOtherAct, m_moveToOtherAct, m_guideAct, m_shortcutsAct});
+                m_splitAct, m_copyToOtherAct, m_moveToOtherAct, m_guideAct, m_shortcutsAct, m_paletteAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -1327,6 +1339,7 @@ void MainWindow::refreshChrome()
         return;
     m_trashBar->setVisible(m_model->isTrash());
     m_pathBar->setPath(m_current);
+    updateGitBadge();
     setWindowTitle(tr("%1 — Kosmos").arg(titleFor(m_current)));
     syncSidebarSelection();
     updateActions();
@@ -1336,6 +1349,65 @@ void MainWindow::refreshChrome()
     updateViewChrome();
     updatePaneCaptions();
     updateFloatingBar();
+}
+
+// Ctrl+Shift+P: every enabled command of the menu bar, labelled with its
+// menu, plus the ones that only live in right-click menus.
+void MainWindow::showCommandPalette()
+{
+    if (!m_palette)
+        m_palette = new CommandPalette(this);
+    updateEditActions();
+    bool allStarred = !selectedPaths().isEmpty();
+    for (const QString &p : selectedPaths())
+        allStarred = allStarred && Starred::instance().isStarred(p);
+    m_starAct->setText(allStarred ? tr("Unstar") : tr("Star"));
+
+    QList<CommandPalette::Command> commands;
+    QSet<QAction *> seen{m_paletteAct};
+    auto clean = [](QString text) {
+        text.remove(QLatin1Char('&'));
+        text.remove(QChar(0x2026));
+        return text.trimmed();
+    };
+    std::function<void(QMenu *, const QString &)> walk = [&](QMenu *menu, const QString &where) {
+        for (QAction *act : menu->actions()) {
+            if (act->isSeparator() || !act->isVisible())
+                continue;
+            if (QMenu *sub = act->menu()) {
+                if (sub == m_newDocumentMenu) {
+                    fillNewDocumentMenu(); // its items are made when it opens
+                    if (!act->isEnabled())
+                        continue;
+                }
+                walk(sub, where + QStringLiteral(" › ") + clean(sub->title()));
+                continue;
+            }
+            if (!act->isEnabled() || act->text().isEmpty() || seen.contains(act))
+                continue;
+            seen.insert(act);
+            commands.append({clean(act->text()), where, act});
+        }
+    };
+    for (QAction *top : m_menuBar->actions()) {
+        if (QMenu *menu = top->menu())
+            walk(menu, clean(menu->title()));
+    }
+    const QString selection = tr("Selection");
+    for (QAction *act : {m_starAct, m_removeRecentAct, m_openInNewTabAct, m_openLocationAct, m_openTerminalHereAct}) {
+        if (!act || seen.contains(act) || !act->isEnabled() || !act->isVisible())
+            continue;
+        if (act == m_removeRecentAct && m_model->place() != DirectoryModel::Place::Recent)
+            continue;
+        if (act == m_openLocationAct && !(m_model->isSearch() || m_model->isVirtual()))
+            continue;
+        if ((act == m_starAct || act == m_openInNewTabAct || act == m_openLocationAct) && selectedPaths().isEmpty())
+            continue;
+        seen.insert(act);
+        commands.append({clean(act->text()), selection, act});
+    }
+    m_contextFolder = m_current; // "Open in Terminal" acts on the open folder
+    m_palette->open(commands);
 }
 
 // Help → User Guide / Keyboard Shortcuts. One window; the shortcuts page is
@@ -1392,6 +1464,55 @@ void MainWindow::showGuide(const QString &topic)
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+}
+
+void MainWindow::updateGitBadge()
+{
+    if (m_background || !m_pathBar)
+        return;
+    const GitStatus *git = m_model ? m_model->git() : nullptr;
+    if (!git || !git->inRepository()) {
+        m_pathBar->setGitInfo(QString(), 0, QString());
+        return;
+    }
+    QString tip = tr("Git repository: %1").arg(QDir::toNativeSeparators(git->root()));
+    QString branch = git->branch();
+    if (git->blocked()) {
+        branch = tr("git: off");
+        tip += QLatin1Char('\n') + tr("Not checked: this repository's settings would run programs.");
+    } else if (git->tooSlow()) {
+        branch = tr("git: too big");
+        tip += QLatin1Char('\n') + tr("Not checked: git took too long for this repository.");
+    } else if (!git->ready()) {
+        branch = QStringLiteral("…");
+    } else {
+        tip += QLatin1Char('\n') + (git->changeCount() == 0 ? tr("No changes")
+                                     : git->changeCount() == 1 ? tr("1 changed item")
+                                                                : tr("%1 changed items").arg(git->changeCount()));
+    }
+    m_pathBar->setGitInfo(branch, git->blocked() || git->tooSlow() ? 0 : git->changeCount(), tip);
+}
+
+void MainWindow::refreshGitAll()
+{
+    for (int i = 0; i < m_paneCount; ++i) {
+        DirectoryModel *model = i == m_activePane ? m_model : m_panes[i].model;
+        if (model)
+            model->refreshGit();
+    }
+}
+
+void MainWindow::resetGitEverywhere()
+{
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (auto *window = qobject_cast<MainWindow *>(widget)) {
+            for (int i = 0; i < window->m_paneCount; ++i) {
+                DirectoryModel *model = i == window->m_activePane ? window->m_model : window->m_panes[i].model;
+                if (model)
+                    model->resetGit();
+            }
+        }
+    }
 }
 
 void MainWindow::applyExpandFolders()
@@ -1637,6 +1758,10 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     m_proxy = new FileFilterProxy(this);
     m_proxy->setSourceModel(m_model);
     m_model->setShowHidden(m_showHidden);
+    connect(m_model, &DirectoryModel::gitChanged, this, [this, index] {
+        if (index == m_activePane && !m_background)
+            updateGitBadge();
+    });
     connect(m_model, &DirectoryModel::loaded, this, [this, index] {
         PaneScope scope(this, index);
         updateFloatingBar();
@@ -1846,6 +1971,8 @@ void MainWindow::changeEvent(QEvent *event)
         applyTheme();
     else if (event->type() == QEvent::WindowStateChange)
         updateWindowState();
+    else if (event->type() == QEvent::ActivationChange && isActiveWindow())
+        refreshGitAll(); // back from an editor or a terminal: files may have changed
 }
 
 // -------------------------------------------------------------- sidebar ---
@@ -3241,6 +3368,7 @@ void MainWindow::compressSelection()
 
 void MainWindow::onJobFinished(FileJob *job)
 {
+    refreshGitAll();
     const QList<TransferResult> results = job->results();
     const QStringList errors = job->errors();
     const int done = int(results.size());
@@ -3481,6 +3609,8 @@ QWidget *MainWindow::buildMenuBar()
     view->addAction(m_analyzeFilesAct);
     view->addSeparator();
     view->addAction(m_splitAct);
+    view->addSeparator();
+    view->addAction(m_paletteAct);
     view->addSeparator();
     view->addAction(m_zoomInAct);
     view->addAction(m_zoomOutAct);

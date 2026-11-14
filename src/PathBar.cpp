@@ -50,6 +50,16 @@ PathBar::PathBar(QWidget *parent)
     m_stack->addWidget(m_edit);
     row->addWidget(m_stack, 1);
 
+    m_gitBadge = new QToolButton(this);
+    m_gitBadge->setObjectName("gitBadge");
+    m_gitBadge->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_gitBadge->setIconSize(QSize(14, 14));
+    m_gitBadge->setFocusPolicy(Qt::NoFocus);
+    m_gitBadge->setCursor(Qt::ArrowCursor);
+    m_gitBadge->hide();
+    row->addWidget(m_gitBadge);
+    row->addSpacing(2);
+
     m_menuButton = new QToolButton(this);
     m_menuButton->setObjectName("flat");
     m_menuButton->setToolTip(tr("Folder menu"));
@@ -72,7 +82,19 @@ void PathBar::setTheme(const Theme &theme)
 {
     m_theme = theme;
     m_menuButton->setIcon(glyphIcon(Glyph::Kebab, theme.fg));
+    m_gitBadge->setIcon(glyphIcon(Glyph::Branch, theme.dimFg));
     rebuild();
+}
+
+void PathBar::setGitInfo(const QString &branch, int changes, const QString &tooltip)
+{
+    if (branch.isEmpty()) {
+        m_gitBadge->hide();
+        return;
+    }
+    m_gitBadge->setText(changes > 0 ? QStringLiteral("%1 · %2").arg(branch).arg(changes) : branch);
+    m_gitBadge->setToolTip(tooltip);
+    m_gitBadge->show();
 }
 
 void PathBar::startEditing()

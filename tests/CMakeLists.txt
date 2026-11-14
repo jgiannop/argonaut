@@ -82,3 +82,11 @@ set_tests_properties(naming PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_TRASH_HOME_ONLY=1"
     TIMEOUT 60
 )
+
+qt_add_executable(tst_git tst_git.cpp)
+target_link_libraries(tst_git PRIVATE kosmos_core Qt6::Test)
+add_test(NAME git COMMAND tst_git)
+set_tests_properties(git PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;KOSMOS_TRASH_HOME_ONLY=1;GIT_CONFIG_NOSYSTEM=1"
+    TIMEOUT 120
+)
