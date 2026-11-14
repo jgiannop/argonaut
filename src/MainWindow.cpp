@@ -1,7 +1,9 @@
 #include "MainWindow.h"
 
+#include "AboutDialog.h"
 #include "Access.h"
 #include "BatchRenameDialog.h"
+#include "HelpDialog.h"
 #include "Naming.h"
 
 #include "Format.h"
@@ -312,6 +314,37 @@ QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid t
     border-radius: 12px; padding: 8px 8px 6px 8px; }
 QToolButton#themeCard:hover { background: @hover; }
 QToolButton#themeCard:checked { border-color: @accent; }
+
+QDialog#helpDialog { background: @window; }
+QWidget#helpSide { background: @sidebar; border-right: 1px solid @border; }
+QLabel#helpTitle { color: @fg; font-weight: bold; font-size: 15px; padding: 2px 4px; }
+QLabel#helpNoMatch { color: @dim; padding: 4px; }
+QLineEdit#helpSearch { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+    padding: 6px 8px; selection-background-color: @accent; }
+QListWidget#helpTopics { background: transparent; color: @fg; outline: 0; }
+QListWidget#helpTopics::item { padding: 7px 8px; border-radius: 6px; }
+QListWidget#helpTopics::item:selected { background: @selected; color: @fg; }
+QListWidget#helpTopics::item:hover:!selected { background: @hover; }
+QTextBrowser#helpPage { background: @window; color: @fg; border: none; }
+
+QDialog#aboutDialog { background: @window; }
+QLabel#aboutName { color: @fg; font-weight: bold; font-size: 26px; }
+QLabel#aboutVersion { background: @itemSel; color: @accent; font-weight: bold; border-radius: 10px;
+    padding: 3px 12px; }
+QLabel#aboutTagline { color: @dim; font-size: 14px; }
+QToolButton#aboutTab { background: transparent; color: @dim; border: none; border-radius: 14px;
+    padding: 5px 14px; font-weight: bold; }
+QToolButton#aboutTab:hover { background: @hover; color: @fg; }
+QToolButton#aboutTab:checked { background: @pathBg; color: @fg; }
+QLabel#aboutText { color: @fg; }
+QLabel#aboutDim { color: @dim; }
+QWidget#aboutCard { background: @pathBg; border-radius: 10px; }
+QLabel#aboutCardHeading { color: @fg; font-weight: bold; }
+QLabel#aboutCardText { color: @dim; }
+QLabel#aboutLabel { color: @dim; }
+QLabel#aboutValue { color: @fg; }
+QPushButton#aboutClose { background: @accent; color: #ffffff; border: none; border-radius: 6px;
+    padding: 7px 18px; font-weight: bold; }
 )");
     const QList<std::pair<const char *, QColor>> tokens = {
         {"@outline", t.outline},   {"@sidebar", t.sidebar},       {"@window", t.window},
@@ -739,10 +772,22 @@ void MainWindow::setupActions()
     m_aboutAct = new QAction(tr("About Kosmos"), this);
     m_aboutAct->setMenuRole(QAction::AboutRole);
     connect(m_aboutAct, &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About Kosmos"),
-                           tr("<b>Kosmos</b> %1<br>A fast, cross-platform file manager.")
-                               .arg(QApplication::applicationVersion()));
+        static QPointer<AboutDialog> dialog;
+        if (!dialog)
+            dialog = new AboutDialog(this);
+        dialog->show();
+        dialog->raise();
+        dialog->activateWindow();
     });
+
+    m_guideAct = new QAction(tr("User Guide"), this);
+    m_guideAct->setShortcut(QKeySequence::HelpContents); // F1
+    connect(m_guideAct, &QAction::triggered, this, [this] { showGuide(QStringLiteral("start")); });
+
+    m_shortcutsAct = new QAction(tr("Keyboard Shortcuts"), this);
+    m_shortcutsAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Question),
+                                  QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Slash)});
+    connect(m_shortcutsAct, &QAction::triggered, this, [this] { showGuide(QStringLiteral("shortcuts")); });
 
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
@@ -751,7 +796,7 @@ void MainWindow::setupActions()
                 m_selectAllAct, m_selectMatchingAct, m_invertSelectionAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
                 m_newTabAct, m_closeWindowAct, m_reopenTabAct, m_propertiesAct, m_compressAct,
                 m_extractHereAct, m_extractToAct, m_openLocationAct, m_starAct, m_removeRecentAct,
-                m_splitAct, m_copyToOtherAct, m_moveToOtherAct});
+                m_splitAct, m_copyToOtherAct, m_moveToOtherAct, m_guideAct, m_shortcutsAct});
     if (m_terminalAct)
         addAction(m_terminalAct);
 }
@@ -867,6 +912,7 @@ QWidget *MainWindow::buildSidebarPane()
     mainMenu->addAction(m_hiddenAct);
     mainMenu->addSeparator();
     mainMenu->addAction(m_prefsAct);
+    mainMenu->addAction(m_guideAct);
     mainMenu->addAction(m_aboutAct);
     m_menuButton->setMenu(mainMenu);
 
@@ -1286,6 +1332,62 @@ void MainWindow::refreshChrome()
     updateViewChrome();
     updatePaneCaptions();
     updateFloatingBar();
+}
+
+// Help → User Guide / Keyboard Shortcuts. One window; the shortcuts page is
+// made from these actions, so it always matches the menus.
+void MainWindow::showGuide(const QString &topic)
+{
+    static QPointer<HelpDialog> dialog;
+    if (!dialog) {
+        using Group = HelpDialog::ShortcutGroup;
+        auto row = [](QAction *act, const QString &name = QString()) {
+            QString text = name.isEmpty() ? act->text() : name;
+            text.remove(QLatin1Char('&')).remove(QChar(0x2026)); // "Rename…" -> "Rename"
+            return HelpDialog::Shortcut{text, act->shortcuts(), QString()};
+        };
+        auto note = [](const QString &name, const QString &keys) {
+            return HelpDialog::Shortcut{name, {}, keys};
+        };
+        QList<Group> groups;
+        groups.append({tr("Moving Around"),
+                       {row(m_backAct, tr("Back")), row(m_forwardAct, tr("Forward")), row(m_upAct, tr("Up one folder")),
+                        row(m_homeAct, tr("Home folder")), row(m_locationAct, tr("Type a path")),
+                        row(m_searchAct, tr("Search this folder and sub-folders")),
+                        note(tr("Open the selected item"), QStringLiteral("[[Enter]]")),
+                        note(tr("Jump to a name"), tr("type its first letters"))}});
+        groups.append({tr("Views"),
+                       {row(m_gridAct, tr("Grid")), row(m_listAct, tr("List")), row(m_analyzeAct, tr("Disk usage")),
+                        row(m_hiddenAct, tr("Show hidden files")), row(m_sidebarAct, tr("Show sidebar")),
+                        row(m_zoomInAct, tr("Zoom in")), row(m_zoomOutAct, tr("Zoom out")),
+                        row(m_zoomResetAct, tr("Normal size")),
+                        note(tr("Zoom with the mouse"), tr("[[Ctrl]] + mouse wheel")),
+                        note(tr("Quick Look (preview)"), QStringLiteral("[[Space]]")),
+                        row(m_splitAct, tr("Split view")), row(m_copyToOtherAct, tr("Copy to the other side")),
+                        row(m_moveToOtherAct, tr("Move to the other side"))}});
+        QList<HelpDialog::Shortcut> files = {
+            row(m_selectAllAct), row(m_selectMatchingAct), row(m_invertSelectionAct),
+            row(m_copyAct), row(m_cutAct), row(m_pasteAct), row(m_renameAct, tr("Rename (several items: batch rename)")),
+            row(m_newFolderAct), row(m_newFileAct), row(m_trashAct), row(m_deleteAct, tr("Delete permanently")),
+            row(m_undoAct, tr("Undo")), row(m_redoAct, tr("Redo")), row(m_propertiesAct),
+            row(m_bookmarkAct, tr("Bookmark this folder"))};
+        groups.append({tr("Files"), files});
+        QList<HelpDialog::Shortcut> windows = {
+            row(m_newTabAct), row(m_closeAct), row(m_reopenTabAct),
+            note(tr("Next / previous tab"), QStringLiteral("[[Ctrl+Tab]] / [[Ctrl+Shift+Tab]]")),
+            note(tr("Go to tab 1…9"), QStringLiteral("[[Alt+1]] … [[Alt+9]]")),
+            row(m_closeWindowAct), row(m_quitAct)};
+        if (m_terminalAct)
+            windows.prepend(row(m_terminalAct, tr("Terminal")));
+        groups.append({tr("Tabs and Windows"), windows});
+        groups.append({tr("Help"), {row(m_guideAct), row(m_shortcutsAct), row(m_prefsAct)}});
+
+        dialog = new HelpDialog(groups, this);
+    }
+    dialog->showTopic(topic);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::applyListColumns()
@@ -3325,6 +3427,9 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_searchAct);
 
     QMenu *help = addMenu(tr("&Help"));
+    help->addAction(m_guideAct);
+    help->addAction(m_shortcutsAct);
+    help->addSeparator();
     help->addAction(m_aboutAct);
 
     m_menuBar->installEventFilter(this);

@@ -267,6 +267,9 @@ private:
     QAction *m_copyLocationAct = nullptr;
     QAction *m_prefsAct = nullptr;
     QAction *m_aboutAct = nullptr;
+    QAction *m_guideAct = nullptr;     // F1: the built-in user guide
+    QAction *m_shortcutsAct = nullptr; // Ctrl+?: the guide's shortcuts page
+    void showGuide(const QString &topic);
     QAction *m_openAct = nullptr;
     QAction *m_cutAct = nullptr;
     QAction *m_copyAct = nullptr;

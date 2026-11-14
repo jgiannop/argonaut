@@ -61,7 +61,7 @@ void migrateFromKaftilous()
 void setIdentity()
 {
     QCoreApplication::setApplicationName("Kosmos");
-    QCoreApplication::setApplicationVersion("0.2.0");
+    QCoreApplication::setApplicationVersion(QStringLiteral(KOSMOS_VERSION)); // from CMakeLists.txt
     QCoreApplication::setOrganizationName("Kosmos"); // QSettings location
     migrateFromKaftilous();
 }
