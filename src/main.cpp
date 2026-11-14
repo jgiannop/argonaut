@@ -31,7 +31,7 @@ void copyIfMissing(const QString &from, const QString &to)
     }
 }
 
-// The app was called Kaftilous before 0.2 and Kosmos before 0.3. On the
+// The app was called Kaftilous before 0.2 and Kosmos before 0.4. On the
 // first start under the new name, bring over the newest old name's settings,
 // stars, content-type cache and saved API key file. Old files are only
 // copied, never removed, so going back to an old build still works.
