@@ -296,6 +296,10 @@ QListWidget#appList::item:hover:!selected { background: @hover; }
 QDialog#preferences { background: @window; }
 QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#prefHint { color: @dim; }
+QCheckBox#prefCheck { color: @fg; spacing: 8px; }
+QCheckBox#prefCheck::indicator { width: 14px; height: 14px; border: 1px solid @dim;
+    border-radius: 4px; background: @pathBg; }
+QCheckBox#prefCheck::indicator:checked { background: @accent; border-color: @accent; }
 QWidget#quickLook { background: @window; }
 QLabel#paneCaption { background: @window; color: @dim; padding: 5px 14px; border-bottom: 1px solid @border; }
 QLabel#paneCaption[active="true"] { color: @accent; font-weight: bold; }
@@ -1390,6 +1394,61 @@ void MainWindow::showGuide(const QString &topic)
     dialog->activateWindow();
 }
 
+void MainWindow::applyExpandFolders()
+{
+    for (int i = 0; i < m_paneCount; ++i) {
+        const bool active = i == m_activePane;
+        DirectoryModel *model = active ? m_model : m_panes[i].model;
+        const bool grid = active ? m_grid : m_panes[i].grid;
+        if (model)
+            model->setTreeEnabled(m_expandFolders && !grid);
+    }
+    if (m_detailView)
+        m_detailView->viewport()->update();
+}
+
+void MainWindow::setExpandFoldersEverywhere(bool on)
+{
+    QSettings().setValue("view/expandFolders", on);
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (auto *window = qobject_cast<MainWindow *>(widget)) {
+            window->m_expandFolders = on;
+            window->applyExpandFolders();
+        }
+    }
+}
+
+// Expandable folders: → opens the current folder, ← closes it, or goes to
+// the folder an item is in (like Nautilus).
+bool MainWindow::handleTreeKey(QKeyEvent *key)
+{
+    if (!m_model->isTreeActive() || key->modifiers() != Qt::NoModifier
+        || (key->key() != Qt::Key_Right && key->key() != Qt::Key_Left))
+        return false;
+    const QModelIndex current = m_detailView->currentIndex().siblingAtColumn(0);
+    if (!current.isValid())
+        return false;
+    const QString path = m_model->filePath(toSource(current));
+    if (key->key() == Qt::Key_Right) {
+        if (current.data(DirectoryModel::ExpandableRole).toBool() && !m_model->isExpanded(path))
+            m_model->expand(path);
+        return true; // never scroll sideways
+    }
+    if (m_model->isExpanded(path)) {
+        m_model->collapse(path);
+        return true;
+    }
+    if (current.data(DirectoryModel::TreeDepthRole).toInt() > 0) {
+        const QModelIndex parent = toView(m_model->indexForPath(QFileInfo(path).absolutePath()));
+        if (parent.isValid()) {
+            m_detailView->selectionModel()->setCurrentIndex(
+                parent, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            m_detailView->scrollTo(parent);
+        }
+    }
+    return true;
+}
+
 void MainWindow::applyListColumns()
 {
     for (int i = 0; i < m_paneCount; ++i) {
@@ -1574,6 +1633,7 @@ void MainWindow::transferToOtherPane(bool move)
 QWidget *MainWindow::buildPane(QWidget *parent, int index)
 {
     m_model = new DirectoryModel(this);
+    m_model->setTreeEnabled(m_expandFolders && !m_grid);
     m_proxy = new FileFilterProxy(this);
     m_proxy->setSourceModel(m_model);
     m_model->setShowHidden(m_showHidden);
@@ -2012,6 +2072,8 @@ void MainWindow::loadSettings()
     if (settings.contains("view/listHeader"))
         m_detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
     m_listColumns = settings.value("view/listColumns").toStringList();
+    m_expandFolders = settings.value("view/expandFolders", false).toBool();
+    applyExpandFolders();
     applyListColumns(); // after restoreState: an older saved header knows only 4 columns
         fitListColumns(); // the saved layout may hide columns this width has room for
     sortBy(settings.value("view/sortColumn", DirectoryModel::NameColumn).toInt(),
@@ -2252,6 +2314,7 @@ void MainWindow::setGridMode(bool grid)
     if (m_analyzeButton)
         m_analyzeButton->setChecked(false);
     m_grid = grid;
+    m_model->setTreeEnabled(m_expandFolders && !grid); // the grid shows only the open folder
     QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_iconView) : m_detailView;
     const bool hadFocus = m_view && m_view->hasFocus();
     const QModelIndex current = m_view ? m_view->currentIndex() : QModelIndex();
@@ -2794,6 +2857,25 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             ejectDrive(item->data(PathRole).toString(), item->text());
             return true; // don't also open it
         }
+    } else if (m_detailView && watched == m_detailView->viewport()
+               && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)
+               && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton
+               && [&] { // on a folder's ▸ arrow: open or close it, nothing else
+                      const QPoint pos = static_cast<QMouseEvent *>(event)->position().toPoint();
+                      const QModelIndex index = m_detailView->indexAt(pos).siblingAtColumn(0);
+                      const QRect arrow = m_listDelegate->expanderRect(m_detailView->visualRect(index), index);
+                      if (!index.isValid() || !arrow.adjusted(-2, -4, 2, 4).contains(pos))
+                          return false;
+                      if (event->type() == QEvent::MouseButtonPress) {
+                          const QString path = m_model->filePath(toSource(index));
+                          if (m_model->isExpanded(path))
+                              m_model->collapse(path);
+                          else
+                              m_model->expand(path);
+                      }
+                      return true;
+                  }()) {
+        return true;
     } else if (isFileViewport(watched) && event->type() == QEvent::MouseButtonPress
                && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton) {
         auto *view = static_cast<QAbstractItemView *>(static_cast<QWidget *>(watched)->parentWidget());
@@ -2826,6 +2908,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 m_quickLook->hide();
                 return true;
             }
+            if (watched == m_detailView && handleTreeKey(key))
+                return true;
         }
     }
     if (m_renameEdit && isFileViewport(watched) && event->type() == QEvent::Paint)
@@ -3658,7 +3742,7 @@ void MainWindow::updateRenameGeometry()
         return;
     }
     const FileItemDelegate *delegate = m_grid ? m_gridDelegate : m_listDelegate;
-    QRect rect = delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics());
+    QRect rect = delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics(), index);
     const int width = m_view->viewport()->width();
     if (rect.right() > width - 3)
         rect.moveRight(width - 3);

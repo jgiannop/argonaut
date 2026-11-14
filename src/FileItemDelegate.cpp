@@ -65,7 +65,47 @@ QSize FileItemDelegate::gridCellSize(const QFontMetrics &fm) const
     return QSize(width, GridPad + m_iconSize + GridPad + GridMaxLines * fm.lineSpacing() + 2 * GridPad);
 }
 
-QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics &fm) const
+int FileItemDelegate::treeIndent(const QModelIndex &index) const
+{
+    if (m_grid || !index.isValid())
+        return 0;
+    const int depth = index.data(DirectoryModel::TreeDepthRole).toInt();
+    return depth < 0 ? 0 : (depth + 1) * TreeStep; // room for the arrow, then one step per level
+}
+
+QRect FileItemDelegate::expanderRect(const QRect &cellRect, const QModelIndex &index) const
+{
+    if (m_grid || index.column() != 0 || !index.data(DirectoryModel::ExpandableRole).toBool())
+        return {};
+    const int depth = index.data(DirectoryModel::TreeDepthRole).toInt();
+    const int left = cellRect.left() + ListInset + 4 + depth * TreeStep;
+    return QRect(left, cellRect.center().y() - TreeStep / 2 + 1, TreeStep, TreeStep);
+}
+
+// ▸ closed, ▾ open.
+void FileItemDelegate::paintExpander(QPainter *painter, const QRect &rect, bool expanded) const
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(QPen(m_theme.dimFg, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter->setBrush(Qt::NoBrush);
+    const QPointF c = QRectF(rect).center();
+    QPainterPath chevron;
+    if (expanded) {
+        chevron.moveTo(c + QPointF(-3.5, -1.8));
+        chevron.lineTo(c + QPointF(0, 1.8));
+        chevron.lineTo(c + QPointF(3.5, -1.8));
+    } else {
+        chevron.moveTo(c + QPointF(-1.8, -3.5));
+        chevron.lineTo(c + QPointF(1.8, 0));
+        chevron.lineTo(c + QPointF(-1.8, 3.5));
+    }
+    painter->drawPath(chevron);
+    painter->restore();
+}
+
+QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics &fm,
+                                       const QModelIndex &index) const
 {
     const int height = fm.height() + 12;
     if (m_grid) {
@@ -76,7 +116,7 @@ QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics
         return QRect(cell.center().x() - width / 2 + 1, top, width, height);
     }
     // List: `itemRect` is the Name cell; the field covers the name part.
-    const int left = itemRect.left() + ListInset + 10 + m_iconSize + 12 - 6;
+    const int left = itemRect.left() + ListInset + 10 + treeIndent(index) + m_iconSize + 12 - 6;
     return QRect(left, itemRect.center().y() - height / 2 + 1,
                  qMax(120, itemRect.right() - 4 - left), height);
 }
@@ -90,7 +130,7 @@ QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMode
     const QString text = index.data().toString();
     int width = option.fontMetrics.horizontalAdvance(text) + 2 * ListTextPad;
     if (index.column() == 0)
-        width += ListInset + 10 + m_iconSize + 12;
+        width += ListInset + 10 + treeIndent(index) + m_iconSize + 12;
     return QSize(width, height);
 }
 
@@ -181,7 +221,10 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
     const QFontMetrics &fm = option.fontMetrics;
     painter->setFont(option.font);
     if (column == 0) {
-        const QRect iconRect(option.rect.left() + ListInset + 10,
+        const QRect expander = expanderRect(option.rect, index);
+        if (!expander.isEmpty())
+            paintExpander(painter, expander, index.data(DirectoryModel::ExpandedRole).toBool());
+        const QRect iconRect(option.rect.left() + ListInset + 10 + treeIndent(index),
                              option.rect.center().y() - m_iconSize / 2 + 1, m_iconSize,
                              m_iconSize);
         paintIcon(painter, iconRect, index);

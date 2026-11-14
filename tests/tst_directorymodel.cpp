@@ -71,6 +71,13 @@ private slots:
     void lockAndLinkEmblems();
     void chmodUpdatesRow();
     void selectionChangeableFolders();
+    void treeExpandCollapse();
+    void treeSortsEachFolder();
+    void treeLiveUpdates();
+    void treeOpenedFolderDeleted();
+    void treeHiddenItems();
+    void treeOnlyForPlainFolders();
+    void treeOpenRacesRescan();
 
 private:
     bool load(const QString &path);
@@ -587,6 +594,174 @@ void TestDirectoryModel::selectionChangeableFolders()
     }
     QVERIFY(::chmod(QFile::encodeName(m_dir + "/closed").constData(), 0755) == 0);
 #endif
+}
+
+namespace {
+// "name@depth" for every row, in order.
+QStringList treeRows(const DirectoryModel &model)
+{
+    QStringList out;
+    for (int row = 0; row < model.rowCount(); ++row) {
+        const QModelIndex i = model.index(row, 0);
+        out << i.data().toString() + '@' + QString::number(i.data(DirectoryModel::TreeDepthRole).toInt());
+    }
+    return out;
+}
+} // namespace
+
+void TestDirectoryModel::treeExpandCollapse()
+{
+    touch(m_dir + "/A/a1.txt");
+    touch(m_dir + "/A/a2.txt");
+    touch(m_dir + "/A/B/b1.txt");
+    touch(m_dir + "/z.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    QCOMPARE(treeRows(*m_model), QStringList({"A@0", "z.txt@0"}));
+    const QModelIndex a = m_model->indexForPath(m_dir + "/A");
+    QVERIFY(a.data(DirectoryModel::ExpandableRole).toBool());
+    QVERIFY(!a.data(DirectoryModel::ExpandedRole).toBool());
+
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "B@1", "a1.txt@1", "a2.txt@1", "z.txt@0"}), 5000);
+    QVERIFY(m_model->indexForPath(m_dir + "/A").data(DirectoryModel::ExpandedRole).toBool());
+    QCOMPARE(m_model->filePath(m_model->index(1, 0)), m_dir + "/A/B");
+
+    m_model->expand(m_dir + "/A/B");
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model),
+                              QStringList({"A@0", "B@1", "b1.txt@2", "a1.txt@1", "a2.txt@1", "z.txt@0"}), 5000);
+
+    // Closing A closes B too.
+    m_model->collapse(m_dir + "/A");
+    QCOMPARE(treeRows(*m_model), QStringList({"A@0", "z.txt@0"}));
+    QVERIFY(m_model->expandedFolders().isEmpty());
+
+    // Turning the tree off closes everything and shows no depth.
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 5, 5000);
+    m_model->setTreeEnabled(false);
+    QCOMPARE(m_model->rowCount(), 2);
+    QCOMPARE(m_model->index(0, 0).data(DirectoryModel::TreeDepthRole).toInt(), -1);
+    m_model->expand(m_dir + "/A"); // no tree: nothing happens
+    QTest::qWait(100);
+    QCOMPARE(m_model->rowCount(), 2);
+}
+
+void TestDirectoryModel::treeSortsEachFolder()
+{
+    touch(m_dir + "/A/a1.txt");
+    touch(m_dir + "/A/a10.txt");
+    touch(m_dir + "/A/a2.txt", 5000);
+    QDir().mkpath(m_dir + "/A/Sub");
+    touch(m_dir + "/b.txt", 10);
+    touch(m_dir + "/c.txt", 100000);
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 7, 5000);
+    QCOMPARE(names(*m_model), QStringList({"A", "Sub", "a1.txt", "a2.txt", "a10.txt", "b.txt", "c.txt"}));
+    m_model->sort(DirectoryModel::NameColumn, Qt::DescendingOrder);
+    QCOMPARE(names(*m_model), QStringList({"A", "Sub", "a10.txt", "a2.txt", "a1.txt", "c.txt", "b.txt"}));
+    m_model->sort(DirectoryModel::SizeColumn, Qt::DescendingOrder);
+    QCOMPARE(names(*m_model).mid(0, 3), QStringList({"A", "Sub", "a2.txt"})); // biggest in A first
+    QCOMPARE(names(*m_model).mid(5), QStringList({"c.txt", "b.txt"}));
+}
+
+void TestDirectoryModel::treeLiveUpdates()
+{
+    touch(m_dir + "/A/a1.txt");
+    touch(m_dir + "/z.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "a1.txt@1", "z.txt@0"}), 5000);
+
+    touch(m_dir + "/A/a0.txt"); // inside the opened folder: it's watched
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "a0.txt@1", "a1.txt@1", "z.txt@0"}), 5000);
+    QVERIFY(QFile::remove(m_dir + "/A/a1.txt"));
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "a0.txt@1", "z.txt@0"}), 5000);
+    touch(m_dir + "/m.txt"); // in the open folder: rows of A stay
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "a0.txt@1", "m.txt@0", "z.txt@0"}), 5000);
+
+    // Closed folders aren't watched any more.
+    m_model->collapse(m_dir + "/A");
+    touch(m_dir + "/A/late.txt");
+    QTest::qWait(500);
+    QCOMPARE(treeRows(*m_model), QStringList({"A@0", "m.txt@0", "z.txt@0"}));
+}
+
+void TestDirectoryModel::treeOpenedFolderDeleted()
+{
+    touch(m_dir + "/A/B/b1.txt");
+    touch(m_dir + "/z.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 3, 5000);
+    m_model->expand(m_dir + "/A/B");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 4, 5000);
+    QVERIFY(QDir(m_dir + "/A").removeRecursively());
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"z.txt@0"}), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_model->expandedFolders().isEmpty(), 5000);
+}
+
+void TestDirectoryModel::treeHiddenItems()
+{
+    touch(m_dir + "/A/.secret");
+    touch(m_dir + "/A/shown.txt");
+    touch(m_dir + "/.H/inside.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(treeRows(*m_model), QStringList({"A@0", "shown.txt@1"}), 5000);
+    m_model->setShowHidden(true);
+    QCOMPARE(treeRows(*m_model), QStringList({".H@0", "A@0", ".secret@1", "shown.txt@1"}));
+    m_model->expand(m_dir + "/.H");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 5, 5000);
+    // Hiding again closes the hidden folder (its items would float otherwise).
+    m_model->setShowHidden(false);
+    QCOMPARE(treeRows(*m_model), QStringList({"A@0", "shown.txt@1"}));
+    QVERIFY(!m_model->isExpanded(m_dir + "/.H"));
+    QVERIFY(m_model->isExpanded(m_dir + "/A"));
+}
+
+void TestDirectoryModel::treeOnlyForPlainFolders()
+{
+    touch(m_dir + "/A/a1.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    QVERIFY(m_model->isTreeActive());
+    m_model->expand(m_dir + "/A");
+    QTRY_COMPARE_WITH_TIMEOUT(m_model->rowCount(), 2, 5000);
+    // A search is flat and starts with every folder closed.
+    QVERIFY(search("a1"));
+    QVERIFY(!m_model->isTreeActive());
+    QCOMPARE(m_model->index(0, 0).data(DirectoryModel::TreeDepthRole).toInt(), -1);
+    QVERIFY(m_model->expandedFolders().isEmpty());
+    QCOMPARE(names(*m_model), QStringList({"a1.txt"})); // found once, not twice
+    QVERIFY(search(QString()));
+    QVERIFY(m_model->isTreeActive());
+    QCOMPARE(m_model->rowCount(), 1);
+}
+
+void TestDirectoryModel::treeOpenRacesRescan()
+{
+    for (int i = 0; i < 300; ++i)
+        touch(QStringLiteral("%1/f%2.txt").arg(m_dir).arg(i));
+    touch(m_dir + "/A/inside.txt");
+    m_model->setTreeEnabled(true);
+    QVERIFY(load(m_dir));
+    // A rescan that doesn't know about A yet, and opening A at once.
+    touch(m_dir + "/new.txt");
+    m_model->refresh();
+    QTest::qWait(250); // the rescan is running or done
+    m_model->expand(m_dir + "/A");
+    touch(m_dir + "/new2.txt");
+    QTRY_VERIFY_WITH_TIMEOUT(m_model->indexForPath(m_dir + "/new2.txt").isValid(), 5000);
+    QTest::qWait(400);
+    QVERIFY(m_model->indexForPath(m_dir + "/A/inside.txt").isValid());
+    QCOMPARE(m_model->index(1, 0).data().toString(), QStringLiteral("inside.txt"));
+    QCOMPARE(m_model->rowCount(), 300 + 1 + 1 + 2);
 }
 
 int main(int argc, char **argv)
