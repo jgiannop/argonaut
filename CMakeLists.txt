@@ -8,7 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(CTest) # adds the BUILD_TESTING option (ON by default)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Xml)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Xml Network)
 if(BUILD_TESTING)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
 endif()
@@ -54,9 +54,13 @@ qt_add_library(kosmos_core STATIC
     src/ContentSearch.cpp
     src/Remote.h
     src/Remote.cpp
+    src/KeyStore.h
+    src/KeyStore.cpp
+    src/Claude.h
+    src/Claude.cpp
 )
 target_include_directories(kosmos_core PUBLIC src)
-target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml)
+target_link_libraries(kosmos_core PUBLIC Qt6::Widgets Qt6::Xml Qt6::Network)
 
 # "Show in folder" for other apps (org.freedesktop.FileManager1), Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
