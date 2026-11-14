@@ -19,6 +19,17 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_INSTALL_PREFIX": "$env{HOME}/.local"
       }
+    },
+    {
+      "name": "package",
+      "displayName": "Package (.deb, installs into /usr)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/package",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "BUILD_TESTING": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -29,6 +40,10 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "package",
+      "configurePreset": "package"
     }
   ],
   "testPresets": [
