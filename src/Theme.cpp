@@ -551,20 +551,25 @@ QIcon applicationIcon()
         back.lineTo(114, 44);
         back.lineTo(14, 44);
         back.closeSubpath();
-        p.setBrush(QColor("#1a5fb4"));
+        p.setBrush(QColor("#c64600"));
         p.drawPath(back);
-        p.setBrush(QColor("#1c71d8"));
+        p.setBrush(QColor("#e66100"));
         p.drawRoundedRect(QRectF(14, 36, 100, 78), 10, 10);
         QLinearGradient front(0, 44, 0, 114);
-        front.setColorAt(0, QColor("#62a0ea"));
-        front.setColorAt(1, QColor("#3584e4"));
+        front.setColorAt(0, QColor("#ffa348"));
+        front.setColorAt(1, QColor("#ff7800"));
         p.setBrush(front);
         p.drawRoundedRect(QRectF(10, 44, 108, 70), 10, 10);
-        QPen pen(Qt::white, 9, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-        p.setPen(pen);
-        p.drawLine(QPointF(50, 58), QPointF(50, 100));
-        p.drawLine(QPointF(50, 82), QPointF(74, 58));
-        p.drawLine(QPointF(58, 74), QPointF(76, 100));
+
+        // The Argo: mast, mainsail, jib and hull.
+        p.setPen(QPen(Qt::white, 5, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(66, 54), QPointF(66, 90));
+        p.setPen(Qt::NoPen);
+        p.setBrush(Qt::white);
+        p.drawPolygon(QPolygonF({QPointF(70, 55), QPointF(92, 86), QPointF(70, 86)}));
+        p.drawPolygon(QPolygonF({QPointF(34, 92), QPointF(98, 92), QPointF(89, 104), QPointF(43, 104)}));
+        p.setBrush(QColor(255, 255, 255, 217)); // 85 %
+        p.drawPolygon(QPolygonF({QPointF(62, 61), QPointF(62, 86), QPointF(44, 86)}));
         p.end();
         icon.addPixmap(pm);
     }
