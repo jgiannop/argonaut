@@ -72,7 +72,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 - A built-in **User Guide** (F1) and a **Keyboard Shortcuts** page (Ctrl+?)
 - Sizes in GNOME's units (kB, MB, GB), matching Nautilus and drive labels
 
-**Organize with Claude** (optional, needs your own Anthropic API key)
+**Organize with Claude** (optional, needs your Claude subscription or your own Anthropic API key)
 
 File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose folders, better names and a short report for a messy folder. You review the plan as a checklist and apply what you keep; Ctrl+Z puts everything back. See [Claude and your privacy](#claude-and-your-privacy).
 
@@ -104,9 +104,14 @@ File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose fol
 
 ## Claude and your privacy
 
-The Claude features are off until you add an API key in **Preferences → Claude** (it is stored in your desktop keyring, or read from `ANTHROPIC_API_KEY`). Nothing is sent until you start a task yourself, and you see the estimated cost first.
+The Claude features are off until you connect in **Preferences → Claude**, in one of two ways:
 
-What is sent to Anthropic's API when you organize a folder: the names, sizes, dates and types of its items (up to 500), and, only if you allow it, the beginning of some files (some text, the first two pages of a PDF, a small preview of an image). Programs are never read. **Preferences → Claude** sets the default: names only, ask before reading files (the default), or read files when needed. Requests are billed to your own Anthropic account.
+- **Your Claude subscription** (Pro, Max…), through [Claude Code](https://claude.com/claude-code): install it, run `claude` once and sign in. Argonaut runs the `claude` program for each request and never sees your login. Requests count toward your plan's usage limits.
+- **An API key** from the Claude Console (stored in your desktop keyring, or read from `ANTHROPIC_API_KEY`). Requests are billed to your own Anthropic account, and you see the estimated cost first.
+
+Nothing is sent until you start a task yourself.
+
+What is sent to Anthropic when you organize a folder: the names, sizes, dates and types of its items (up to 500), and, only if you allow it, the beginning of some files (some text, the first two pages of a PDF, a small preview of an image). Programs are never read. **Preferences → Claude** sets the default: names only, ask before reading files (the default), or read files when needed.
 
 ## Building
 

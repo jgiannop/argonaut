@@ -513,13 +513,19 @@ Folders appear while they're measured.</p>
     add("organize", tr("Organizing with Claude"), tr(R"(
 <p class="lead">Claude, Anthropic's AI, can propose a tidy structure for a messy folder and tell you what's in it.</p>
 <h2>Before the first time</h2>
-<p>Add your Anthropic API key in <b>Preferences → Claude</b> (get one in the Claude Console) and press <b>Test</b>;
-that check is free. The key is kept in your keyring.</p>
+<p>Choose how to connect in <b>Preferences → Claude</b>:</p>
+<ul>
+<li><b>Your Claude subscription</b> (Pro, Max…): install Claude Code, run <code>claude</code> in a terminal once and
+sign in with your Claude account. Argonaut then asks through Claude Code, so it never sees your login; press
+<b>Check</b> to see that it is signed in. What you ask counts toward your plan's usage limits.</li>
+<li><b>An API key</b> from the Claude Console, paid per use: paste it and press <b>Test</b>; that check is free.
+The key is kept in your keyring.</li>
+</ul>
 <h2>Organizing a folder</h2>
 <ol>
 <li>Open the folder and choose <b>File → Organize with Claude…</b> (or right-click empty space).</li>
-<li>Optionally write your wishes (“invoices by year”) and choose what Claude may see. You see the estimated cost
-before anything is sent; nothing is sent until you press <b>Start</b>.</li>
+<li>Optionally write your wishes (“invoices by year”) and choose what Claude may see. With an API key you see the
+estimated cost before anything is sent; nothing is sent until you press <b>Start</b>.</li>
 <li>When names say too little, Claude may ask to read the beginning of a few files: you choose
 <b>Allow</b> or <b>Don't share</b>. Programs are never read.</li>
 <li>Read the report, untick any change you don't want, and press <b>Apply</b>.</li>
@@ -529,7 +535,9 @@ you kept, never overwriting anything. [[Ctrl+Z]] puts everything back (once for 
 <h2>Privacy and cost</h2>
 <p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
 of some files (some text, the first pages of a PDF, a small preview of an image). <b>Preferences → Claude</b> sets the
-default (names only, ask, or read when needed) and the model, and shows what you've spent.</p>
+default (names only, ask, or read when needed) and the model, and shows what you've spent with an API key.
+The same things are sent with either connection; with a subscription they go through Claude Code, which runs
+without any of its own tools, so it cannot read or change files itself.</p>
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(

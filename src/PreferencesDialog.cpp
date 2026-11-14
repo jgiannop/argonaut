@@ -295,7 +295,8 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
     heading->setObjectName("prefHeading");
     layout->addWidget(heading);
     auto *intro = new QLabel(tr("Argonaut can ask Claude, Anthropic's AI, to organize a folder. Nothing is sent "
-                                "until you start it yourself, and you see the cost first. You need an API key "
+                                "until you start it yourself. Connect with your Claude subscription (through "
+                                "<a href=\"https://claude.com/claude-code\">Claude Code</a>), or with an API key "
                                 "from the <a href=\"https://platform.claude.com/\">Claude Console</a>."),
                              this);
     intro->setObjectName("prefHint");
@@ -306,6 +307,41 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
     intro->setPalette(linkPalette);
     layout->addWidget(intro);
     layout->addSpacing(6);
+
+    // How to connect.
+    auto *connectionBox = new QComboBox(this);
+    connectionBox->setObjectName("propCombo");
+    connectionBox->addItem(tr("Claude subscription (Pro, Max…), through Claude Code"), int(Claude::Connection::Subscription));
+    connectionBox->addItem(tr("API key, paid per use"), int(Claude::Connection::ApiKey));
+    connectionBox->setCurrentIndex(connectionBox->findData(int(Claude::connection())));
+    layout->addWidget(connectionBox);
+
+    // Subscription: Claude Code holds the login; we only ask whether it has one.
+    auto *planRow = new QHBoxLayout;
+    auto *planStatus = new QLabel(this);
+    planStatus->setObjectName("prefHint");
+    planStatus->setWordWrap(true);
+    planRow->addWidget(planStatus, 1);
+    auto *planCheck = new QPushButton(tr("Check"), this);
+    planCheck->setObjectName("prefButton");
+    planCheck->setCursor(Qt::PointingHandCursor);
+    planRow->addWidget(planCheck, 0, Qt::AlignTop);
+    layout->addLayout(planRow);
+    auto *planClient = new Claude::Client(this);
+    auto checkPlan = [planClient, planStatus, planCheck] {
+        planCheck->setEnabled(false);
+        planStatus->setText(tr("Asking Claude Code…"));
+        planClient->checkLogin([planStatus, planCheck](const Claude::Login &login) {
+            planCheck->setEnabled(true);
+            QString text = (login.subscription ? QStringLiteral("✓ ") : QStringLiteral("✗ ")) + login.message;
+            if (!login.installed)
+                text += QLatin1Char(' ') + tr("Install it, run “claude” in a terminal and sign in with your Claude account.");
+            else if (login.subscription)
+                text += QLatin1Char(' ') + tr("Argonaut never sees your login; what it asks counts toward your plan's usage limits.");
+            planStatus->setText(text);
+        });
+    };
+    connect(planCheck, &QPushButton::clicked, this, checkPlan);
 
     // API key.
     auto *keyRow = new QHBoxLayout;
@@ -375,6 +411,23 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
         });
     });
 
+    // Only the chosen connection's controls are shown.
+    auto showConnection = [=] {
+        const bool subscription = Claude::Connection(connectionBox->currentData().toInt()) == Claude::Connection::Subscription;
+        for (QWidget *w : {static_cast<QWidget *>(planStatus), static_cast<QWidget *>(planCheck)})
+            w->setVisible(subscription);
+        for (QWidget *w : {static_cast<QWidget *>(key), static_cast<QWidget *>(save), static_cast<QWidget *>(test),
+                           static_cast<QWidget *>(remove), static_cast<QWidget *>(keyStatus)})
+            w->setVisible(!subscription);
+        if (subscription)
+            checkPlan();
+    };
+    showConnection();
+    connect(connectionBox, &QComboBox::currentIndexChanged, this, [connectionBox, showConnection] {
+        Claude::setConnection(Claude::Connection(connectionBox->currentData().toInt()));
+        showConnection();
+    });
+
     // What may be sent.
     layout->addSpacing(10);
     auto *modeLabel = new QLabel(tr("What Claude may see"), this);
@@ -432,7 +485,7 @@ void PreferencesDialog::addClaudeSection(QVBoxLayout *layout)
     auto *spentRow = new QHBoxLayout;
     auto *spent = new QLabel(this);
     spent->setObjectName("prefHint");
-    auto showSpent = [spent] { spent->setText(tr("Spent in Argonaut so far: $%1").arg(Claude::spent(), 0, 'f', 2)); };
+    auto showSpent = [spent] { spent->setText(tr("Spent with the API key so far: $%1").arg(Claude::spent(), 0, 'f', 2)); };
     showSpent();
     auto *reset = new QPushButton(tr("Reset"), this);
     reset->setObjectName("prefButton");

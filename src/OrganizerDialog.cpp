@@ -1,6 +1,5 @@
 #include "OrganizerDialog.h"
 
-#include "KeyStore.h"
 #include "Theme.h"
 
 #include <QComboBox>
@@ -232,9 +231,20 @@ void OrganizerDialog::showStart()
         m_start->setEnabled(false);
         return;
     }
-    if (KeyStore::load().isEmpty()) {
-        m_estimate->setText(tr("Add your Anthropic API key in Preferences → Claude first."));
+    const bool subscription = m_client->connection() == Claude::Connection::Subscription;
+    if (!m_client->ready()) {
+        m_estimate->setText(subscription ? tr("Install Claude Code and sign in with your Claude account first "
+                                              "(see Preferences → Claude).")
+                                         : tr("Add your Anthropic API key in Preferences → Claude first."));
         m_start->setEnabled(false);
+        return;
+    }
+    if (subscription) {
+        // No price to show: it counts toward the plan's usage limits.
+        m_start->setEnabled(true);
+        m_estimate->setText(tr("Uses your Claude subscription through Claude Code, with %1. "
+                               "It counts toward your plan's usage limits; there is no extra charge.")
+                                .arg(Claude::modelInfo(Claude::model()).name));
         return;
     }
     m_start->setEnabled(true);
@@ -280,7 +290,9 @@ void OrganizerDialog::showResult(const QString &report, const QList<Organizer::M
     m_plan->setColumnWidth(0, qMin(m_plan->columnWidth(0), 260));
     m_plan->resizeColumnToContents(1);
     m_plan->setColumnWidth(1, qMin(m_plan->columnWidth(1), 260));
-    m_cost->setText(tr("This cost %1.").arg(money(m_organizer->dollars())));
+    m_cost->setText(m_client->connection() == Claude::Connection::Subscription
+                        ? tr("Done with your Claude subscription.")
+                        : tr("This cost %1.").arg(money(m_organizer->dollars())));
     updateApply();
     m_pages->setCurrentIndex(2);
 }
