@@ -6,24 +6,64 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 
 #include <cstdio>
 
-#if defined(KAFTILOUS_DBUS)
+#if defined(KOSMOS_DBUS)
 #include "FileManagerService.h"
 #include <QDBusConnection>
 #endif
 
 namespace {
 
+void copyIfMissing(const QString &from, const QString &to)
+{
+    if (QFileInfo::exists(from) && !QFileInfo::exists(to)) {
+        QDir().mkpath(QFileInfo(to).absolutePath());
+        QFile::copy(from, to);
+    }
+}
+
+// The app was called Kaftilous before 0.2. On the first start under the new
+// name, bring over its settings, stars and content-type cache. The old files
+// are only copied, never removed, so going back to an old build still works.
+void migrateFromKaftilous()
+{
+    QSettings current;
+    if (!current.allKeys().isEmpty())
+        return; // already migrated, or used as Kosmos already
+    QSettings old(QStringLiteral("Kaftilous"), QStringLiteral("Kaftilous"));
+    const QStringList keys = old.allKeys();
+    if (keys.isEmpty())
+        return; // a fresh install
+    for (const QString &key : keys)
+        current.setValue(key, old.value(key));
+    current.sync();
+
+    const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    copyIfMissing(data + "/kaftilous/starred", data + "/kosmos/starred");
+
+    const QString cacheNow = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QCoreApplication::setOrganizationName("Kaftilous"); // CacheLocation depends on these
+    QCoreApplication::setApplicationName("Kaftilous");
+    const QString cacheOld = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QCoreApplication::setOrganizationName("Kosmos");
+    QCoreApplication::setApplicationName("Kosmos");
+    copyIfMissing(cacheOld + "/content-types.bin", cacheNow + "/content-types.bin");
+}
+
 void setIdentity()
 {
-    QCoreApplication::setApplicationName("Kaftilous");
-    QCoreApplication::setApplicationVersion("0.1.0");
-    QCoreApplication::setOrganizationName("Kaftilous"); // QSettings location
+    QCoreApplication::setApplicationName("Kosmos");
+    QCoreApplication::setApplicationVersion("0.2.0");
+    QCoreApplication::setOrganizationName("Kosmos"); // QSettings location
+    migrateFromKaftilous();
 }
 
 // Paths or URLs from the command line, split into folders and other items.
@@ -50,12 +90,12 @@ int switchDefault(bool makeDefault)
     const bool ok = makeDefault ? DefaultFileManager::makeDefault(&error)
                                 : DefaultFileManager::restorePrevious(&error, &restoredTo);
     if (!ok) {
-        std::fprintf(stderr, "kaftilous: %s\n", qPrintable(error));
+        std::fprintf(stderr, "kosmos: %s\n", qPrintable(error));
         return 1;
     }
     if (makeDefault)
-        std::printf("Kaftilous now opens folders and \"Show in folder\".\n"
-                    "To go back: kaftilous --restore-nautilus\n");
+        std::printf("Kosmos now opens folders and \"Show in folder\".\n"
+                    "To go back: kosmos --restore-nautilus\n");
     else
         std::printf("Folders are opened by %s again.\n", qPrintable(restoredTo));
     return 0;
@@ -96,7 +136,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     setIdentity();
-    QGuiApplication::setDesktopFileName("kaftilous"); // Wayland app id: the dock finds our icon
+    QGuiApplication::setDesktopFileName("kosmos"); // Wayland app id: the dock finds our icon
     QApplication::setWindowIcon(applicationIcon());
     // Same base style everywhere; our style sheet and drawing do the rest.
     QApplication::setStyle("Fusion");
@@ -110,20 +150,20 @@ int main(int argc, char *argv[])
     const QCommandLineOption service("service", QApplication::translate(
         "main", "Answer \"Show in folder\" for other apps (started by D-Bus)."));
     parser.addOption(service);
-    parser.addOption({"make-default", QApplication::translate("main", "Make Kaftilous the file manager for folders and \"Show in folder\".")});
+    parser.addOption({"make-default", QApplication::translate("main", "Make Kosmos the file manager for folders and \"Show in folder\".")});
     parser.addOption({{"restore-nautilus", "restore-default"},
                       QApplication::translate("main", "Give folders back to Nautilus (or the previous file manager).")});
     parser.addPositionalArgument("locations", QApplication::translate("main", "Folders to open, or files to show."),
                                  "[locations…]");
     parser.process(app);
 
-#if defined(KAFTILOUS_DBUS)
+#if defined(KOSMOS_DBUS)
     if (parser.isSet(service)) {
         // D-Bus started us for org.freedesktop.FileManager1. Windows open on
         // request; we quit when the last one closes, or soon if none was asked for.
         FileManagerService manager;
         if (!manager.registerOn(QDBusConnection::sessionBus())) {
-            std::fprintf(stderr, "kaftilous: another program already answers \"Show in folder\".\n");
+            std::fprintf(stderr, "kosmos: another program already answers \"Show in folder\".\n");
             return 1;
         }
         QObject::connect(&manager, &FileManagerService::showFolders, [](const QStringList &paths, const QString &id) {

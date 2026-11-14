@@ -1,5 +1,5 @@
-// Tests for DefaultFileManager: making Kaftilous the file manager and giving
-// folders back, with a fake `gio` (KAFTILOUS_GIO_PROGRAM) that keeps the
+// Tests for DefaultFileManager: making Kosmos the file manager and giving
+// folders back, with a fake `gio` (KOSMOS_GIO_PROGRAM) that keeps the
 // default in a file. HOME and XDG_* are sandboxed, so the real mimeapps.list
 // and D-Bus services are never touched.
 
@@ -55,7 +55,7 @@ void TestDefaultFileManager::init()
                              "  printf 'Default application for \"%s\": %s\\nRegistered applications:\\n\\t%s\\n' \"$2\" \"$d\" \"$d\"\n"
                              "elif [ $# -eq 3 ]; then echo \"$3\" > $S; fi\n").arg(m_sandbox).toUtf8());
     QFile::setPermissions(m_sandbox + "/gio.sh", QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    qputenv("KAFTILOUS_GIO_PROGRAM", QFile::encodeName(m_sandbox + "/gio.sh"));
+    qputenv("KOSMOS_GIO_PROGRAM", QFile::encodeName(m_sandbox + "/gio.sh"));
     writeFile(m_apps + "/org.gnome.Nautilus.desktop", "[Desktop Entry]\nName=Files\nExec=nautilus %U\n");
     writeFile(m_apps + "/thunar.desktop", "[Desktop Entry]\nName=Thunar\nExec=thunar %U\n");
 }
@@ -63,10 +63,10 @@ void TestDefaultFileManager::init()
 void TestDefaultFileManager::install()
 {
     // What `cmake --install` puts there (the binary just has to be executable).
-    writeFile(m_sandbox + "/bin/kaftilous", "#!/bin/sh\n");
-    QFile::setPermissions(m_sandbox + "/bin/kaftilous", QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    writeFile(m_apps + "/kaftilous.desktop",
-              QStringLiteral("[Desktop Entry]\nName=Kaftilous\nExec=%1/bin/kaftilous %U\n"
+    writeFile(m_sandbox + "/bin/kosmos", "#!/bin/sh\n");
+    QFile::setPermissions(m_sandbox + "/bin/kosmos", QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    writeFile(m_apps + "/kosmos.desktop",
+              QStringLiteral("[Desktop Entry]\nName=Kosmos\nExec=%1/bin/kosmos %U\n"
                              "[Desktop Action new-window]\nExec=/wrong\n").arg(m_sandbox).toUtf8());
 }
 
@@ -90,19 +90,19 @@ void TestDefaultFileManager::notInstalledRefuses()
 void TestDefaultFileManager::makeDefaultAndRestore()
 {
     install();
-    QCOMPARE(DefaultFileManager::installedExecutable(), m_sandbox + "/bin/kaftilous");
-    QVERIFY(!DefaultFileManager::isKaftilousDefault());
+    QCOMPARE(DefaultFileManager::installedExecutable(), m_sandbox + "/bin/kosmos");
+    QVERIFY(!DefaultFileManager::isKosmosDefault());
     QVERIFY(DefaultFileManager::serviceFilePath().startsWith(m_sandbox));
 
     QString error;
     QVERIFY2(DefaultFileManager::makeDefault(&error), qPrintable(error));
-    QCOMPARE(state(), QStringLiteral("kaftilous.desktop"));
-    QVERIFY(DefaultFileManager::isKaftilousDefault());
+    QCOMPARE(state(), QStringLiteral("kosmos.desktop"));
+    QVERIFY(DefaultFileManager::isKosmosDefault());
     QFile service(DefaultFileManager::serviceFilePath());
     QVERIFY(service.open(QIODevice::ReadOnly));
     const QByteArray text = service.readAll();
     QVERIFY(text.contains("Name=org.freedesktop.FileManager1"));
-    QVERIFY(text.contains("Exec=" + QFile::encodeName(m_sandbox) + "/bin/kaftilous --service"));
+    QVERIFY(text.contains("Exec=" + QFile::encodeName(m_sandbox) + "/bin/kosmos --service"));
     QVERIFY(DefaultFileManager::serviceFileIsOurs());
 
     QString restored;
@@ -110,7 +110,7 @@ void TestDefaultFileManager::makeDefaultAndRestore()
     QCOMPARE(restored, QStringLiteral("org.gnome.Nautilus.desktop"));
     QCOMPARE(state(), QStringLiteral("org.gnome.Nautilus.desktop"));
     QVERIFY(!QFile::exists(DefaultFileManager::serviceFilePath()));
-    QVERIFY(!DefaultFileManager::isKaftilousDefault());
+    QVERIFY(!DefaultFileManager::isKosmosDefault());
 }
 
 void TestDefaultFileManager::restoresThePreviousOne()
@@ -154,7 +154,7 @@ int main(int argc, char **argv)
     qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
     qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
     QCoreApplication app(argc, argv);
-    app.setOrganizationName("KaftilousTest");
+    app.setOrganizationName("KosmosTest");
     TestDefaultFileManager test(sandbox.path());
     return QTest::qExec(&test, argc, argv);
 }

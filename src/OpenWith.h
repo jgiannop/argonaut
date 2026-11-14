@@ -6,7 +6,7 @@
 
 // "Open With" through GNOME's own tools (Linux): `gio mime` lists the apps
 // for a file type, `gio launch` starts one exactly as the desktop would, and
-// `gio mime TYPE APP` sets the default. KAFTILOUS_GIO_PROGRAM replaces `gio`
+// `gio mime TYPE APP` sets the default. KOSMOS_GIO_PROGRAM replaces `gio`
 // (tests use a stand-in that only logs).
 namespace OpenWith {
 

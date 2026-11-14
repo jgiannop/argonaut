@@ -1,6 +1,6 @@
-# Kaftilous
+# Kosmos
 
-A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
+A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus). Its name is the Greek κόσμος, which first meant "order" and later "the universe". It was called Kaftilous until version 0.2.
 
 > **Status:** early development, used daily on Ubuntu 24.04. The code is written to be cross-platform (Linux, Windows, macOS), but only Linux has been tested so far.
 
@@ -11,7 +11,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Thumbnails for photos, **PDFs, videos, fonts, comics and more**, using the thumbnailers already installed on your system (the same ones Nautilus uses) and sharing their cache. They run **sandboxed** (no network, nothing visible but the one file), two at a time at low priority, only for files on screen, and by default only on the computer's own disks (Preferences)
 - Folders first, in natural order ("file2" before "file10"); sort by name, size, type or date
 - Sidebar with your folders, drives and the Trash; a breadcrumb path bar (Ctrl+L to type a path)
-- **Recent**: what you opened lately, in Kaftilous or any other app (the list GNOME apps share), newest first. Respects GNOME's "remember recent files" privacy switch. Right-click → Remove from Recent
+- **Recent**: what you opened lately, in Kosmos or any other app (the list GNOME apps share), newest first. Respects GNOME's "remember recent files" privacy switch. Right-click → Remove from Recent
 - **Starred**: star files and folders (right-click → Star); they get a ★ and their own place in the sidebar. Stars follow items you rename or move
 - Search (Ctrl+F) in the folder **and all its sub-folders**, with results as you type. Several words narrow it down, and case and accents don't matter ("θαλασσα" finds "Θάλασσα.jpg", "cafe" finds "Café"). Right-click → Open Item Location
 - Show hidden files (Ctrl+H)
@@ -29,7 +29,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - Undo (Ctrl+Z) and Redo (Ctrl+Shift+Z or Ctrl+Y) for copy, move, trash, rename, new items, extract and compress. Redo brings back the very same items (for example, from the Trash), it never copies again
 - Never overwrites: name clashes become "name (copy)"
 - New Folder, New File, Rename (F2)
-- USB sticks: Kaftilous says "done" only after the data is really written to the drive
+- USB sticks: Kosmos says "done" only after the data is really written to the drive
 
 **Archives** (with libarchive)
 - Right-click → **Extract Here** / **Extract to…** for zip, 7z, tar.gz/xz/bz2/zst, rar, iso, deb, plain .gz/.xz and more
@@ -41,9 +41,9 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 
 **Real file types: safer than trusting names**
 
-Most file managers, Nautilus included, believe a file's extension: `report.pdf` is shown and opened as a PDF without anyone looking inside. Kaftilous checks what each file really is, from its first few kilobytes, and tells you when the name lies:
+Most file managers, Nautilus included, believe a file's extension: `report.pdf` is shown and opened as a PDF without anyone looking inside. Kosmos checks what each file really is, from its first few kilobytes, and tells you when the name lies:
 - An **amber ⚠ badge** marks files whose content doesn't match their name, for example a `.pdf` that is really an HTML error page from a failed download, or a `.zip` that is really a 7z archive. Hover for details. Right-click → **Rename to “report.html”** fixes it (and can be undone).
-- A **red ⚠ badge** marks **programs disguised as documents** (`invoice.pdf` that is really an executable). Opening one shows a warning; Kaftilous never runs it.
+- A **red ⚠ badge** marks **programs disguised as documents** (`invoice.pdf` that is really an executable). Opening one shows a warning; Kosmos never runs it.
 - Files are **opened with the app for what they really are**, so a mislabelled file still opens correctly.
 - Files with no extension get their real type and icon.
 - **Properties** shows both what the name says and what the file is.
@@ -92,7 +92,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 - A C++17 compiler (GCC, Clang or MSVC)
 - CMake 3.21 or newer, and Ninja
 - Qt 6.4 or newer (Widgets; Test for the tests)
-- Optional: **libvterm** for the embedded terminal (Linux/macOS). Without it, Kaftilous builds without the terminal.
+- Optional: **libvterm** for the embedded terminal (Linux/macOS). Without it, Kosmos builds without the terminal.
 - Optional: **libarchive** for Compress / Extract. Without it, those menu items are hidden.
 
 ### Linux (Ubuntu / Debian)
@@ -110,7 +110,7 @@ Install Qt 6 with the [Qt Online Installer](https://www.qt.io/download-qt-instal
 ```bash
 cmake --preset debug
 cmake --build build/debug
-./build/debug/kaftilous [folder]
+./build/debug/kosmos [folder]
 
 ctest --preset debug      # run the tests
 ```
@@ -119,27 +119,27 @@ For an optimized build, use `release` instead of `debug`.
 
 ## Installing (Linux)
 
-Kaftilous installs for your user only, in `~/.local`: no `sudo`, nothing outside your home folder.
+Kosmos installs for your user only, in `~/.local`: no `sudo`, nothing outside your home folder.
 
 ```bash
 cmake --preset release
 cmake --build build/release
-cmake --install build/release      # ~/.local/bin/kaftilous, menu entry, icon
+cmake --install build/release      # ~/.local/bin/kosmos, menu entry, icon
 ```
 
-It then appears in the app grid as **Kaftilous**. To uninstall: `cmake --build build/release --target uninstall`.
+It then appears in the app grid as **Kosmos**. To uninstall: `cmake --build build/release --target uninstall`.
 
 ### Using it instead of Nautilus
 
-Open **Preferences → Default File Manager → Make Kaftilous the Default**, or run `kaftilous --make-default`. Kaftilous then opens:
+Open **Preferences → Default File Manager → Make Kosmos the Default**, or run `kosmos --make-default`. Kosmos then opens:
 - folders opened from other apps, desktop icons, Super+E and "Open containing folder" (it becomes the default app for folders);
 - "Show in folder" from Firefox, Chrome and others (it answers `org.freedesktop.FileManager1` on D-Bus).
 
-To go back: **Preferences → Use Nautilus Again**, or `kaftilous --restore-nautilus`, which works from any terminal even if Kaftilous itself won't start. Nautilus is never removed or changed; switching only points these two hooks at one or the other, and the previous file manager is remembered.
+To go back: **Preferences → Use Nautilus Again**, or `kosmos --restore-nautilus`, which works from any terminal even if Kosmos itself won't start. Nautilus is never removed or changed; switching only points these two hooks at one or the other, and the previous file manager is remembered.
 
 Notes:
 - If Nautilus is already running in the background, "Show in folder" keeps going to it until it stops (`nautilus -q`, or log out and in once).
-- The dock's **Files** icon still starts Nautilus: right-click it → *Unpin*, then right-click Kaftilous → *Pin to Dash*.
+- The dock's **Files** icon still starts Nautilus: right-click it → *Unpin*, then right-click Kosmos → *Pin to Dash*.
 
 ## Developing in VS Code
 

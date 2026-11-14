@@ -29,7 +29,7 @@ private:
 
 void TestFileManagerService::initTestCase()
 {
-    if (qEnvironmentVariable("KAFTILOUS_PRIVATE_BUS") != QLatin1String("1"))
+    if (qEnvironmentVariable("KOSMOS_PRIVATE_BUS") != QLatin1String("1"))
         QSKIP("runs only on a private bus (ctest uses dbus-run-session)");
     QVERIFY(bus().isConnected());
     // A desktop session has these; a private bus has neither. Stop if in doubt.

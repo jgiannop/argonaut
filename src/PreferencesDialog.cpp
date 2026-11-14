@@ -105,7 +105,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
 
     auto *heading = new QLabel(tr("Appearance"), this);
     heading->setObjectName("prefHeading");
-    auto *hint = new QLabel(tr("Choose how Kaftilous looks."), this);
+    auto *hint = new QLabel(tr("Choose how Kosmos looks."), this);
     hint->setObjectName("prefHint");
     layout->addWidget(heading);
     layout->addWidget(hint);
@@ -162,7 +162,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addSpacing(6);
     layout->addWidget(thumbs);
 
-    // Default file manager: Kaftilous or Nautilus, switchable both ways.
+    // Default file manager: Kosmos or Nautilus, switchable both ways.
     layout->addSpacing(18);
     auto *defaultHeading = new QLabel(tr("Default File Manager"), this);
     defaultHeading->setObjectName("prefHeading");
@@ -177,30 +177,30 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     defaultRow->addStretch();
     auto refresh = [defaultHint, defaultButton] {
         const bool installed = !DefaultFileManager::installedDesktopFile().isEmpty();
-        const bool ours = installed && DefaultFileManager::isKaftilousDefault();
+        const bool ours = installed && DefaultFileManager::isKosmosDefault();
         if (!installed) {
-            defaultHint->setText(tr("Install Kaftilous (cmake --install) to make it the file manager "
+            defaultHint->setText(tr("Install Kosmos (cmake --install) to make it the file manager "
                                     "for folders and “Show in folder”."));
-            defaultButton->setText(tr("Make Kaftilous the Default"));
+            defaultButton->setText(tr("Make Kosmos the Default"));
             defaultButton->setEnabled(false);
         } else if (ours) {
-            defaultHint->setText(tr("Kaftilous opens your folders, also from other apps, Super+E and "
+            defaultHint->setText(tr("Kosmos opens your folders, also from other apps, Super+E and "
                                     "“Show in folder”. You can always go back (or run "
-                                    "“kaftilous --restore-nautilus” in a terminal)."));
+                                    "“kosmos --restore-nautilus” in a terminal)."));
             defaultButton->setText(tr("Use Nautilus Again"));
             defaultButton->setEnabled(true);
         } else {
-            defaultHint->setText(tr("Another file manager opens your folders now. Kaftilous can take "
+            defaultHint->setText(tr("Another file manager opens your folders now. Kosmos can take "
                                     "over folders, Super+E and “Show in folder”; Nautilus stays "
                                     "installed and you can switch back at any time."));
-            defaultButton->setText(tr("Make Kaftilous the Default"));
+            defaultButton->setText(tr("Make Kosmos the Default"));
             defaultButton->setEnabled(true);
         }
     };
     refresh();
     connect(defaultButton, &QPushButton::clicked, this, [this, refresh, defaultHint] {
         QString error;
-        const bool ok = DefaultFileManager::isKaftilousDefault()
+        const bool ok = DefaultFileManager::isKosmosDefault()
                             ? DefaultFileManager::restorePrevious(&error)
                             : DefaultFileManager::makeDefault(&error);
         refresh();

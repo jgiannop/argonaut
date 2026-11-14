@@ -22,7 +22,7 @@
 #include "PropertiesDialog.h"
 #include "QuickLook.h"
 #include "Thumbnailer.h"
-#if defined(KAFTILOUS_TERMINAL)
+#if defined(KOSMOS_TERMINAL)
 #include "TerminalWidget.h"
 #endif
 #include "Toast.h"
@@ -328,7 +328,7 @@ QToolButton#themeCard:checked { border-color: @accent; }
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    m_csd = qEnvironmentVariableIsEmpty("KAFTILOUS_NATIVE_DECORATIONS");
+    m_csd = qEnvironmentVariableIsEmpty("KOSMOS_NATIVE_DECORATIONS");
 #if defined(Q_OS_MACOS)
     m_csd = false; // keep the native traffic-light title bar on macOS
 #endif
@@ -336,7 +336,7 @@ MainWindow::MainWindow(QWidget *parent)
         setWindowFlag(Qt::FramelessWindowHint);
 
     resize(1150, 720);
-    setWindowTitle("Kaftilous");
+    setWindowTitle("Kosmos");
 
     m_ops = new FileOperations(this);
     m_ops->setAskOnConflict(true);
@@ -484,7 +484,7 @@ void MainWindow::setupActions()
     connect(m_sortDescAct, &QAction::triggered, this,
             [this] { sortBy(m_model->sortColumn(), Qt::DescendingOrder); });
 
-#if defined(KAFTILOUS_TERMINAL)
+#if defined(KOSMOS_TERMINAL)
     m_terminalAct = new QAction(tr("Terminal"), this);
     m_terminalAct->setCheckable(true);
     m_terminalAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)); // like VS Code
@@ -719,11 +719,11 @@ void MainWindow::setupActions()
     m_zoomResetAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomResetAct, &QAction::triggered, this, [this] { zoom(0); });
 
-    m_aboutAct = new QAction(tr("About Kaftilous"), this);
+    m_aboutAct = new QAction(tr("About Kosmos"), this);
     m_aboutAct->setMenuRole(QAction::AboutRole);
     connect(m_aboutAct, &QAction::triggered, this, [this] {
-        QMessageBox::about(this, tr("About Kaftilous"),
-                           tr("<b>Kaftilous</b> %1<br>A fast, cross-platform file manager.")
+        QMessageBox::about(this, tr("About Kosmos"),
+                           tr("<b>Kosmos</b> %1<br>A fast, cross-platform file manager.")
                                .arg(QApplication::applicationVersion()));
     });
 
@@ -837,7 +837,7 @@ QWidget *MainWindow::buildSidebarPane()
     connect(m_searchButton, &QToolButton::toggled, m_searchAct, &QAction::setChecked);
     connect(m_searchAct, &QAction::toggled, m_searchButton, &QToolButton::setChecked);
 
-    m_titleLabel = new QLabel(tr("Kaftilous"), header);
+    m_titleLabel = new QLabel(tr("Kosmos"), header);
     m_titleLabel->setObjectName("title");
     m_titleLabel->setAlignment(Qt::AlignCenter);
 
@@ -1090,7 +1090,7 @@ QWidget *MainWindow::buildContentPane()
     m_contentSplitter->setChildrenCollapsible(false);
     m_contentSplitter->setHandleWidth(1);
     m_contentSplitter->addWidget(m_paneSplitter);
-#if defined(KAFTILOUS_TERMINAL)
+#if defined(KOSMOS_TERMINAL)
     m_contentSplitter->addWidget(buildTerminalPanel());
 #endif
     m_contentSplitter->setStretchFactor(0, 1);
@@ -1260,7 +1260,7 @@ void MainWindow::refreshChrome()
         return;
     m_trashBar->setVisible(m_model->isTrash());
     m_pathBar->setPath(m_current);
-    setWindowTitle(tr("%1 — Kaftilous").arg(titleFor(m_current)));
+    setWindowTitle(tr("%1 — Kosmos").arg(titleFor(m_current)));
     syncSidebarSelection();
     updateActions();
     updateEditActions();
@@ -1579,7 +1579,7 @@ void MainWindow::applyTheme(bool force)
         if (auto *close = qobject_cast<QToolButton *>(m_tabBar->tabButton(i, QTabBar::RightSide)))
             close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
     }
-#if defined(KAFTILOUS_TERMINAL)
+#if defined(KOSMOS_TERMINAL)
     m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
     m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
     m_terminal->setTheme(m_theme);
@@ -1789,7 +1789,7 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
     if (m_current == root || m_current.startsWith(root + QLatin1Char('/')))
         navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
 
-    const QString program = qEnvironmentVariable("KAFTILOUS_EJECT_PROGRAM", QStringLiteral("gio"));
+    const QString program = qEnvironmentVariable("KOSMOS_EJECT_PROGRAM", QStringLiteral("gio"));
     auto *process = new QProcess(this);
     connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
         if (status == QProcess::NormalExit && code == 0) {
@@ -3661,7 +3661,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
 
 // ------------------------------------------------------------ terminal ---
 
-#if defined(KAFTILOUS_TERMINAL)
+#if defined(KOSMOS_TERMINAL)
 
 QWidget *MainWindow::buildTerminalPanel()
 {
@@ -3914,7 +3914,7 @@ void MainWindow::switchToTab(int index)
         if (!navigateTo(tab.path, false)) // its folder may be gone by now
             navigateTo(QDir::homePath(), false);
     } else {
-        setWindowTitle(tr("%1 — Kaftilous").arg(tabTitle(m_current)));
+        setWindowTitle(tr("%1 — Kosmos").arg(tabTitle(m_current)));
     }
     m_backHistory = tab.back;
     m_forwardHistory = tab.forward;
@@ -4141,7 +4141,7 @@ void MainWindow::openFile(const QString &path)
                         QMessageBox::NoButton, this);
         box.setInformativeText(ContentType::describe(result) + QStringLiteral(".\n\n")
                                + tr("Files like this are a common way to spread malware. "
-                                    "Kaftilous won't run it."));
+                                    "Kosmos won't run it."));
         QPushButton *keep = box.addButton(tr("Don't Open"), QMessageBox::RejectRole);
         QPushButton *trash = box.addButton(tr("Move to Trash"), QMessageBox::DestructiveRole);
         QPushButton *asNamed = box.addButton(tr("Open as Named"), QMessageBox::AcceptRole);

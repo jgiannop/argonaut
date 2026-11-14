@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Kaftilous",
+      "name": "Debug Kosmos",
       "type": "cppdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
@@ -17,7 +17,7 @@
       "preLaunchTask": "CMake: build"
     },
     {
-      "name": "Debug Kaftilous (open folder…)",
+      "name": "Debug Kosmos (open folder…)",
       "type": "cppdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
@@ -32,13 +32,13 @@
       "preLaunchTask": "CMake: build"
     },
     {
-      "name": "Debug Kaftilous (native title bar)",
+      "name": "Debug Kosmos (native title bar)",
       "type": "cppdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
       "args": [],
       "cwd": "${workspaceFolder}",
-      "environment": [{ "name": "KAFTILOUS_NATIVE_DECORATIONS", "value": "1" }],
+      "environment": [{ "name": "KOSMOS_NATIVE_DECORATIONS", "value": "1" }],
       "MIMode": "gdb",
       "visualizerFile": "${command:qt-cpp.natvis6}",
       "showDisplayString": true,

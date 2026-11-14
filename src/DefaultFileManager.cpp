@@ -15,7 +15,7 @@ namespace {
 
 constexpr const char *FolderMime = "inode/directory";
 constexpr const char *NautilusId = "org.gnome.Nautilus.desktop";
-constexpr const char *Marker = "# Written by Kaftilous (kaftilous --make-default).";
+constexpr const char *Marker = "# Written by Kosmos (kosmos --make-default).";
 
 QString tr(const char *text)
 {
@@ -28,7 +28,7 @@ namespace DefaultFileManager {
 
 QString desktopId()
 {
-    return QStringLiteral("kaftilous.desktop");
+    return QStringLiteral("kosmos.desktop");
 }
 
 QString installedDesktopFile()
@@ -64,7 +64,7 @@ QString currentDefault()
     return id;
 }
 
-bool isKaftilousDefault()
+bool isKosmosDefault()
 {
     return currentDefault() == desktopId();
 }
@@ -91,7 +91,7 @@ bool makeDefault(QString *error)
     const QString desktop = installedDesktopFile();
     const QString exe = installedExecutable();
     if (desktop.isEmpty() || exe.isEmpty() || !QFileInfo(exe).isExecutable())
-        return fail(tr("Kaftilous isn't installed yet (no kaftilous.desktop). Install it first."));
+        return fail(tr("Kosmos isn't installed yet (no kosmos.desktop). Install it first."));
     // A file we didn't write (another file manager's): leave it alone.
     if (QFile::exists(serviceFilePath()) && !serviceFileIsOurs())
         return fail(tr("Another program already handles “Show in folder” (%1). Remove that file first.")
@@ -108,7 +108,7 @@ bool makeDefault(QString *error)
     QSaveFile service(serviceFilePath());
     if (!service.open(QIODevice::WriteOnly))
         return fail(tr("Couldn't write %1").arg(serviceFilePath()));
-    service.write(QByteArray(Marker) + "\n# Undo: kaftilous --restore-nautilus (or Preferences).\n"
+    service.write(QByteArray(Marker) + "\n# Undo: kosmos --restore-nautilus (or Preferences).\n"
                   "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec="
                   + QFile::encodeName(exe) + " --service\n");
     if (!service.commit())

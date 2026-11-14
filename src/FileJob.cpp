@@ -90,8 +90,8 @@ bool isNetworkFilesystem(const QString &path)
 
 bool needsSafeWrites(const QString &dir)
 {
-    if (qEnvironmentVariableIsSet("KAFTILOUS_SAFE_WRITES"))
-        return qEnvironmentVariableIntValue("KAFTILOUS_SAFE_WRITES") != 0;
+    if (qEnvironmentVariableIsSet("KOSMOS_SAFE_WRITES"))
+        return qEnvironmentVariableIntValue("KOSMOS_SAFE_WRITES") != 0;
 
     const QStorageInfo storage(dir);
     if (!storage.isValid())
@@ -125,7 +125,7 @@ bool needsSafeWrites(const QString &dir)
 #endif
 }
 
-#if !defined(KAFTILOUS_ARCHIVES)
+#if !defined(KOSMOS_ARCHIVES)
 // Built without libarchive: no archive support.
 bool FileJob::archivesSupported() { return false; }
 QString FileJob::archiveSuffix(ArchiveFormat) { return {}; }
