@@ -30,6 +30,8 @@ QProcessEnvironment cleanEnvironment();
 // box. Returns its standard output (at most `maxBytes`); `ok` is false if
 // it couldn't run, failed or took longer than `timeoutMs`. Without bwrap it
 // does nothing (returns false): untrusted files are never parsed unboxed.
+// A program outside the system folders (one of ours in a build folder) is
+// added to the box read-only, at its own path.
 QByteArray run(const QString &program, const QStringList &args, const QString &file, bool *ok = nullptr,
                int timeoutMs = 15000, qsizetype maxBytes = 1024 * 1024);
 

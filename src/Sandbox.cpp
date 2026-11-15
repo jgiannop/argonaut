@@ -59,6 +59,14 @@ QByteArray run(const QString &program, const QStringList &args, const QString &f
     const QString inside = QStringLiteral("/tmp/input") + (suffix.isEmpty() ? QString() : QLatin1Char('.') + suffix);
     QStringList box = systemArgs();
     box << QStringLiteral("--tmpfs") << QStringLiteral("/tmp") << QStringLiteral("--ro-bind") << file << inside;
+    // A tool that isn't part of the system (one of ours, in a build folder)
+    // isn't in the box yet: that one file is added, read-only.
+    const QString real = QFileInfo(tool).canonicalFilePath();
+    bool inBox = false;
+    for (const char *root : {"/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/"})
+        inBox = inBox || real.startsWith(QLatin1String(root));
+    if (!inBox && !real.isEmpty())
+        box << QStringLiteral("--ro-bind") << real << tool;
     box << tool;
     for (const QString &a : args)
         box << (a == QLatin1String("@FILE@") ? inside : a);

@@ -89,6 +89,7 @@ private slots:
     void extensionCommandsAskFirst();
     void extensionsWindowListsAndSwitches();
     void fadeNeverGetsInTheWay();
+    void previewFromAnExtension();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1110,6 +1111,51 @@ void TestMainWindow::fadeNeverGetsInTheWay()
     QVERIFY(w->navigateTo(m_dir + "/a"));
     QVERIFY(!fade->isRunning());
     FadeOverlay::setEnabled(true);
+}
+
+// Space on a file an extension previews: the pane shows the extension's
+// answer; "not from me" falls back to the built-in preview; rich text loads
+// nothing it names; and a program in disguise is never handed to it.
+void TestMainWindow::previewFromAnExtension()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString table = make("table.csv", "a,b\n1,2\n"), nothing = make("nothing.csv", "a,b\n"),
+                  rich = make("rich.csv", "a,b\n"), picture = make("picture.csv", "a,b\n");
+    const QString disguised = make("program.csv", QByteArray("\x7f" "ELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x02\0\x3e\0", 20)
+                                                      + QByteArray(200, '\0'));
+    open(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(host->canPreview("text/csv"), 10000);
+    auto current = [&](const QString &path) {
+        w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(path)));
+    };
+    current(table);
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *preview = w->m_quickLook;
+    QTRY_VERIFY_WITH_TIMEOUT(preview->fromExtension(), 10000);
+    QCOMPARE(preview->shownText(), QStringLiteral("FAKE PREVIEW of table.csv as text/csv"));
+
+    current(nothing); // the extension passes: our own text preview
+    QTRY_COMPARE_WITH_TIMEOUT(preview->shownText(), QStringLiteral("a,b\n"), 10000);
+    QVERIFY(!preview->fromExtension());
+
+    current(rich);
+    QTRY_VERIFY_WITH_TIMEOUT(preview->fromExtension() && preview->shownText().contains("Title"), 10000);
+    QVERIFY(preview->shownText().contains("Body"));
+
+    current(picture);
+    QTRY_VERIFY_WITH_TIMEOUT(preview->fromExtension() && preview->kind() == Preview::Kind::Image, 10000);
+
+    // A program named like a table: blocked before anyone is asked.
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->model->indexForPath(disguised).data(DirectoryModel::VerdictRole).toInt(),
+                              int(ContentType::Verdict::Dangerous), 10000);
+    current(disguised);
+    QTRY_COMPARE_WITH_TIMEOUT(preview->kind(), Preview::Kind::Blocked, 10000);
+    QVERIFY(!preview->fromExtension());
+    host->setEnabled("fake", false);
 }
 
 #include "tst_mainwindow.moc"

@@ -19,6 +19,31 @@ for line in sys.stdin:
             {"id": "ask", "label": "Risky…", "confirm": "Really do the risky thing?"},
             {"id": "", "label": "No id"},
             {"id": "nolabel"}]})
+    if m.get("type") == "hello":
+        say({"type": "previews", "types": ["text/csv", "image/x-xcf"]})
+    if m.get("type") == "preview":
+        name = os.path.basename(m.get("path", ""))
+        reply = {"type": "preview", "id": m.get("id")}
+        if "nothing" in name:
+            reply["kind"] = "none"
+        elif "picture" in name:
+            import struct, zlib
+            def chunk(kind, data):
+                body = kind + data
+                return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+            rows = b"".join(b"\x00" + b"\xd0\x40\x20" * 8 for _ in range(8))  # 8x8, one colour
+            png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview.png")
+            with open(png, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0))
+                        + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+            reply.update(kind="image", image=png, note="a picture\nfrom the fake")
+        elif "relative" in name:
+            reply.update(kind="image", image="preview.png")
+        elif "rich" in name:
+            reply.update(kind="html", text="<h1>Title</h1><p>Body <img src='/etc/hostname'> text</p>")
+        else:
+            reply.update(kind="text", text="FAKE PREVIEW of " + name + " as " + m.get("mime", "") , monospace=True)
+        say(reply)
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
         say({"type": "message", "text": "invoked %s on %d: %s" % (

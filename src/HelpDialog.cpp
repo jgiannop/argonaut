@@ -343,7 +343,8 @@ off. Until you choose there, it follows the desktop: off where animations are sw
 <p>[[Ctrl+H]] shows or hides dot-files and backups (names ending in ~).</p>
 <h2>Quick Look</h2>
 <p>Select a file and press [[Space]] for a preview without opening an app: photos, PDFs, videos, fonts,
-text and code, what's inside archives, and folders. The preview is a pane at the right of the files;
+text and code, what's inside archives, and folders. Markdown is shown formatted, and CSV files and
+spreadsheets as a table (the <a href="topic:extensions">Document Preview extension</a>). The preview is a pane at the right of the files;
 drag its edge to make it wider. It follows the file you select, so the arrow keys go through a folder.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
 <h2>Split view</h2>
@@ -556,7 +557,10 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. Three come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b> and <b>Set as Background</b>.</p>
+<b>Send by Email</b>, <b>Set as Background</b> and <b>Document Preview</b>.</p>
+<p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
+Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
+(.xlsx, .ods: the first sheet as a table).</p>
 <p>A command from an extension is carried out by the extension, not by Argonaut, so [[Ctrl+Z]] doesn't undo
 it.</p>
 <h2>Switching them on and off</h2>

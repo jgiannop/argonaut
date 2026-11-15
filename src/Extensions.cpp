@@ -27,6 +27,7 @@ constexpr int MaxInfoChars = 60;
 constexpr int MaxCommands = 20;   // per extension, everywhere and per folder
 constexpr int MaxLabelChars = 60;
 constexpr int MaxMessageChars = 200;
+constexpr int MaxPreviewChars = 1024 * 1024; // text, Markdown or HTML of a preview
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
 const QStringList &colors()
@@ -189,6 +190,7 @@ Host *Host::instance()
 Host::Host(QObject *parent) : QObject(parent)
 {
     qRegisterMetaType<Extensions::Badge>();
+    qRegisterMetaType<Extensions::PreviewReply>();
     rescan();
 }
 
@@ -479,6 +481,32 @@ void Host::invoke(const Command &command, const QString &folder, const QStringLi
     }
 }
 
+bool Host::canPreview(const QString &mimeType) const
+{
+    for (const Running *ext : m_running) {
+        if (ext->process && !ext->previewTypes.isEmpty() && typeMatches(mimeType, ext->previewTypes))
+            return true;
+    }
+    return false;
+}
+
+int Host::requestPreview(const QString &path, const QString &mimeType, const QSize &pixels)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (!ext->process || ext->previewTypes.isEmpty() || !typeMatches(mimeType, ext->previewTypes))
+            continue;
+        const int id = ++m_previewRequest;
+        send(ext, {{QStringLiteral("type"), QStringLiteral("preview")},
+                   {QStringLiteral("id"), id},
+                   {QStringLiteral("path"), path},
+                   {QStringLiteral("mime"), mimeType},
+                   {QStringLiteral("width"), pixels.width()},
+                   {QStringLiteral("height"), pixels.height()}});
+        return id;
+    }
+    return 0;
+}
+
 QString Host::nameOf(const QString &id) const
 {
     for (const Manifest &m : m_manifests) {
@@ -615,6 +643,39 @@ void Host::handle(Running *ext, const QByteArray &line)
         ext->commands = readCommands(ext, message.value(QLatin1String("commands")));
         return;
     }
+    if (type == QLatin1String("previews")) { // the types it shows in the preview pane
+        ext->previewTypes.clear();
+        const QJsonArray types = message.value(QLatin1String("types")).toArray();
+        for (const QJsonValue &t : types) {
+            if (ext->previewTypes.size() < 100 && !t.toString().isEmpty())
+                ext->previewTypes << t.toString().left(100);
+        }
+        return;
+    }
+    if (type == QLatin1String("preview")) { // its answer to a preview request
+        PreviewReply reply;
+        const QString kind = message.value(QLatin1String("kind")).toString();
+        reply.text = message.value(QLatin1String("text")).toString().left(MaxPreviewChars);
+        reply.monospace = message.value(QLatin1String("monospace")).toBool();
+        reply.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (kind == QLatin1String("text")) {
+            reply.kind = PreviewReply::Text;
+        } else if (kind == QLatin1String("markdown")) {
+            reply.kind = PreviewReply::Markdown;
+        } else if (kind == QLatin1String("html")) {
+            reply.kind = PreviewReply::Html;
+        } else if (kind == QLatin1String("image")) {
+            // A picture file of its own making: an absolute path to a plain file.
+            const QString image = message.value(QLatin1String("image")).toString();
+            const QFileInfo info(image);
+            if (QDir::isAbsolutePath(image) && info.isFile() && !info.isSymLink()) {
+                reply.kind = PreviewReply::Image;
+                reply.image = image;
+            }
+        }
+        emit previewReady(message.value(QLatin1String("id")).toInt(), reply);
+        return;
+    }
     if (type == QLatin1String("message")) { // something for the user to read
         const QString text = tidy(message.value(QLatin1String("text")).toString(), MaxMessageChars)
                                  .replace(QLatin1Char('\n'), QLatin1Char(' '));
@@ -665,6 +726,7 @@ void Host::exited(Running *ext)
     ext->process = nullptr;
     ext->buffer.clear();
     ext->commands.clear();
+    ext->previewTypes.clear();
     forget(ext);
     if (ext->stopping)
         return;

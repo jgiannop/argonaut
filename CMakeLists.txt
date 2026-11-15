@@ -243,6 +243,19 @@ if(UNIX)
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/${id})
     endforeach()
     install(TARGETS argonaut-desktop-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+
+    # Document Preview: Markdown, CSV and spreadsheets in the preview pane.
+    qt_add_executable(argonaut-preview-extension extensions/preview/main.cpp)
+    target_link_libraries(argonaut-preview-extension PRIVATE argonaut_core)
+    set(ARGONAUT_PREVIEW_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-preview-extension")
+    configure_file(extensions/preview/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/document-preview/extension.json @ONLY)
+    set(ARGONAUT_PREVIEW_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-preview-extension")
+    configure_file(extensions/preview/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json @ONLY)
+    install(TARGETS argonaut-preview-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/document-preview)
 endif()
 
 # ------------------------------------------------------------- install ---

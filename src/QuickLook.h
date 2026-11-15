@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Extensions.h"
 #include "Preview.h"
 
 #include <QPixmap>
@@ -10,6 +11,8 @@ class QMovie;
 class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
+class QTextBrowser;
+class QTimer;
 class QTreeWidget;
 class Thumbnailer;
 
@@ -39,6 +42,8 @@ public:
     void clear(); // nothing is selected
     QString path() const { return m_item.path; }
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
+    bool fromExtension() const { return m_fromExtension; } // an extension made what's shown
+    QString shownText() const;                           // the text or rich text shown (tests)
 
 signals:
     void openRequested(const QString &path);
@@ -49,6 +54,9 @@ protected:
 
 private:
     void apply(quint64 generation, const Preview::Result &result);
+    void loadBuiltIn(quint64 generation);
+    void extensionAnswered(int request, const Extensions::PreviewReply &reply);
+    bool applyExtension(const Extensions::PreviewReply &reply);
     void showInfo(const QString &message);
     QSize pictureBox() const;
 
@@ -63,6 +71,10 @@ private:
     QLabel *m_movieLabel = nullptr;
     QMovie *m_movie = nullptr;
     QPlainTextEdit *m_text = nullptr;
+    QTextBrowser *m_rich = nullptr;   // Markdown and HTML from extensions
+    int m_extensionRequest = 0;       // waiting for this answer (0: not waiting)
+    QTimer *m_extensionTimer = nullptr; // not for long: then the built-in preview
+    bool m_fromExtension = false;
     QTreeWidget *m_archive = nullptr;
     QWidget *m_infoPage = nullptr;
     QLabel *m_infoIcon = nullptr;

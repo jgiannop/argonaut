@@ -4,6 +4,7 @@
 
 #include "DirectoryModel.h"
 #include "Extensions.h"
+#include "Sandbox.h"
 #include "TestSupport.h"
 
 #include <QApplication>
@@ -69,6 +70,8 @@ private slots:
     void removedWhileRunning();
     void commandsFitTheSelection();
     void invokeTellsTheExtension();
+    void previewsAreAskedAndChecked();
+    void documentPreview();
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void sendByEmailIsAnExtension();
@@ -348,6 +351,134 @@ void TestExtensions::invokeTellsTheExtension()
     QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
     QCOMPARE(said.first().at(0).toString(), QStringLiteral("Fake")); // who says it
     QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked hello on 2: a.txt,b.txt"));
+}
+
+// Previews: only for the types an extension named, the answer comes back
+// with the request's number, and a picture must be a real file by full path.
+void TestExtensions::previewsAreAskedAndChecked()
+{
+    Host host;
+    host.setEnabled("fake", true);
+    QSignalSpy changed(&host, &Host::folderChanged);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(host.canPreview("text/csv"), 5000);
+    QVERIFY(!host.canPreview("text/plain"));
+    QCOMPARE(host.requestPreview(m_dir + "/a.txt", "text/plain", QSize(800, 600)), 0); // nobody to ask
+
+    QSignalSpy ready(&host, &Host::previewReady);
+    auto ask = [&](const QString &name) {
+        ready.clear();
+        const int id = host.requestPreview(m_dir + "/" + name, "text/csv", QSize(800, 600));
+        if (id == 0 || !ready.wait(10000))
+            return Extensions::PreviewReply();
+        if (ready.first().at(0).toInt() != id)
+            return Extensions::PreviewReply();
+        return ready.first().at(1).value<Extensions::PreviewReply>();
+    };
+    Extensions::PreviewReply reply = ask("table.csv");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Text);
+    QCOMPARE(reply.text, QStringLiteral("FAKE PREVIEW of table.csv as text/csv"));
+    QVERIFY(reply.monospace);
+
+    QCOMPARE(ask("nothing.csv").kind, Extensions::PreviewReply::None);
+
+    reply = ask("picture.csv");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Image);
+    QVERIFY(QFileInfo(reply.image).isFile());
+    QCOMPARE(reply.note, QStringLiteral("a picture from the fake")); // one line
+    QCOMPARE(ask("relative.csv").kind, Extensions::PreviewReply::None); // not a full path: not used
+
+    host.setEnabled("fake", false);
+    QVERIFY(!host.canPreview("text/csv"));
+}
+
+// The Document Preview extension that comes with Argonaut: Markdown as it
+// is, CSV and spreadsheets as a table. Spreadsheets go through the sandbox.
+void TestExtensions::documentPreview()
+{
+    Host host;
+    host.setEnabled("document-preview", true);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(host.canPreview("text/markdown"), 10000);
+    QVERIFY(host.canPreview("application/vnd.oasis.opendocument.spreadsheet"));
+    QVERIFY(!host.canPreview("application/pdf"));
+    QSignalSpy ready(&host, &Host::previewReady);
+    auto ask = [&](const QString &path, const QString &mime) {
+        ready.clear();
+        const int id = host.requestPreview(path, mime, QSize(800, 600));
+        if (id == 0 || !ready.wait(20000))
+            return Extensions::PreviewReply();
+        return ready.first().at(1).value<Extensions::PreviewReply>();
+    };
+
+    writeFile(m_dir + "/notes.md", "# Heading\n\nSome *text*.\n");
+    Extensions::PreviewReply reply = ask(m_dir + "/notes.md", "text/markdown");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Markdown);
+    QCOMPARE(reply.text, QStringLiteral("# Heading\n\nSome *text*.\n"));
+
+    // CSV: quoted cells with the separator, a line break and quotes inside;
+    // what looks like HTML in a cell is shown, not obeyed.
+    writeFile(m_dir + "/people.csv", "name;city\n\"Smith; John\";\"New\nYork\"\n<b>bold</b>;\"say \"\"hi\"\"\"\n");
+    reply = ask(m_dir + "/people.csv", "text/csv");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+    QVERIFY(reply.text.contains("<th align=\"left\">name</th>"));
+    QVERIFY(reply.text.contains("<td>Smith; John</td>"));
+    QVERIFY(reply.text.contains("New<br>York"));
+    QVERIFY(reply.text.contains("&lt;b&gt;bold&lt;/b&gt;"));
+    QVERIFY(reply.text.contains("say &quot;hi&quot;"));
+    QCOMPARE(reply.note, QStringLiteral("3 rows"));
+
+    // A file that isn't text gets no table.
+    writeFile(m_dir + "/binary.csv", QByteArray("a,b\0c", 6));
+    QCOMPARE(ask(m_dir + "/binary.csv", "text/csv").kind, Extensions::PreviewReply::None);
+
+    // Spreadsheets, made here with Python's zipfile.
+    const QByteArray script = R"PY(
+import sys, zipfile
+d = sys.argv[1]
+with zipfile.ZipFile(d + "/book.xlsx", "w") as z:
+    z.writestr("xl/workbook.xml", "<workbook/>")
+    z.writestr("xl/sharedStrings.xml", "<sst><si><t>Item</t></si><si><r><t>Pri</t></r><r><t>ce</t></r></si><si><t>Bread &amp; &lt;butter&gt;</t></si></sst>")
+    z.writestr("xl/worksheets/sheet1.xml", '<worksheet><sheetData>'
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+        '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="C2"><v>2.5</v></c></row>'
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>inline</t></is></c><c r="B3" t="b"><v>1</v></c></row>'
+        '</sheetData></worksheet>')
+    z.writestr("xl/worksheets/sheet2.xml", "<worksheet><sheetData/></worksheet>")
+with zipfile.ZipFile(d + "/book.ods", "w") as z:
+    z.writestr("content.xml", '<office:document-content xmlns:office="o" xmlns:table="t" xmlns:text="x"><office:body><office:spreadsheet>'
+        '<table:table table:name="One">'
+        '<table:table-row><table:table-cell><text:p>City</text:p></table:table-cell><table:table-cell table:number-columns-repeated="2"><text:p>same</text:p></table:table-cell></table:table-row>'
+        '<table:table-row><table:table-cell><text:p>Athens</text:p><text:p>Greece</text:p></table:table-cell><table:table-cell table:number-columns-repeated="1000"/></table:table-row>'
+        '<table:table-row table:number-rows-repeated="1048000"><table:table-cell table:number-columns-repeated="1024"/></table:table-row>'
+        '</table:table><table:table table:name="Two"><table:table-row><table:table-cell><text:p>other sheet</text:p></table:table-cell></table:table-row></table:table>'
+        '</office:spreadsheet></office:body></office:document-content>')
+)PY";
+    writeFile(m_dir + "/make.py", script);
+    QCOMPARE(QProcess::execute("python3", {m_dir + "/make.py", m_dir}), 0);
+
+    reply = ask(m_dir + "/book.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    if (reply.kind == Extensions::PreviewReply::None) {
+        bool boxWorks = false;
+        Sandbox::run("true", {}, m_dir + "/notes.md", &boxWorks);
+        if (!boxWorks)
+            QSKIP("no working sandbox here (bubblewrap): spreadsheets are not previewed without one");
+    }
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+    QVERIFY2(reply.text.contains("<th align=\"left\">Item</th><th align=\"left\">Price</th>"), qPrintable(reply.text));
+    QVERIFY(reply.text.contains("<td>Bread &amp; &lt;butter&gt;</td><td></td><td>2.5</td>")); // B2 is empty
+    QVERIFY(reply.text.contains("<td>inline</td><td>TRUE</td>"));
+    QCOMPARE(reply.note, QStringLiteral("3 rows · first of 2 sheets"));
+
+    reply = ask(m_dir + "/book.ods", "application/vnd.oasis.opendocument.spreadsheet");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+    QVERIFY2(reply.text.contains("<th align=\"left\">City</th><th align=\"left\">same</th><th align=\"left\">same</th>"),
+             qPrintable(reply.text));
+    QVERIFY(reply.text.contains("<td>Athens<br>Greece</td>"));
+    QVERIFY(!reply.text.contains("other sheet"));
+    QCOMPARE(reply.note, QStringLiteral("2 rows · first of 2 sheets")); // the million empty rows aren't rows
+    host.setEnabled("document-preview", false);
 }
 
 // The Git extension, as the app uses it: the model asks the shared host, the

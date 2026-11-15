@@ -5,6 +5,7 @@
 #include <QMetaType>
 #include <QObject>
 #include <QSet>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 
@@ -63,6 +64,17 @@ struct Command
     QStringList types;          // each item's type must match one ("image/*", "text/plain"); empty: any
     bool limited = false;       // only for the items in `items`
     QSet<QString> items;        // paths relative to the folder
+};
+
+// What an extension shows for a file in the preview pane (Space). Always
+// text or a picture for Argonaut to show; an extension never draws itself.
+struct PreviewReply
+{
+    enum Kind { None, Text, Markdown, Html, Image } kind = None; // None: "not from me", the built-in preview is used
+    QString text;          // Text, Markdown, Html (Qt's rich-text subset, no scripts, nothing loaded)
+    bool monospace = false; // Text: in a fixed-width font
+    QString image;         // Image: a picture file the extension wrote
+    QString note;          // one line under the preview ("3 sheets")
 };
 
 // A selected item, as far as commands care.
@@ -136,6 +148,13 @@ public:
     void invoke(const Command &command, const QString &folder, const QStringList &selection);
     QString nameOf(const QString &id) const;
 
+    // Previews: true if a running extension said it previews this type.
+    // requestPreview() asks it and returns the request's number (0: nobody
+    // to ask); the answer comes as previewReady with that number, or never
+    // (the asker should not wait long, and falls back to its own preview).
+    bool canPreview(const QString &mimeType) const;
+    int requestPreview(const QString &path, const QString &mimeType, const QSize &pixels);
+
     // How an extension is doing, for the Extensions window.
     enum class State {
         Unusable, // its folder is wrong (Manifest::problem)
@@ -153,6 +172,7 @@ signals:
     void folderChanged(const QString &folder); // its badges or info changed
     void extensionsChanged();                  // the list, or what is switched on
     void message(const QString &extension, const QString &text); // something to tell the user
+    void previewReady(int request, const Extensions::PreviewReply &reply);
 
 private:
     struct FolderData
@@ -171,6 +191,7 @@ private:
         bool stopping = false;
         QHash<QString, FolderData> folders;
         QList<Command> commands; // everywhere
+        QStringList previewTypes; // what it previews ("text/markdown", "image/*")
     };
 
     void startAsNeeded();
@@ -187,8 +208,10 @@ private:
     QList<Running *> m_running; // the switched-on, usable ones, in order
     QHash<QString, int> m_watched;
     bool m_quitting = false;
+    int m_previewRequest = 0;
 };
 
 } // namespace Extensions
 
 Q_DECLARE_METATYPE(Extensions::Badge)
+Q_DECLARE_METATYPE(Extensions::PreviewReply)

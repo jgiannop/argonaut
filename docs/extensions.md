@@ -11,15 +11,19 @@ Version 1 of the protocol lets an extension:
   of five colours, with a tooltip;
 - show a **short text** for the folder at the right end of the path bar;
 - add **commands** to the right-click menu, and say a line to the user when
-  one is done.
+  one is done;
+- supply the **preview** (the pane Space opens) for kinds of files Argonaut
+  can't show itself, as text, formatted text or a picture.
 
-Three extensions come with Argonaut and are good to read: Git
+Four extensions come with Argonaut and are good to read: Document Preview
+([`extensions/preview`](../extensions/preview): Markdown, CSV and
+spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands
 that depend on the folder) and Send by Email and Set as Background
 ([`extensions/desktop`](../extensions/desktop): a command and nothing else, in
 about 80 lines).
 
-Extra list columns are planned.
+Extra list columns and details in Properties are planned.
 
 ## Safety, for you and for the people who use your extension
 
@@ -112,6 +116,8 @@ Ignore message types and keys you don't know; newer versions may add some.
   finished, the window came back to the front). Look again; answer if
   anything is different.
 - `unwatch`: no view shows it any more. Forget it.
+- `preview`: the user is previewing a file of a kind you announced (see
+  [Previews](#previews)).
 - `invoke`: the user chose one of your commands (and said yes to its
   question, if it has one). `selection` holds the full paths of the selected
   items; it is empty for a command on the folder itself. `folder` is the open
@@ -188,6 +194,61 @@ To tell the user how it went, at any time:
 
 It is shown for a few seconds at the bottom of the window (up to 200
 characters, one line). Use it for results and errors, not for progress.
+
+### Previews
+
+Say once, after `hello`, which kinds of files you preview:
+
+```json
+{"type": "previews", "types": ["text/markdown", "model/stl", "image/x-xcf"]}
+```
+
+Types are matched like a command's `types` (`"image/*"` works), against what
+the file really is. When the user previews such a file, you get:
+
+```json
+{"type": "preview", "id": 12, "path": "/home/me/notes.md", "mime": "text/markdown",
+ "width": 720, "height": 440}
+```
+
+`width` and `height` are the pixels there is room for. Answer with the same
+`id`, in one of these forms:
+
+```json
+{"type": "preview", "id": 12, "kind": "markdown", "text": "# Notes\n\nSome *text*."}
+{"type": "preview", "id": 12, "kind": "text", "text": "plain text", "monospace": true}
+{"type": "preview", "id": 12, "kind": "html", "text": "<table>…</table>", "note": "3 sheets"}
+{"type": "preview", "id": 12, "kind": "image", "image": "/home/me/.cache/my-ext/12.png"}
+{"type": "preview", "id": 12, "kind": "none"}
+```
+
+| Kind | What Argonaut shows |
+|---|---|
+| `markdown` | The text, formatted (CommonMark and GitHub tables). |
+| `text` | The text as it is; `monospace` for a fixed-width font without wrapping. |
+| `html` | Qt's rich-text subset: headings, lists, tables, bold, colours. No scripts, and nothing the HTML names is loaded (no pictures, no style sheets). Links are shown but don't open. |
+| `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. |
+| `none` | "Not from me": Argonaut shows its own preview for the file. |
+
+`text` may be up to a million characters; `note` is one line under the
+preview. You always answer with text or a picture; an extension never draws
+in the window itself.
+
+Things to know:
+
+- **Answer within 4 seconds**, or Argonaut gives up on you for that file and
+  shows its own preview. An answer for a file the user has already left is
+  thrown away, so when several requests are waiting, only the last one is
+  worth doing.
+- **A file Argonaut has found to be a program in disguise is never sent** to
+  an extension.
+- **The file comes from anywhere.** If previewing it means parsing a complex
+  format, do that in a sandbox (the Document Preview extension starts itself
+  again inside bubblewrap for spreadsheets) and never run anything the file
+  contains. If you escape what you put into `html`, a cell saying
+  `<b>bold</b>` shows as text, as it should.
+- If two extensions preview the same type, the first in the Extensions
+  window's list is asked.
 
 ## A complete example
 

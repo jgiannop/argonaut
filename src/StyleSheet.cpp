@@ -177,7 +177,7 @@ QLabel#paneCaption[active="true"] { color: @accent; font-weight: bold; }
 QSplitter#paneSplitter::handle { background: @border; }
 QLabel#qlTitle { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#qlDetails { color: @dim; }
-QPlainTextEdit#qlText { background: @pathBg; color: @fg; border: none; border-radius: 8px; padding: 6px; }
+QPlainTextEdit#qlText, QTextBrowser#qlText { background: @pathBg; color: @fg; border: none; border-radius: 8px; padding: 6px; }
 QTreeWidget#qlArchive { background: @window; color: @fg; border: none; }
 QTreeWidget#qlArchive QHeaderView::section { background: @window; color: @dim; border: none;
     padding: 4px 8px; font-weight: bold; }

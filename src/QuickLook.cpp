@@ -13,7 +13,10 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QImageReader>
 #include <QStackedWidget>
+#include <QTextBrowser>
+#include <QTimer>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -51,6 +54,17 @@ protected:
 
 private:
     QPixmap m_pixmap;
+};
+
+// Rich text from an extension, shown and nothing more: links don't go
+// anywhere and nothing it names (pictures, style sheets) is loaded.
+class RichView : public QTextBrowser
+{
+public:
+    using QTextBrowser::QTextBrowser;
+
+protected:
+    QVariant loadResource(int, const QUrl &) override { return {}; }
 };
 
 QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
@@ -95,6 +109,12 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_text->setReadOnly(true);
     m_text->setFocusPolicy(Qt::NoFocus); // keys stay with the file view
     m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    m_rich = new RichView(m_pages);
+    m_rich->setObjectName("qlText");
+    m_rich->setFocusPolicy(Qt::NoFocus);
+    m_rich->setOpenLinks(false);
+    m_rich->setOpenExternalLinks(false);
+    m_rich->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_archive = new QTreeWidget(m_pages);
     m_archive->setObjectName("qlArchive");
     m_archive->setFocusPolicy(Qt::NoFocus);
@@ -118,7 +138,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     info->addWidget(m_infoText);
     info->addStretch();
     for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel),
-                          static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_archive), m_infoPage})
+                          static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
     layout->addWidget(m_pages, 1);
 
@@ -133,6 +153,16 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     connect(m_open, &QPushButton::clicked, this, [this] { emit openRequested(m_item.path); });
     bottom->addWidget(m_open);
     layout->addLayout(bottom);
+
+    // An extension that previews this kind of file is asked first, briefly.
+    m_extensionTimer = new QTimer(this);
+    m_extensionTimer->setSingleShot(true);
+    m_extensionTimer->setInterval(4000);
+    connect(m_extensionTimer, &QTimer::timeout, this, [this] {
+        m_extensionRequest = 0;
+        loadBuiltIn(m_generation); // it didn't answer: ours instead
+    });
+    connect(Extensions::Host::instance(), &Extensions::Host::previewReady, this, &QuickLook::extensionAnswered);
     clear();
 }
 
@@ -162,6 +192,24 @@ void QuickLook::showItem(const Item &item)
     showInfo(tr("Loading…"));
 
     const quint64 generation = ++m_generation;
+    m_fromExtension = false;
+    m_extensionTimer->stop();
+    m_extensionRequest = 0;
+    // Never a program in disguise: that one isn't handed to anybody.
+    Extensions::Host *host = Extensions::Host::instance();
+    if (item.verdict != ContentType::Verdict::Dangerous && host->canPreview(item.mimeType)) {
+        m_extensionRequest = host->requestPreview(item.path, item.mimeType, pictureBox());
+        if (m_extensionRequest != 0) {
+            m_extensionTimer->start();
+            return;
+        }
+    }
+    loadBuiltIn(generation);
+}
+
+void QuickLook::loadBuiltIn(quint64 generation)
+{
+    const Item item = m_item;
     QPointer<QuickLook> self(this);
     const QSize box = pictureBox();
     QThreadPool::globalInstance()->start([self, generation, item, box, thumbnailer = m_thumbnailer] {
@@ -173,9 +221,78 @@ void QuickLook::showItem(const Item &item)
     });
 }
 
+void QuickLook::extensionAnswered(int request, const Extensions::PreviewReply &reply)
+{
+    if (request == 0 || request != m_extensionRequest)
+        return; // an answer for a file we have moved on from
+    m_extensionRequest = 0;
+    m_extensionTimer->stop();
+    if (!isVisible())
+        return;
+    if (!applyExtension(reply))
+        loadBuiltIn(m_generation); // "not from me", or nothing usable
+}
+
+bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
+{
+    using Extensions::PreviewReply;
+    switch (reply.kind) {
+    case PreviewReply::None:
+        return false;
+    case PreviewReply::Text:
+        m_text->setFont(reply.monospace ? QFontDatabase::systemFont(QFontDatabase::FixedFont) : font());
+        m_text->setPlainText(reply.text);
+        m_text->setLineWrapMode(reply.monospace ? QPlainTextEdit::NoWrap : QPlainTextEdit::WidgetWidth);
+        m_pages->setCurrentWidget(m_text);
+        m_kind = Preview::Kind::Text;
+        break;
+    case PreviewReply::Markdown:
+    case PreviewReply::Html:
+        if (reply.kind == PreviewReply::Markdown)
+            m_rich->setMarkdown(reply.text);
+        else
+            m_rich->setHtml(reply.text);
+        m_pages->setCurrentWidget(m_rich);
+        m_kind = Preview::Kind::Text;
+        break;
+    case PreviewReply::Image: {
+        QImageReader reader(reply.image);
+        reader.setAutoTransform(true);
+        const QSize size = reader.size();
+        if (!size.isValid() || size.width() > 16384 || size.height() > 16384)
+            return false; // not a picture, or one too big to be a preview
+        const QSize box = pictureBox();
+        if (size.width() > box.width() || size.height() > box.height())
+            reader.setScaledSize(size.scaled(box, Qt::KeepAspectRatio));
+        QImage image = reader.read();
+        if (image.isNull())
+            return false;
+        image.setDevicePixelRatio(devicePixelRatioF());
+        m_picture->setImage(image);
+        m_pages->setCurrentWidget(m_picture);
+        m_kind = Preview::Kind::Image;
+        break;
+    }
+    }
+    m_note->setText(reply.note);
+    m_infoText->setStyleSheet(QString());
+    m_fromExtension = true;
+    return true;
+}
+
+QString QuickLook::shownText() const
+{
+    if (m_pages->currentWidget() == m_rich)
+        return m_rich->toPlainText();
+    return m_pages->currentWidget() == m_text ? m_text->toPlainText() : QString();
+}
+
 void QuickLook::clear()
 {
     ++m_generation; // drop what's still loading
+    m_extensionTimer->stop();
+    m_extensionRequest = 0;
+    m_fromExtension = false;
     m_item = Item();
     m_kind = Preview::Kind::Generic;
     if (m_movie) {
@@ -221,6 +338,7 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
         }
         break;
     case Preview::Kind::Text:
+        m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         m_text->setPlainText(result.text);
         m_text->setLineWrapMode(m_item.mimeType == QLatin1String("text/plain")
                                         || m_item.mimeType == QLatin1String("text/markdown")
@@ -269,6 +387,8 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 void QuickLook::hideEvent(QHideEvent *event)
 {
     ++m_generation; // drop what's still loading
+    m_extensionTimer->stop();
+    m_extensionRequest = 0;
     if (m_movie)
         m_movie->stop();
     QWidget::hideEvent(event);

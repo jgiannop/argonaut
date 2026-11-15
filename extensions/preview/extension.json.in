@@ -1,0 +1,9 @@
+{
+    "id": "document-preview",
+    "name": "Document Preview",
+    "description": "In the preview pane (Space): Markdown shown as a formatted page, and CSV files and spreadsheets (.xlsx, .ods) as a table. Spreadsheets are read in a sandbox.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "exec": ["@ARGONAUT_PREVIEW_EXTENSION_EXE@"]
+}
