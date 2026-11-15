@@ -52,6 +52,7 @@ argonaut_test(bookmarks)
 argonaut_test(openwith)
 argonaut_test(remote)
 argonaut_test(defaultfm)
+argonaut_test(desktopactions)
 
 # Claude.
 argonaut_test(claude)

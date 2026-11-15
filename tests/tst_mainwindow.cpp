@@ -15,6 +15,7 @@
 
 #if defined(ARGONAUT_DBUS)
 #include "ChooserBar.h"
+#include "ChooserMode.h"
 #include "FileChooserPortal.h"
 #include "FileChooserRequest.h"
 #endif
@@ -484,7 +485,7 @@ void TestMainWindow::chooserOpenReturnsTheSelection()
     QCOMPARE(w->m_current, m_dir);
 
     // Nothing chosen: no answer yet.
-    w->chooserAccept();
+    w->m_chooser->accept();
     QCOMPARE(finished.count(), 0);
 
     select({a, b});
@@ -497,7 +498,7 @@ void TestMainWindow::chooserOpenReturnsTheSelection()
     QVERIFY(exists(a) && exists(b));
 
     // Answered once: more input changes nothing.
-    w->chooserAccept();
+    w->m_chooser->accept();
     w->cancelChooser();
     QCOMPARE(finished.count(), 1);
 }
@@ -515,17 +516,17 @@ void TestMainWindow::chooserSaveAsksBeforeReplacing()
     QSignalSpy loaded(w->m_model, &DirectoryModel::loaded);
     w->startChooser(request);
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
-    QCOMPARE(w->m_chooserBar->name(), QStringLiteral("report.txt"));
+    QCOMPARE(w->m_chooser->bar()->name(), QStringLiteral("report.txt"));
 
     answerNext("Cancel");
-    w->chooserAccept();
+    w->m_chooser->accept();
     QCOMPARE(m_asked, 1);
     QVERIFY(m_question.contains("report.txt"));
     QCOMPARE(finished.count(), 0); // still open, nothing answered
 
     // A name that is free needs no question.
-    w->m_chooserBar->setName("new.txt");
-    w->chooserAccept();
+    w->m_chooser->bar()->setName("new.txt");
+    w->m_chooser->accept();
     QCOMPARE(m_asked, 1);
     QCOMPARE(finished.count(), 1);
     QCOMPARE(finished.first().at(1).toMap().value("uris").toStringList(),
@@ -549,7 +550,7 @@ void TestMainWindow::chooserCancelAnswersOnce()
     w->cancelChooser();
     QCOMPARE(finished.count(), 1);
     QCOMPARE(finished.first().at(0).toUInt(), uint(FileChooserPortal::Cancelled));
-    w->chooserAccept();
+    w->m_chooser->accept();
     w->cancelChooser();
     QCOMPARE(finished.count(), 1);
 }

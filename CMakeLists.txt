@@ -64,6 +64,8 @@ qt_add_library(argonaut_core STATIC
     src/StatTime.h
     src/Tools.h
     src/Tools.cpp
+    src/DesktopActions.h
+    src/DesktopActions.cpp
     src/Sandbox.cpp
     src/MediaInfo.h
     src/MediaInfo.cpp
@@ -104,6 +106,8 @@ qt_add_library(argonaut_app STATIC
     src/MainWindow.cpp
     src/Theme.h
     src/Theme.cpp
+    src/StyleSheet.h
+    src/StyleSheet.cpp
     src/HeaderBar.h
     src/HeaderBar.cpp
     src/PathBar.h
@@ -150,7 +154,7 @@ qt_add_executable(argonaut src/main.cpp)
 target_link_libraries(argonaut PRIVATE argonaut_app)
 # Open/Save windows for other apps (xdg-desktop-portal FileChooser backend), Linux.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(argonaut_app PRIVATE src/ChooserBar.h src/ChooserBar.cpp)
+    target_sources(argonaut_app PRIVATE src/ChooserBar.h src/ChooserBar.cpp src/ChooserMode.h src/ChooserMode.cpp)
     # WM_TRANSIENT_FOR on those windows (X11): one xcb call Qt has no API for.
     if(PkgConfig_FOUND)
         pkg_check_modules(XCB IMPORTED_TARGET xcb)

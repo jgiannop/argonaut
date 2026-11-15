@@ -1,11 +1,8 @@
 #include "MainWindow.h"
 
-#if defined(ARGONAUT_XCB)
-#include <xcb/xcb.h>
-#endif
 #if defined(ARGONAUT_DBUS)
 #include "ChooserBar.h"
-#include "FileChooserPortal.h"
+#include "ChooserMode.h"
 #endif
 
 #include "AboutDialog.h"
@@ -13,6 +10,7 @@
 #include "BatchRenameDialog.h"
 #include "CommandPalette.h"
 #include "ConnectDialog.h"
+#include "DesktopActions.h"
 #include "OrganizerDialog.h"
 #include "Remote.h"
 #include "HelpDialog.h"
@@ -39,6 +37,7 @@
 #include "Starred.h"
 #include "PropertiesDialog.h"
 #include "QuickLook.h"
+#include "StyleSheet.h"
 #include "Thumbnailer.h"
 #if defined(ARGONAUT_TERMINAL)
 #include "TerminalWidget.h"
@@ -163,242 +162,6 @@ public:
         return QStyledItemDelegate::sizeHint(option, index);
     }
 };
-
-QString styleSheetFor(const Theme &t)
-{
-    QString css = QStringLiteral(R"(
-QWidget#root { background: @outline; }
-QWidget#sidebarPane { background: @sidebar; }
-QWidget#contentPane { background: @window; }
-QLabel#title { color: @fg; font-weight: bold; }
-
-QToolButton#flat { background: transparent; border: none; border-radius: 6px;
-    padding: 5px; color: @fg; }
-QToolButton#flat:hover { background: @hover; }
-QToolButton#flat:pressed, QToolButton#flat:checked { background: @pressed; }
-QToolButton#flat::menu-indicator { image: none; width: 0px; }
-
-QToolButton#win { background: @button; border: none; border-radius: 12px; }
-QToolButton#win:hover { background: @buttonHover; }
-QToolButton#win:pressed { background: @pressed; }
-
-QFrame#pathBar { background: @pathBg; border-radius: 8px; }
-QToolButton#crumb, QToolButton#crumbCurrent { background: transparent; border: none;
-    border-radius: 6px; padding: 3px 7px; color: @dim; }
-QToolButton#crumbCurrent { color: @fg; font-weight: bold; }
-QToolButton#crumb:hover, QToolButton#crumbCurrent:hover { background: @hover; color: @fg; }
-QLabel#crumbSep { color: @dim; }
-QLineEdit#pathEdit { background: transparent; border: none; color: @fg; padding: 0px 8px;
-    selection-background-color: @accent; }
-QLineEdit#searchEdit { background: @pathBg; border: none; border-radius: 8px; color: @fg;
-    padding: 0px 10px; selection-background-color: @accent; }
-
-QListWidget#sidebar { background: @sidebar; color: @fg; border: none; padding: 0px 6px 6px 6px;
-    outline: 0; }
-QListWidget#sidebar::item { height: 36px; padding-left: 8px; border: none; border-radius: 6px;
-    margin: 1px 0px; color: @fg; }
-QListWidget#sidebar::item:hover { background: @hover; }
-QListWidget#sidebar::item:selected { background: @selected; color: @fg; }
-
-QListView#files { background: @window; border: none; outline: 0; padding: 6px 6px; }
-QTreeView#detailView { background: @window; border: none; outline: 0; padding: 0px 6px 6px 6px; }
-QTreeView#detailView::item, QTreeView#detailView::item:selected,
-QTreeView#detailView::branch { background: transparent; }
-QTreeView#detailView QHeaderView { background: @window; border: none; }
-QTreeView#detailView QHeaderView::section { background: @window; color: @dim; border: none;
-    padding: 8px 10px 6px 16px; font-weight: bold; }
-QTreeView#detailView QHeaderView::section:hover { color: @fg; }
-QTreeView#analyzeView { background: @window; border: none; outline: 0; padding: 0px 6px 6px 6px; }
-QTreeView#analyzeView::item { border: none; padding-left: 4px; }
-QTreeView#analyzeView::item:hover { background: @hover; }
-QTreeView#analyzeView::item:selected { background: @itemSel; color: @fg; }
-QTreeView#analyzeView QHeaderView { background: @window; border: none; }
-QTreeView#analyzeView QHeaderView::section { background: @window; color: @dim; border: none;
-    padding: 8px 10px 6px 16px; font-weight: bold; }
-QTreeView#analyzeView QHeaderView::section:hover { color: @fg; }
-QLabel#floatingBar { background: @popup; color: @fg; border: 1px solid @border;
-    border-radius: 8px; padding: 5px 12px; }
-
-QSplitter#mainSplitter::handle { background: @splitter; }
-
-QScrollBar:vertical { background: transparent; width: 10px; margin: 2px 0px; }
-QScrollBar::handle:vertical { background: @scroll; border-radius: 3px; min-height: 32px;
-    margin: 0px 2px; }
-QScrollBar::handle:vertical:hover { background: @scrollHover; }
-QScrollBar:horizontal { background: transparent; height: 10px; margin: 0px 2px; }
-QScrollBar::handle:horizontal { background: @scroll; border-radius: 3px; min-width: 32px;
-    margin: 2px 0px; }
-QScrollBar::handle:horizontal:hover { background: @scrollHover; }
-QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
-QScrollBar::add-page, QScrollBar::sub-page { background: none; }
-
-QMenu { background: @popup; color: @fg; border: 1px solid @border; border-radius: 10px;
-    padding: 6px; }
-QMenu::item { padding: 7px 32px 7px 28px; border-radius: 6px; }
-QMenu::item:selected { background: @hover; }
-QMenu::item:disabled { color: @dim; }
-QMenu::separator { height: 1px; background: @border; margin: 5px 6px; }
-
-QFrame#opsPanel { background: @popup; border: 1px solid @border; border-radius: 12px; }
-QLabel#opsTitle { color: @fg; }
-QLabel#opsDetail { color: @dim; }
-QProgressBar#opsProgress { background: @pathBg; border: none; border-radius: 3px; }
-QProgressBar#opsProgress::chunk { background: @accent; border-radius: 3px; }
-QFrame#toast { background: @popup; border: 1px solid @border; border-radius: 20px; }
-QLabel#toastText { color: @fg; }
-QToolButton#toastAction { background: @button; color: @fg; border: none; border-radius: 14px;
-    padding: 5px 14px; font-weight: bold; }
-QToolButton#toastAction:hover { background: @buttonHover; }
-
-QWidget#menuRow { background: @sidebar; border: none; border-bottom: 1px solid @border; }
-QMenuBar#menuBar { background: @sidebar; color: @fg; border: none; padding: 2px 4px; }
-QMenuBar#menuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }
-QMenuBar#menuBar::item:selected { background: @hover; }
-QMenuBar#menuBar::item:pressed { background: @pressed; }
-QLineEdit#renameEdit { background: @window; color: @fg; border: 2px solid @accent;
-    border-radius: 6px; padding: 1px 4px; selection-background-color: @accent;
-    selection-color: #ffffff; }
-
-QTabBar#tabs { background: @window; border: none; }
-QTabBar#tabs::tab { background: transparent; color: @dim; border: none; border-radius: 6px;
-    padding: 5px 8px 5px 14px; margin: 3px 2px; min-width: 120px; }
-QTabBar#tabs::tab:selected { background: @pathBg; color: @fg; }
-QTabBar#tabs::tab:hover:!selected { background: @hover; }
-QWidget#trashBar { background: @pathBg; border-bottom: 1px solid @border; }
-QLabel#trashBarText { color: @fg; }
-QToolButton#barButton { background: @button; color: @fg; border: none; border-radius: 6px;
-    padding: 5px 14px; font-weight: bold; }
-QToolButton#barButton:hover { background: @buttonHover; }
-QToolButton#barButton:disabled { color: @dim; }
-QWidget#terminalPanel { background: @window; }
-QWidget#terminalBar { background: @window; border-top: 1px solid @border; }
-QLabel#terminalTitle { color: @dim; font-weight: bold; }
-QSplitter#contentSplitter::handle { background: @border; }
-
-QDialog#conflictDialog { background: @window; }
-QLabel#conflictTitle { color: @fg; font-weight: bold; font-size: 15px; }
-QLabel#conflictText { color: @dim; }
-QCheckBox#conflictCheck { color: @fg; spacing: 8px; }
-QCheckBox#conflictCheck::indicator { width: 14px; height: 14px; border: 1px solid @dim;
-    border-radius: 4px; background: @pathBg; }
-QCheckBox#conflictCheck::indicator:checked { background: @accent; border-color: @accent; }
-QWidget#conflictCard { background: @pathBg; border-radius: 10px; }
-QLabel#conflictCardHeading { color: @fg; font-weight: bold; }
-QLineEdit#conflictName { background: @pathBg; color: @fg; border: none; border-radius: 6px;
-    padding: 6px 8px; selection-background-color: @accent; }
-QPushButton#conflictButton { background: @button; color: @fg; border: none; border-radius: 6px;
-    padding: 7px 14px; }
-QPushButton#conflictButton:hover { background: @buttonHover; }
-QPushButton#conflictPrimary { background: @accent; color: #ffffff; border: none;
-    border-radius: 6px; padding: 7px 16px; font-weight: bold; }
-
-QDialog#propertiesDialog { background: @window; }
-QLabel#propLabel { color: @dim; }
-QLabel#propValue { color: @fg; }
-QLabel#propHeading { color: @fg; font-weight: bold; padding-top: 10px; }
-QLabel#propWarning { color: #c88800; font-weight: bold; }
-QLabel#propDanger { color: #e01b24; font-weight: bold; }
-QComboBox#propCombo { background: @pathBg; color: @fg; border: none; border-radius: 6px;
-    padding: 5px 10px; }
-QComboBox#propCombo:disabled { color: @dim; }
-QComboBox#propCombo::drop-down { border: none; width: 18px; }
-QComboBox#propCombo QAbstractItemView { background: @popup; color: @fg; border: 1px solid @border;
-    selection-background-color: @hover; selection-color: @fg; outline: 0; }
-QDialog#openWithDialog { background: @window; }
-QListWidget#appList { background: @pathBg; color: @fg; border-radius: 8px; padding: 4px; outline: 0; }
-QListWidget#appList::item { padding: 6px; border-radius: 6px; }
-QListWidget#appList::item:selected { background: @itemSel; color: @fg; }
-QListWidget#appList::item:hover:!selected { background: @hover; }
-
-QDialog#preferences { background: @window; }
-QScrollArea#prefScroll, QWidget#prefContent { background: @window; }
-QDialog#connectDialog { background: @window; }
-QLineEdit#connectAddress { background: @pathBg; color: @fg; border: none; border-radius: 6px;
-    padding: 7px 9px; selection-background-color: @accent; }
-QLineEdit#connectAddress:disabled { color: @dim; }
-QLabel#prefHeading { color: @fg; font-weight: bold; font-size: 15px; }
-QLabel#prefHint { color: @dim; }
-QCheckBox#prefCheck { color: @fg; spacing: 8px; }
-QCheckBox#prefCheck::indicator { width: 14px; height: 14px; border: 1px solid @dim;
-    border-radius: 4px; background: @pathBg; }
-QCheckBox#prefCheck::indicator:checked { background: @accent; border-color: @accent; }
-QWidget#quickLook { background: @window; }
-QLabel#paneCaption { background: @window; color: @dim; padding: 5px 14px; border-bottom: 1px solid @border; }
-QLabel#paneCaption[active="true"] { color: @accent; font-weight: bold; }
-QSplitter#paneSplitter::handle { background: @border; }
-QLabel#qlTitle { color: @fg; font-weight: bold; font-size: 15px; }
-QLabel#qlDetails { color: @dim; }
-QPlainTextEdit#qlText { background: @pathBg; color: @fg; border: none; border-radius: 8px; padding: 6px; }
-QTreeWidget#qlArchive { background: @window; color: @fg; border: none; }
-QTreeWidget#qlArchive QHeaderView::section { background: @window; color: @dim; border: none;
-    padding: 4px 8px; font-weight: bold; }
-QPushButton#prefButton { background: @pathBg; color: @fg; border: none; border-radius: 6px;
-    padding: 7px 16px; }
-QPushButton#prefButton:hover { background: @hover; }
-QPushButton#prefButton:disabled { color: @dim; }
-QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid transparent;
-    border-radius: 12px; padding: 8px 8px 6px 8px; }
-QToolButton#themeCard:hover { background: @hover; }
-QToolButton#themeCard:checked { border-color: @accent; }
-
-QToolButton#searchOption { background: @pathBg; color: @dim; border: none; border-radius: 8px;
-    padding: 0 12px; font-weight: bold; }
-QToolButton#searchOption:hover { color: @fg; }
-QToolButton#searchOption:checked { background: @accent; color: #ffffff; }
-QToolButton#gitBadge { background: transparent; color: @dim; border: none; border-radius: 6px;
-    padding: 2px 8px; font-weight: bold; }
-QToolButton#gitBadge:hover { background: @hover; }
-QFrame#commandPalette { background: @popup; border: 1px solid @border; border-radius: 12px; }
-QLineEdit#paletteEdit { background: @pathBg; color: @fg; border: none; border-radius: 8px;
-    padding: 8px 10px; font-size: 14px; selection-background-color: @accent; }
-QListWidget#paletteList { background: transparent; color: @fg; outline: 0; }
-QDialog#helpDialog { background: @window; }
-QWidget#helpSide { background: @sidebar; border-right: 1px solid @border; }
-QLabel#helpTitle { color: @fg; font-weight: bold; font-size: 15px; padding: 2px 4px; }
-QLabel#helpNoMatch { color: @dim; padding: 4px; }
-QLineEdit#helpSearch { background: @pathBg; color: @fg; border: none; border-radius: 6px;
-    padding: 6px 8px; selection-background-color: @accent; }
-QListWidget#helpTopics { background: transparent; color: @fg; outline: 0; }
-QListWidget#helpTopics::item { padding: 7px 8px; border-radius: 6px; }
-QListWidget#helpTopics::item:selected { background: @selected; color: @fg; }
-QListWidget#helpTopics::item:hover:!selected { background: @hover; }
-QTextBrowser#helpPage { background: @window; color: @fg; border: none; }
-
-QDialog#aboutDialog { background: @window; }
-QLabel#aboutName { color: @fg; font-weight: bold; font-size: 26px; }
-QLabel#aboutVersion { background: @itemSel; color: @accent; font-weight: bold; border-radius: 10px;
-    padding: 3px 12px; }
-QLabel#aboutTagline { color: @dim; font-size: 14px; }
-QToolButton#aboutTab { background: transparent; color: @dim; border: none; border-radius: 14px;
-    padding: 5px 14px; font-weight: bold; }
-QToolButton#aboutTab:hover { background: @hover; color: @fg; }
-QToolButton#aboutTab:checked { background: @pathBg; color: @fg; }
-QLabel#aboutText { color: @fg; }
-QLabel#aboutDim { color: @dim; }
-QWidget#aboutCard { background: @pathBg; border-radius: 10px; }
-QLabel#aboutCardHeading { color: @fg; font-weight: bold; }
-QLabel#aboutCardText { color: @dim; }
-QLabel#aboutLabel { color: @dim; }
-QWidget#chooserBar { background: @sidebar; border-top: 1px solid @border; }
-QLabel#chooserLabel { color: @fg; }
-QLabel#aboutValue { color: @fg; }
-QPushButton#aboutClose { background: @accent; color: #ffffff; border: none; border-radius: 6px;
-    padding: 7px 18px; font-weight: bold; }
-)");
-    const QList<std::pair<const char *, QColor>> tokens = {
-        {"@outline", t.outline},   {"@sidebar", t.sidebar},       {"@window", t.window},
-        {"@fg", t.fg},             {"@dim", t.dimFg},             {"@hover", t.hover},
-        {"@pressed", t.pressed},   {"@selected", t.selected},     {"@buttonHover", t.buttonHover},
-        {"@button", t.button},     {"@pathBg", t.pathBg},         {"@accent", t.accent},
-        {"@popup", t.popup},       {"@border", t.border},         {"@scrollHover", t.scrollHover},
-        {"@scroll", t.scroll},     {"@splitter", t.dark ? t.sidebar : t.border},
-        {"@itemSel", t.itemSelected},
-    };
-    // Longer tokens first where one is a prefix of another (@button/@buttonHover…).
-    for (const auto &[token, color] : tokens)
-        css.replace(QLatin1String(token), cssColor(color));
-    return css;
-}
 
 } // namespace
 
@@ -1482,12 +1245,8 @@ void MainWindow::refreshChrome()
     updateGitBadge();
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) {
-        const bool folder = m_chooser->directory;
-        const QString fallback = m_chooser->mode == ChooserRequest::Mode::Open
-                                     ? (folder ? tr("Select Folder") : tr("Open"))
-                                     : tr("Save");
-        setWindowTitle(m_chooser->title.isEmpty() ? fallback : m_chooser->title);
-        m_titleLabel->setText(fallback); // short: apps' titles can be long
+        setWindowTitle(m_chooser->windowTitle());
+        m_titleLabel->setText(m_chooser->shortTitle()); // short: apps' titles can be long
     } else
 #endif
         setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_current)));
@@ -2350,108 +2109,53 @@ void MainWindow::springOver(const QString &folder, int pane)
     navigateTo(folder);
 }
 
-// Opens the email app with the files attached (xdg-email); it sends nothing.
+// Opens the email app with the files attached; it sends nothing.
 void MainWindow::sendByEmail(const QStringList &paths)
 {
-    QStringList args;
-    for (const QString &p : paths)
-        args << QStringLiteral("--attach") << p;
-    const QString program = Tools::program("ARGONAUT_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
-    if (!QProcess::startDetached(program, args))
+    if (!DesktopActions::sendByEmail(paths))
         showMessage(tr("Couldn't open the email app (xdg-email is missing)"));
 }
 
-// GNOME: copy the image into ~/.local/share/backgrounds (so deleting or
-// moving the original later doesn't break it), then point the desktop at it.
 void MainWindow::setAsBackground(const QString &image)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/backgrounds");
-    QDir().mkpath(dir);
-    QString copy = dir + QLatin1Char('/') + QFileInfo(image).fileName();
-    if (QFileInfo(copy).exists() && QFileInfo(copy).size() != QFileInfo(image).size())
-        copy = uniqueTargetPath(dir, QFileInfo(image).fileName(), false);
-    if (!QFileInfo::exists(copy) && !QFile::copy(image, copy)) {
-        showMessage(tr("Couldn't copy the image for the background"));
-        return;
-    }
-    const QString uri = QUrl::fromLocalFile(copy).toString();
-    const QString gsettings = Tools::program("ARGONAUT_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
-    bool ok = true;
-    for (const char *key : {"picture-uri", "picture-uri-dark"}) {
-        ok = QProcess::execute(gsettings, {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.background"),
-                                           QString::fromLatin1(key), uri})
-                 == 0
-             && ok;
-    }
-    showMessage(ok ? tr("Background changed") : tr("Couldn't change the background (GNOME only)"));
+    QString error;
+    showMessage(DesktopActions::setAsBackground(image, &error) ? tr("Background changed") : error);
 }
 
-// Scripts ▸: the user's scripts in ~/.local/share/nautilus/scripts, run
-// the way Nautilus runs them (same folder, same variables), so existing
-// ones work unchanged. Sub-folders become sub-menus.
+// Scripts ▸: the user's Nautilus scripts, run on `selection`. Sub-folders
+// become sub-menus. Null when there are none (or here isn't a real folder).
 QMenu *MainWindow::scriptsMenu(const QStringList &selection)
 {
-#if !defined(Q_OS_UNIX)
-    Q_UNUSED(selection);
-    return nullptr;
-#else
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/nautilus/scripts");
-    if (m_model->isVirtual() || m_model->isTrash() || !QFileInfo(root).isDir())
+    const QString root = DesktopActions::scriptsFolder();
+    if (m_model->isVirtual() || m_model->isTrash())
         return nullptr;
-    std::function<bool(QMenu *, const QString &, int)> fill = [&](QMenu *menu, const QString &dir, int depth) {
-        bool any = false;
-        const QFileInfoList entries = QDir(dir).entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name | QDir::DirsFirst);
-        for (const QFileInfo &e : entries) {
-            if (e.isDir() && depth < 3) {
-                QMenu *sub = makeMenu();
-                sub->setTitle(e.fileName());
-                if (fill(sub, e.filePath(), depth + 1)) {
+    const QList<DesktopActions::Script> scripts = DesktopActions::scripts(root);
+    if (scripts.isEmpty())
+        return nullptr;
+    std::function<void(QMenu *, const QList<DesktopActions::Script> &)> fill =
+        [&](QMenu *menu, const QList<DesktopActions::Script> &entries) {
+            for (const DesktopActions::Script &entry : entries) {
+                if (entry.isFolder()) {
+                    QMenu *sub = makeMenu();
+                    sub->setTitle(entry.name);
                     sub->setParent(menu, sub->windowFlags());
+                    fill(sub, entry.children);
                     menu->addMenu(sub);
-                    any = true;
-                } else {
-                    delete sub;
+                    continue;
                 }
-            } else if (e.isFile() && e.isExecutable()) {
-                menu->addAction(e.fileName(), this, [this, script = e.filePath(), selection] {
-                    const QString folder = m_current;
-                    QStringList paths, uris, args;
-                    for (const QString &p : selection) {
-                        paths << p;
-                        uris << QUrl::fromLocalFile(p).toString();
-                        args << (QFileInfo(p).absolutePath() == folder ? QFileInfo(p).fileName() : p);
-                    }
-                    QProcess process;
-                    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"), paths.isEmpty() ? QString() : paths.join(QLatin1Char('\n')) + QLatin1Char('\n'));
-                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_SELECTED_URIS"), uris.isEmpty() ? QString() : uris.join(QLatin1Char('\n')) + QLatin1Char('\n'));
-                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_CURRENT_URI"), QUrl::fromLocalFile(folder).toString());
-                    const QRect g = geometry();
-                    env.insert(QStringLiteral("NAUTILUS_SCRIPT_WINDOW_GEOMETRY"),
-                               QStringLiteral("%1x%2+%3+%4").arg(g.width()).arg(g.height()).arg(g.x()).arg(g.y()));
-                    process.setProcessEnvironment(env);
-                    process.setProgram(script);
-                    process.setArguments(args);
-                    process.setWorkingDirectory(folder);
-                    if (!process.startDetached())
+                menu->addAction(entry.name, this, [this, script = entry.path, selection] {
+                    if (!DesktopActions::runScript(script, m_current, selection, geometry()))
                         showMessage(tr("Couldn't run “%1”").arg(QFileInfo(script).fileName()));
                 });
-                any = true;
             }
-        }
-        return any;
-    };
+        };
     QMenu *menu = makeMenu();
     menu->setTitle(tr("Scripts"));
-    if (!fill(menu, root, 0)) {
-        delete menu;
-        return nullptr;
-    }
+    fill(menu, scripts);
     menu->addSeparator();
     menu->addAction(tr("Open Scripts Folder"), this, [this, root] { navigateTo(root); });
     menu->setAttribute(Qt::WA_DeleteOnClose);
     return menu;
-#endif
 }
 
 // ------------------------------------------------------------ organize ---
@@ -2881,11 +2585,8 @@ void MainWindow::openIndex(const QModelIndex &viewIndex)
     const QModelIndex index = toSource(viewIndex);
     const QString path = m_model->filePath(index);
 #if defined(ARGONAUT_DBUS)
-    if (m_chooser && !m_model->isDir(index)) { // a file: that's the choice
-        if (m_chooser->mode == ChooserRequest::Mode::Save)
-            m_chooserBar->setName(QFileInfo(path).fileName());
-        if (m_chooser->mode != ChooserRequest::Mode::SaveFiles && !m_chooser->directory)
-            chooserAccept();
+    if (m_chooser && !m_model->isDir(index)) { // a file: that's the choice, nothing is opened
+        m_chooser->fileActivated(path);
         return;
     }
 #endif
@@ -2909,7 +2610,8 @@ void MainWindow::updateActions()
     m_backButton->setEnabled(m_backAct->isEnabled());
     m_forwardButton->setEnabled(m_forwardAct->isEnabled());
 #if defined(ARGONAUT_DBUS)
-    keepChooserActionsOff();
+    if (m_chooser) // an Open/Save window: its commands stay off
+        m_chooser->keepActionsOff();
 #endif
 }
 
@@ -3566,11 +3268,7 @@ void MainWindow::openSelection()
 {
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) {
-        const QStringList paths = selectedPaths();
-        if (paths.size() == 1 && QFileInfo(paths.first()).isDir() && !m_chooser->directory)
-            navigateTo(paths.first());
-        else
-            chooserAccept();
+        m_chooser->openSelection();
         return;
     }
 #endif
@@ -3754,7 +3452,8 @@ void MainWindow::updateEditActions()
     m_copyToOtherAct->setEnabled(toOther);
     m_moveToOtherAct->setEnabled(toOther && changeable);
 #if defined(ARGONAUT_DBUS)
-    keepChooserActionsOff();
+    if (m_chooser) // an Open/Save window: its commands stay off
+        m_chooser->keepActionsOff();
 #endif
 }
 
@@ -4026,7 +3725,7 @@ void MainWindow::showEvent(QShowEvent *event)
     QMainWindow::showEvent(event);
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) // after Qt's own show(), which clears the property
-        QTimer::singleShot(0, this, &MainWindow::attachToChooserParent);
+        QTimer::singleShot(0, m_chooser, &ChooserMode::attachToParent);
 #endif
 }
 
@@ -4049,7 +3748,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) { // an Open/Save window: no answer yet means Cancel
-        finishChooser(FileChooserPortal::Cancelled);
+        m_chooser->cancel();
         QMainWindow::closeEvent(event);
         return; // the file manager's own settings stay as they were
     }
@@ -5353,7 +5052,7 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 #if defined(ARGONAUT_DBUS)
     // Esc that nothing else wanted (rename, search, type-ahead) cancels.
     if (m_chooser && event->key() == Qt::Key_Escape) {
-        finishChooser(FileChooserPortal::Cancelled);
+        m_chooser->cancel();
         return;
     }
 #endif
@@ -5363,10 +5062,20 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 // ------------------------------------------------------ Open/Save window ---
 #if defined(ARGONAUT_DBUS)
 
+// Turns this window into an Open/Save window for another app. What that
+// means (accepting, the one answer, where the window goes) is ChooserMode's;
+// here the window only takes off what a dialog doesn't need and tells the
+// mode what the user does.
 void MainWindow::startChooser(const ChooserRequest &request)
 {
-    using Mode = ChooserRequest::Mode;
-    m_chooser = request;
+    ChooserMode::Host host;
+    host.window = this;
+    host.selectedPaths = [this] { return selectedPaths(); };
+    host.currentFolder = [this] { return m_current; };
+    host.inTrash = [this] { return m_model->isTrash(); };
+    host.navigateTo = [this](const QString &folder) { return navigateTo(folder); };
+    host.showMessage = [this](const QString &text) { showMessage(text); };
+    m_chooser = new ChooserMode(request, host, this);
 
     // What a dialog doesn't need: the menus, terminal, Analyze, split view,
     // tabs, and commands that would open other windows or quit the service.
@@ -5378,269 +5087,39 @@ void MainWindow::startChooser(const ChooserRequest &request)
     for (QToolButton *button : {m_terminalButton, m_analyzeButton, m_splitButton, m_menuButton})
         if (button)
             button->hide();
-    m_chooserOff = {m_splitAct,      m_terminalAct,   m_openTerminalHereAct, m_analyzeAct,   m_newTabAct,
-                    m_reopenTabAct,  m_openInNewTabAct, m_quitAct,           m_prefsAct,     m_paletteAct,
-                    m_organizeAct,   m_copyToOtherAct, m_moveToOtherAct,     m_aboutAct,     m_guideAct,
-                    m_shortcutsAct};
-    m_chooserOff.removeAll(nullptr);
-    keepChooserActionsOff();
+    m_chooser->setUnavailableActions({m_splitAct, m_terminalAct, m_openTerminalHereAct, m_analyzeAct, m_newTabAct,
+                                      m_reopenTabAct, m_openInNewTabAct, m_quitAct, m_prefsAct, m_paletteAct,
+                                      m_organizeAct, m_copyToOtherAct, m_moveToOtherAct, m_aboutAct, m_guideAct,
+                                      m_shortcutsAct});
 
-    m_chooserBar = new ChooserBar(request, this);
-    m_contentLayout->addWidget(m_chooserBar);
-    connect(m_chooserBar, &ChooserBar::accepted, this, &MainWindow::chooserAccept);
-    connect(m_chooserBar, &ChooserBar::rejected, this, [this] { finishChooser(FileChooserPortal::Cancelled); });
-    auto applyFilter = [this](int index) {
-        std::optional<ChooserRequest::Filter> filter;
-        if (index >= 0 && index < m_chooser->filters.size())
-            filter = m_chooser->filters.at(index);
-        m_proxy->setChooserFilter(filter, m_chooser->directory);
-    };
-    applyFilter(m_chooserBar->currentFilter());
-    connect(m_chooserBar, &ChooserBar::filterChanged, this, applyFilter);
+    m_contentLayout->addWidget(m_chooser->bar());
+    auto applyFilter = [this] { m_proxy->setChooserFilter(m_chooser->currentFilter(), m_chooser->request().directory); };
+    applyFilter();
+    connect(m_chooser, &ChooserMode::filterChanged, this, applyFilter);
 
     const auto selection = request.multiple ? QAbstractItemView::ExtendedSelection
                                             : QAbstractItemView::SingleSelection;
     m_iconView->setSelectionMode(selection);
     m_detailView->setSelectionMode(selection);
-    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MainWindow::updateChooser);
+    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, m_chooser, &ChooserMode::selectionChanged);
 
-    // The window of the app that asked (X11 "x11:<hex id>"; Wayland handles
-    // would need xdg-foreign). attachToChooserParent() ties us to it once
-    // the window is on screen.
-    if (request.parentWindow.startsWith(QLatin1String("x11:"))) {
-        bool ok = false;
-        m_chooserParentId = request.parentWindow.mid(4).toULongLong(&ok, 16);
-        if (!ok)
-            m_chooserParentId = 0;
-    }
+    connect(m_chooser, &ChooserMode::finished, this, [this](uint response, const QVariantMap &results) {
+        emit chooserFinished(response, results);
+        QTimer::singleShot(0, this, &QWidget::close); // not from inside closeEvent
+    });
 
-    // Only the size is remembered. It opens in the middle of the screen with
-    // the mouse, i.e. where the app that asked was just clicked.
-    // The constructor restored the file manager's own window state: if that
-    // window was last closed maximised, this one would open maximised too.
-    setWindowState(windowState() & ~(Qt::WindowMaximized | Qt::WindowFullScreen));
-    const QSize size = QSettings().value("chooser/size").toSize();
-    resize(size.isValid() ? size : QSize(960, 620));
-    if (QScreen *screen = QGuiApplication::screenAt(QCursor::pos())) {
-        const QRect area = screen->availableGeometry();
-        resize(this->size().boundedTo(area.size() * 0.9)); // never larger than the screen
-        move(area.center() - rect().center());
-    }
-
-    // Start where the app asked, else where this app saved or opened last.
-    QString start = request.currentFolder;
-    if (start.isEmpty() || !QFileInfo(start).isDir())
-        start = QSettings().value(chooserFolderKey()).toString();
-    if (start.isEmpty() || !QFileInfo(start).isDir())
-        start = QDir::homePath();
-    if (request.mode == Mode::Save && QFileInfo(request.currentFile).isFile())
-        showItems({request.currentFile});
+    m_chooser->placeWindow();
+    if (const QString file = m_chooser->fileToShow(); !file.isEmpty())
+        showItems({file});
     else
-        navigateTo(start);
+        navigateTo(m_chooser->startFolder());
     refreshChrome(); // the title
-
-    updateChooser();
-    if (request.mode == Mode::Save)
-        QTimer::singleShot(0, this, [this] { m_chooserBar->focusName(); });
-}
-
-// Makes the Open/Save window "transient for" the app's window, so the
-// desktop keeps it above that app. Written straight onto the X11 window:
-// Qt's xcb plugin sets WM_TRANSIENT_FOR only for dialog-type windows (and
-// deletes it on show() for others), and a dialog-type window can't be
-// minimised or maximised under GNOME. Not modal either: GNOME glues modal
-// dialogs to their parent, and then they can't be moved.
-void MainWindow::attachToChooserParent()
-{
-#if defined(ARGONAUT_XCB)
-    if (!m_chooserParentId || !windowHandle())
-        return;
-    auto *x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
-    if (!x11 || !x11->connection())
-        return; // Wayland
-    const xcb_window_t parent = xcb_window_t(m_chooserParentId);
-    xcb_change_property(x11->connection(), XCB_PROP_MODE_REPLACE, xcb_window_t(winId()), XCB_ATOM_WM_TRANSIENT_FOR,
-                        XCB_ATOM_WINDOW, 32, 1, &parent);
-    xcb_flush(x11->connection());
-#endif
+    m_chooser->selectionChanged();
 }
 
 void MainWindow::cancelChooser()
 {
-    finishChooser(FileChooserPortal::Cancelled);
-}
-
-QString MainWindow::chooserFolderKey() const
-{
-    QString app = m_chooser ? m_chooser->appId : QString();
-    app.replace(QLatin1Char('/'), QLatin1Char('_'));
-    return QStringLiteral("chooser/lastFolder/") + (app.isEmpty() ? QStringLiteral("host") : app);
-}
-
-void MainWindow::keepChooserActionsOff()
-{
-    if (!m_chooser)
-        return;
-    for (QAction *action : std::as_const(m_chooserOff)) {
-        action->setEnabled(false);
-        action->setVisible(false);
-    }
-}
-
-void MainWindow::updateChooser()
-{
-    if (!m_chooser || !m_chooserBar)
-        return;
-    using Mode = ChooserRequest::Mode;
-    const QStringList selected = selectedPaths();
-    if (m_chooser->mode == Mode::Save && selected.size() == 1 && !QFileInfo(selected.first()).isDir())
-        m_chooserBar->setName(QFileInfo(selected.first()).fileName()); // save over that one
-    bool canAccept = true;
-    if (m_chooser->mode == Mode::Open && !m_chooser->directory)
-        canAccept = !selected.isEmpty();
-    m_chooserBar->setAcceptEnabled(canAccept);
-}
-
-void MainWindow::chooserAccept()
-{
-    if (!m_chooser || m_chooserDone)
-        return;
-    using Mode = ChooserRequest::Mode;
-    const ChooserRequest &request = *m_chooser;
-    const QStringList selected = selectedPaths();
-    const bool realFolder = !DirectoryModel::isVirtualPath(m_current) && !m_model->isTrash()
-                            && QFileInfo(m_current).isDir();
-
-    if (request.mode == Mode::Open) {
-        if (m_model->isTrash() && !selected.isEmpty()) {
-            showMessage(tr("Restore it from the Trash first"));
-            return;
-        }
-        if (request.directory) {
-            QStringList folders;
-            for (const QString &path : selected)
-                if (QFileInfo(path).isDir())
-                    folders.append(path);
-            if (folders.isEmpty()) {
-                if (!realFolder) {
-                    showMessage(tr("Choose a folder"));
-                    return;
-                }
-                folders.append(m_current);
-            }
-            if (!request.multiple)
-                folders = {folders.first()};
-            finishChooser(FileChooserPortal::Success, folders);
-            return;
-        }
-        QStringList files;
-        for (const QString &path : selected)
-            if (!QFileInfo(path).isDir())
-                files.append(path);
-        if (files.isEmpty()) {
-            if (selected.size() == 1)
-                navigateTo(selected.first()); // a folder: go in
-            else
-                showMessage(tr("Choose a file"));
-            return;
-        }
-        finishChooser(FileChooserPortal::Success, files);
-        return;
-    }
-
-    // Saving: into a real folder you can write to.
-    QString folder = m_current;
-    if (request.mode == Mode::SaveFiles && selected.size() == 1 && QFileInfo(selected.first()).isDir())
-        folder = selected.first();
-    else if (!realFolder) {
-        showMessage(tr("Choose a folder to save in"));
-        return;
-    }
-    if (!QFileInfo(folder).isWritable()) {
-        showMessage(tr("You can't save in this folder"));
-        return;
-    }
-    // The question runs its own event loop: meanwhile the app may give up
-    // (Request.Close), which closes and deletes this window, or Save may be
-    // pressed again. So one question at a time, and nothing goes on if the
-    // window is gone.
-    if (m_chooserAsking)
-        return;
-    QPointer<MainWindow> self(this);
-    auto confirmReplace = [this, self](const QStringList &existing) {
-        const QFileInfo first(existing.first());
-        const QString title = existing.size() == 1 ? tr("Replace “%1”?").arg(first.fileName())
-                                                   : tr("Replace %n files?", nullptr, int(existing.size()));
-        const QString text = existing.size() == 1
-                                 ? tr("A file with this name already exists in “%1”. Saving replaces its contents.")
-                                       .arg(first.dir().dirName())
-                                 : tr("Files with these names already exist in “%1”. Saving replaces their contents.")
-                                       .arg(first.dir().dirName());
-        QPointer<QMessageBox> box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::NoButton, this);
-        QPushButton *cancel = box->addButton(tr("Cancel"), QMessageBox::RejectRole);
-        QPushButton *replace = box->addButton(tr("Replace"), QMessageBox::AcceptRole);
-        box->setDefaultButton(cancel);
-        m_chooserAsking = true;
-        box->exec();
-        if (!self) // deleted with the window
-            return false;
-        m_chooserAsking = false;
-        const bool yes = box && box->clickedButton() == replace;
-        delete box;
-        return yes && !m_chooserDone;
-    };
-
-    if (request.mode == Mode::Save) {
-        const QString name = m_chooserBar->name().trimmed();
-        if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) {
-            m_chooserBar->focusName();
-            return;
-        }
-        QString path = name;
-        if (path.startsWith(QLatin1String("~/")))
-            path = QDir::homePath() + path.mid(1);
-        if (!QDir::isAbsolutePath(path))
-            path = QDir(folder).filePath(path);
-        path = QDir::cleanPath(path);
-        if (QFileInfo(path).isDir()) { // typed a folder's name: go there
-            navigateTo(path);
-            m_chooserBar->setName(QString());
-            return;
-        }
-        const QFileInfo target(path);
-        if (!QFileInfo(target.absolutePath()).isDir()) {
-            showMessage(tr("The folder “%1” doesn't exist").arg(target.absolutePath()));
-            return;
-        }
-        if (target.exists() && !confirmReplace({path}))
-            return;
-        finishChooser(FileChooserPortal::Success, {path});
-        return;
-    }
-    const QStringList paths = request.saveFilesPaths(folder);
-    QStringList existing;
-    for (const QString &path : paths)
-        if (QFileInfo::exists(path))
-            existing.append(path);
-    if (!existing.isEmpty() && !confirmReplace(existing))
-        return;
-    finishChooser(FileChooserPortal::Success, paths);
-}
-
-void MainWindow::finishChooser(uint response, const QStringList &paths)
-{
-    if (!m_chooser || m_chooserDone)
-        return;
-    m_chooserDone = true;
-    QVariantMap results;
-    if (response == FileChooserPortal::Success) {
-        results = m_chooser->results(paths, m_chooserBar->choiceValues(), m_chooserBar->currentFilter());
-        if (!DirectoryModel::isVirtualPath(m_current) && !m_model->isTrash())
-            QSettings().setValue(chooserFolderKey(), m_current);
-    }
-    if (!isMaximized())
-        QSettings().setValue("chooser/size", size());
-    emit chooserFinished(response, results);
-    QTimer::singleShot(0, this, &QWidget::close); // not from inside closeEvent
+    if (m_chooser)
+        m_chooser->cancel();
 }
 #endif

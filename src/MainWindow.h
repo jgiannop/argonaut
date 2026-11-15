@@ -13,7 +13,7 @@
 #if defined(ARGONAUT_DBUS)
 #include "FileChooserRequest.h"
 #include <optional>
-class ChooserBar;
+class ChooserMode;
 class QVBoxLayout;
 class QWindow;
 #endif
@@ -521,19 +521,9 @@ private:
     void transferToOtherPane(bool move);
 
 #if defined(ARGONAUT_DBUS)
-    // Open/Save window (startChooser).
-    void chooserAccept();
-    void finishChooser(uint response, const QStringList &paths = {});
-    void updateChooser(); // selection changed: the name field, the accept button
-    void keepChooserActionsOff();
-    QString chooserFolderKey() const;
-    std::optional<ChooserRequest> m_chooser;
-    ChooserBar *m_chooserBar = nullptr;
-    bool m_chooserDone = false;
-    bool m_chooserAsking = false; // the "Replace?" question is open
-    QList<QAction *> m_chooserOff; // commands an Open/Save window doesn't offer
-    void attachToChooserParent();
-    quint64 m_chooserParentId = 0; // the asking app's X11 window, or 0
+    // Open/Save window: set by startChooser(), which hands that behaviour
+    // to ChooserMode. Null in a file manager window.
+    ChooserMode *m_chooser = nullptr;
 #endif
     QVBoxLayout *m_contentLayout = nullptr;
     QWidget *m_menuRow = nullptr; // the menu bar's row; drags the window like the bar
