@@ -39,6 +39,7 @@
 #include "QuickLook.h"
 #include "Sidebar.h"
 #include "StyleSheet.h"
+#include "TabStrip.h"
 #include "Thumbnailer.h"
 #if defined(ARGONAUT_TERMINAL)
 #include "TerminalWidget.h"
@@ -294,7 +295,7 @@ void MainWindow::setupActions()
 
     m_closeAct = new QAction(tr("Close Tab"), this);
     m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // the last tab closes the window
-    connect(m_closeAct, &QAction::triggered, this, [this] { closeTab(m_activeTab); });
+    connect(m_closeAct, &QAction::triggered, this, [this] { m_tabBar->closeActive(); });
 
     m_closeWindowAct = new QAction(tr("Close Window"), this);
     m_closeWindowAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
@@ -306,7 +307,7 @@ void MainWindow::setupActions()
 
     m_reopenTabAct = new QAction(tr("Reopen Closed Tab"), this);
     m_reopenTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
-    connect(m_reopenTabAct, &QAction::triggered, this, &MainWindow::reopenClosedTab);
+    connect(m_reopenTabAct, &QAction::triggered, this, [this] { m_tabBar->reopenClosed(); });
 
     m_openLocationAct = new QAction(tr("Open Item Location"), this);
     connect(m_openLocationAct, &QAction::triggered, this, [this] {
@@ -330,10 +331,7 @@ void MainWindow::setupActions()
     auto addTabSwitch = [this](const QList<QKeySequence> &keys, int step) {
         auto *act = new QAction(this);
         act->setShortcuts(keys);
-        connect(act, &QAction::triggered, this, [this, step] {
-            if (m_tabs.size() > 1)
-                m_tabBar->setCurrentIndex((m_activeTab + step + int(m_tabs.size())) % int(m_tabs.size()));
-        });
+        connect(act, &QAction::triggered, this, [this, step] { m_tabBar->step(step); });
         addAction(act);
     };
     addTabSwitch({QKeySequence(Qt::CTRL | Qt::Key_Tab), QKeySequence(Qt::CTRL | Qt::Key_PageDown)}, 1);
@@ -344,10 +342,7 @@ void MainWindow::setupActions()
     for (int n = 1; n <= 9; ++n) {
         auto *act = new QAction(this);
         act->setShortcut(QKeySequence(Qt::ALT | Qt::Key(Qt::Key_0 + n)));
-        connect(act, &QAction::triggered, this, [this, n] {
-            if (n - 1 < m_tabs.size())
-                m_tabBar->setCurrentIndex(n - 1);
-        });
+        connect(act, &QAction::triggered, this, [this, n] { m_tabBar->activate(n - 1); });
         addAction(act);
     }
 
@@ -947,29 +942,18 @@ QWidget *MainWindow::buildContentPane()
     trashRow->addWidget(m_trashRestoreAllButton);
     trashRow->addWidget(m_trashEmptyButton);
     m_trashBar->hide();
-    m_tabBar = new QTabBar(pane);
-    m_tabBar->setObjectName("tabs");
-    m_tabBar->setExpanding(true);
-    m_tabBar->setMovable(true);
-    m_tabBar->setDocumentMode(true);
-    m_tabBar->setElideMode(Qt::ElideMiddle);
-    m_tabBar->setFocusPolicy(Qt::NoFocus);
+    TabStrip::Host tabs;
+    tabs.prepare = [this] {
+        if (m_activePane != 0)
+            activatePane(0); // tabs belong to the first pane
+    };
+    tabs.capture = [this] { return captureTab(); };
+    tabs.restore = [this](const TabStrip::Tab &tab) { restoreTab(tab); };
+    tabs.title = [this](const QString &path) { return titleFor(path); };
+    tabs.closeWindow = [this] { close(); };
+    m_tabBar = new TabStrip(tabs, pane);
     m_tabBar->setAcceptDrops(true); // drop files onto a tab's folder
     m_tabBar->installEventFilter(this);
-    m_tabs.append(TabState());
-    m_tabBar->addTab(QString());
-    addTabCloseButton(0);
-    m_tabBar->hide(); // shown from two tabs on
-    connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::switchToTab);
-    connect(m_tabBar, &QTabBar::tabMoved, this, [this](int from, int to) {
-        m_tabs.move(from, to);
-        if (m_activeTab == from)
-            m_activeTab = to;
-        else if (from < m_activeTab && to >= m_activeTab)
-            --m_activeTab;
-        else if (from > m_activeTab && to <= m_activeTab)
-            ++m_activeTab;
-    });
     layout->addWidget(m_tabBar);
     layout->addWidget(m_trashBar);
 
@@ -1754,10 +1738,8 @@ void MainWindow::applyTheme(bool force)
     if (m_splitButton)
         m_splitButton->setIcon(glyphIcon(Glyph::Split, m_theme.fg));
     m_opsPanel->setTheme(m_theme);
-    for (int i = 0; m_tabBar && i < m_tabBar->count(); ++i) {
-        if (auto *close = qobject_cast<QToolButton *>(m_tabBar->tabButton(i, QTabBar::RightSide)))
-            close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
-    }
+    if (m_tabBar)
+        m_tabBar->setTheme(m_theme);
 #if defined(ARGONAUT_TERMINAL)
     m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
     m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
@@ -2312,11 +2294,8 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 
     // Tabs belong to the first pane.
     const QString title = titleFor(clean);
-    if (m_activePane == 0 && m_tabBar && m_activeTab < m_tabBar->count()) {
-        m_tabBar->setTabText(m_activeTab, title);
-        m_tabBar->setTabToolTip(m_activeTab, QDir::toNativeSeparators(clean));
-        m_tabs[m_activeTab].path = clean;
-    }
+    if (m_activePane == 0 && m_tabBar)
+        m_tabBar->setActivePath(clean);
     updatePaneCaptions();
     if (m_background)
         updateFloatingBar(); // this pane's own; the header shows the other one
@@ -2848,7 +2827,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             auto *drop = static_cast<QDropEvent *>(event);
             const int index = m_tabBar->tabAt(drop->position().toPoint());
             const QStringList sources = localPaths(drop->mimeData());
-            const QString target = index >= 0 ? m_tabs.at(index).path : QString();
+            const QString target = m_tabBar->pathAt(index);
             const Qt::DropAction action =
                 target.isEmpty() ? Qt::IgnoreAction
                                  : dropActionFor(sources, target, drop->modifiers(), drop->possibleActions());
@@ -2979,7 +2958,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton) {
         const int index = m_tabBar->tabAt(static_cast<QMouseEvent *>(event)->position().toPoint());
         if (index >= 0)
-            closeTab(index);
+            m_tabBar->closeTab(index);
         return true;
     } else if (m_view
                && ((isFileViewport(watched) && event->type() == QEvent::MouseButtonPress)
@@ -4409,135 +4388,26 @@ void MainWindow::showNextConflict()
 
 // ---------------------------------------------------------------- tabs ---
 
-// A tab is named like the window: "Recent", "Trash", a server's name.
-QString MainWindow::tabTitle(const QString &path) const
+// The tabs themselves are TabStrip's. These two say what a tab is made of in
+// this window: its folder, history, selection and scroll position.
+TabStrip::Tab MainWindow::captureTab() const
 {
-    return titleFor(path);
-}
-
-void MainWindow::addTabCloseButton(int index)
-{
-    auto *close = new QToolButton(m_tabBar);
-    close->setObjectName("flat");
-    close->setFixedSize(20, 20);
-    close->setIconSize(QSize(12, 12));
-    close->setFocusPolicy(Qt::NoFocus);
-    close->setToolTip(tr("Close Tab (Ctrl+W)"));
-    close->setIcon(glyphIcon(Glyph::Close, m_theme.dimFg));
-    connect(close, &QToolButton::clicked, this, [this, close] {
-        for (int i = 0; i < m_tabBar->count(); ++i) {
-            if (m_tabBar->tabButton(i, QTabBar::RightSide) == close) {
-                closeTab(i);
-                return;
-            }
-        }
-    });
-    m_tabBar->setTabButton(index, QTabBar::RightSide, close);
-}
-
-void MainWindow::updateTabBar()
-{
-    m_tabBar->setVisible(m_tabs.size() > 1);
-}
-
-void MainWindow::saveActiveTab()
-{
-    if (m_activeTab < 0 || m_activeTab >= m_tabs.size())
-        return;
-    TabState &tab = m_tabs[m_activeTab];
+    TabStrip::Tab tab;
     tab.path = m_current;
     tab.back = m_backHistory;
     tab.forward = m_forwardHistory;
     tab.selection = selectedPaths();
     tab.scroll = m_view->verticalScrollBar()->value();
+    return tab;
 }
 
-// New tab right after the current one, like browsers. Background tabs
-// (middle-click) don't take you there.
-void MainWindow::openTab(const QString &path, bool activate)
+void MainWindow::restoreTab(const TabStrip::Tab &tab)
 {
-    if (m_activePane != 0)
-        activatePane(0); // tabs belong to the first pane
-    saveActiveTab();
-    TabState tab;
-    tab.path = QDir::cleanPath(path);
-    const int index = m_activeTab + 1;
-    m_switchingTabs = true;
-    m_tabs.insert(index, tab);
-    m_tabBar->insertTab(index, tabTitle(tab.path));
-    m_tabBar->setTabToolTip(index, QDir::toNativeSeparators(tab.path));
-    addTabCloseButton(index);
-    m_switchingTabs = false;
-    updateTabBar();
-    if (activate)
-        m_tabBar->setCurrentIndex(index);
-    else
-        showMessage(tr("Opened “%1” in a new tab").arg(tabTitle(tab.path)));
-}
-
-void MainWindow::closeTab(int index)
-{
-    if (m_activePane != 0)
-        activatePane(0); // tabs belong to the first pane
-    if (index < 0 || index >= m_tabs.size())
-        return;
-    if (m_tabs.size() == 1) {
-        close(); // the last tab closes the window
-        return;
-    }
-    if (index == m_activeTab)
-        saveActiveTab();
-    m_closedTabs.append(m_tabs.at(index));
-    if (m_closedTabs.size() > 10)
-        m_closedTabs.removeFirst();
-
-    const bool wasActive = index == m_activeTab;
-    m_switchingTabs = true;
-    m_tabs.removeAt(index);
-    m_tabBar->removeTab(index);
-    m_switchingTabs = false;
-    if (wasActive) {
-        m_activeTab = -1; // nothing to save: it's gone
-        switchToTab(m_tabBar->currentIndex());
-    } else if (index < m_activeTab) {
-        --m_activeTab;
-    }
-    updateTabBar();
-}
-
-void MainWindow::reopenClosedTab()
-{
-    if (m_activePane != 0)
-        activatePane(0); // tabs belong to the first pane
-    if (m_closedTabs.isEmpty())
-        return;
-    const TabState tab = m_closedTabs.takeLast();
-    openTab(tab.path, true);
-    // Bring back its history and selection too.
-    m_backHistory = tab.back;
-    m_forwardHistory = tab.forward;
-    m_tabs[m_activeTab].back = tab.back;
-    m_tabs[m_activeTab].forward = tab.forward;
-    updateActions();
-    selectPaths(tab.selection);
-    m_pendingScroll = tab.scroll;
-}
-
-void MainWindow::switchToTab(int index)
-{
-    if (m_activePane != 0)
-        activatePane(0); // tabs belong to the first pane
-    if (m_switchingTabs || index < 0 || index >= m_tabs.size() || index == m_activeTab)
-        return;
-    saveActiveTab();
-    m_activeTab = index;
-    const TabState tab = m_tabs.at(index);
-
     if (tab.path != m_current) {
         if (!navigateTo(tab.path, false)) // its folder may be gone by now
             navigateTo(QDir::homePath(), false);
     } else {
-        setWindowTitle(tr("%1 — Argonaut").arg(tabTitle(m_current)));
+        setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_current)));
     }
     m_backHistory = tab.back;
     m_forwardHistory = tab.forward;
@@ -4547,9 +4417,18 @@ void MainWindow::switchToTab(int index)
     else
         m_view->selectionModel()->clearSelection();
     if (m_model->isLoading())
-        m_pendingScroll = tab.scroll;
+        m_pendingScroll = tab.scroll; // applied when the folder is listed
     else
         m_view->verticalScrollBar()->setValue(tab.scroll);
+}
+
+void MainWindow::openTab(const QString &path, bool activate)
+{
+    // Recent and Starred are names, not paths: cleaning "recent:///" breaks it.
+    const QString target = DirectoryModel::isVirtualPath(path) ? path : QDir::cleanPath(path);
+    m_tabBar->open(target, activate);
+    if (!activate)
+        showMessage(tr("Opened “%1” in a new tab").arg(titleFor(target)));
 }
 
 // ------------------------------------------------------------ type-ahead ---

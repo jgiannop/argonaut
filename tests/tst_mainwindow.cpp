@@ -12,6 +12,7 @@
 #include "Bookmarks.h"
 #include "MainWindow.h"
 #include "Sidebar.h"
+#include "TabStrip.h"
 #include "TestSupport.h"
 #include "Trash.h"
 
@@ -63,6 +64,7 @@ private slots:
     void splitViewActsOnThePaneYouAreIn();
     void showHiddenAppliesToBothPanes();
     void tabsOfPlacesHaveTheirNames();
+    void tabsRememberFolderSelectionAndHistory();
     void sidebarListsPlacesAndFollowsBookmarks();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
@@ -459,12 +461,68 @@ void TestMainWindow::showHiddenAppliesToBothPanes()
 // A tab shows the place's name, as the window title does: not "recent:///".
 void TestMainWindow::tabsOfPlacesHaveTheirNames()
 {
-    QCOMPARE(w->tabTitle(DirectoryModel::recentPath()), w->titleFor(DirectoryModel::recentPath()));
-    QCOMPARE(w->tabTitle(DirectoryModel::starredPath()), w->titleFor(DirectoryModel::starredPath()));
-    QCOMPARE(w->tabTitle(DirectoryModel::recentPath()), QStringLiteral("Recent"));
+    QCOMPARE(w->titleFor(DirectoryModel::recentPath()), QStringLiteral("Recent"));
     QDir().mkpath(Trash::homeFilesDir());
-    QCOMPARE(w->tabTitle(Trash::homeFilesDir()), QStringLiteral("Trash"));
-    QCOMPARE(w->tabTitle(m_dir), QFileInfo(m_dir).fileName());
+    open(m_dir);
+    w->openTab(DirectoryModel::recentPath(), false);
+    w->openTab(Trash::homeFilesDir(), false);
+    QCOMPARE(w->m_tabBar->count(), 3);
+    QStringList titles;
+    for (int i = 0; i < w->m_tabBar->count(); ++i)
+        titles << w->m_tabBar->tabText(i);
+    QCOMPARE(titles, (QStringList{QFileInfo(m_dir).fileName(), "Trash", "Recent"})); // newest right after the active tab
+    // And the tab really opens the place.
+    w->m_tabBar->activate(2);
+    QTRY_COMPARE(w->m_current, DirectoryModel::recentPath());
+}
+
+// Tabs share the one view: leaving a tab saves its folder, selection and
+// history, coming back restores them, and a closed tab can be brought back.
+void TestMainWindow::tabsRememberFolderSelectionAndHistory()
+{
+    const QString a = make("one/a.txt");
+    make("one/sub/x.txt");
+    const QString b = make("two/b.txt");
+    TabStrip *tabs = w->m_tabBar;
+    QVERIFY(!tabs->isVisibleTo(w.get())); // one tab: no strip
+
+    open(m_dir + "/one");
+    open(m_dir + "/one/sub");
+    w->m_backAct->trigger(); // back in "one", with somewhere to go forward to
+    QTRY_COMPARE(w->m_current, m_dir + "/one");
+    QTRY_VERIFY(w->m_model->indexForPath(a).isValid());
+    select({a});
+
+    w->openTab(m_dir + "/two", true);
+    QTRY_COMPARE(w->m_current, m_dir + "/two");
+    QCOMPARE(tabs->count(), 2);
+    QCOMPARE(tabs->activeIndex(), 1);
+    QVERIFY(tabs->isVisibleTo(w.get()));
+    QTRY_VERIFY(w->m_model->indexForPath(b).isValid());
+    select({b});
+    QVERIFY(!w->m_forwardAct->isEnabled()); // the new tab has its own, empty history
+
+    tabs->step(-1); // Ctrl+Shift+Tab
+    QTRY_COMPARE(w->m_current, m_dir + "/one");
+    QTRY_COMPARE(w->selectedPaths(), QStringList{a});
+    QVERIFY(w->m_forwardAct->isEnabled());
+    QCOMPARE(tabs->tabText(0), QStringLiteral("one"));
+    QCOMPARE(tabs->pathAt(1), m_dir + "/two");
+
+    // Close the second tab from the first, then bring it back as it was.
+    tabs->closeTab(1);
+    QCOMPARE(tabs->count(), 1);
+    QCOMPARE(w->m_current, m_dir + "/one");
+    QVERIFY(!tabs->isVisibleTo(w.get()));
+    tabs->reopenClosed();
+    QCOMPARE(tabs->count(), 2);
+    QTRY_COMPARE(w->m_current, m_dir + "/two");
+    QTRY_COMPARE(w->selectedPaths(), QStringList{b});
+
+    // Closing the active tab shows a neighbour; files are never touched.
+    tabs->closeActive();
+    QTRY_COMPARE(w->m_current, m_dir + "/one");
+    QVERIFY(exists(a) && exists(b));
 }
 
 // The sidebar builds its own rows, follows the bookmarks file, and shows
