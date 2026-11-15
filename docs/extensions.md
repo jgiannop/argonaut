@@ -31,6 +31,9 @@ sandbox it. So:
 - Argonaut treats everything an extension sends as data. Texts are cut to
   size, unknown values are replaced, and marks for items outside the folder
   that was asked about are dropped.
+- If an extension's folder is removed, it is stopped the next time Argonaut
+  looks (when Preferences opens, or at the next start) and its switch is
+  forgotten: a folder with the same id that appears later starts off.
 - An extension that crashes is started again twice, then left off until it is
   switched off and on again or Argonaut restarts. A crash or hang never stops
   Argonaut.

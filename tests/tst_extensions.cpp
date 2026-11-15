@@ -66,6 +66,7 @@ private slots:
     void switchingOffTakesTheMarksAway();
     void nonsenseIsSkipped();
     void aCrashingExtensionIsGivenUp();
+    void removedWhileRunning();
     void commandsFitTheSelection();
     void invokeTellsTheExtension();
     void gitThroughTheModel();
@@ -246,6 +247,52 @@ void TestExtensions::aCrashingExtensionIsGivenUp()
     QCOMPARE(starts(), 3);
     QVERIFY(!host.isRunning("fake"));
     QVERIFY(!host.badge(folder, folder + "/a.txt").valid);
+}
+
+// Its folder is deleted while it runs: at the next look it is stopped and
+// what it said goes; nothing else is disturbed. Put back under the same
+// name, it is a stranger again: off until switched on.
+void TestExtensions::removedWhileRunning()
+{
+    const QString folder = g_extensions + "/visitor";
+    auto install = [&] {
+        writeFile(folder + "/extension.json", R"({"id": "visitor", "name": "Visitor", "protocol": 1, "exec": ["fake.py"]})");
+        QVERIFY(QFile::copy(QStringLiteral(FAKE_EXTENSION), folder + "/fake.py"));
+        QFile::setPermissions(folder + "/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    };
+    install();
+    Host host;
+    host.setEnabled("visitor", true);
+    QSignalSpy changed(&host, &Host::folderChanged);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(host.badge(m_dir, m_dir + "/a.txt").valid, 10000);
+    QVERIFY(host.isRunning("visitor"));
+    QVERIFY(!host.commands(m_dir, {{m_dir + "/a.txt", "text/plain", false}}).isEmpty());
+
+    QVERIFY(QDir(folder).removeRecursively());
+    QVERIFY(host.badge(m_dir, m_dir + "/a.txt").valid); // still running until the next look
+    changed.clear();
+    host.rescan(); // what opening Preferences does
+    QVERIFY(!host.isRunning("visitor"));
+    QVERIFY(!changed.isEmpty()); // the views are told
+    QVERIFY(!host.badge(m_dir, m_dir + "/a.txt").valid);
+    QVERIFY(host.commands(m_dir, {{m_dir + "/a.txt", "text/plain", false}}).isEmpty());
+    for (const Manifest &m : host.extensions())
+        QVERIFY(m.id != "visitor");
+    QVERIFY(!host.isEnabled("visitor"));
+
+    // Back under the same name: listed, but not started.
+    install();
+    host.rescan();
+    bool listed = false;
+    for (const Manifest &m : host.extensions())
+        listed = listed || m.id == "visitor";
+    QVERIFY(listed);
+    QVERIFY(!host.isEnabled("visitor"));
+    QTest::qWait(300);
+    QVERIFY(!host.isRunning("visitor"));
+    QVERIFY(!host.badge(m_dir, m_dir + "/a.txt").valid);
+    QDir(folder).removeRecursively();
 }
 
 // Which commands a right-click offers: by what is selected (files, folders,

@@ -228,6 +228,19 @@ void Host::rescan()
     }
     m_manifests = found;
 
+    // An extension that is gone is no longer switched on: if a folder with
+    // its name turns up again (maybe another program), it starts off and has
+    // to be switched on again. "Off" is kept: it can only make things safer.
+    {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("extensions"));
+        const QStringList known = settings.childGroups();
+        for (const QString &id : known) {
+            if (!ids.contains(id) && settings.value(id + QStringLiteral("/enabled")).toBool())
+                settings.remove(id + QStringLiteral("/enabled"));
+        }
+    }
+
     // Stop what is gone, switched off or changed; start what is new.
     QList<Running *> keep;
     for (Running *ext : std::as_const(m_running)) {
