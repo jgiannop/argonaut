@@ -17,6 +17,9 @@ for line in sys.stdin:
             {"id": "folders", "label": "Folders Only", "kind": "folders"},
             {"id": "here", "label": "Here", "target": "folder"},
             {"id": "ask", "label": "Risky…", "confirm": "Really do the risky thing?"},
+            {"id": "typed", "label": "Type & It…", "target": "folder", "group": "Fake/Sub/Too/Deep", "checked": True,
+             "ask": {"label": "Say what:", "text": "default"}},
+            {"id": "showme", "label": "Show Me", "target": "folder", "group": "Fake"},
             {"id": "", "label": "No id"},
             {"id": "nolabel"}]})
     if m.get("type") == "hello":
@@ -46,8 +49,12 @@ for line in sys.stdin:
         say(reply)
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
-        say({"type": "message", "text": "invoked %s on %d: %s" % (
-            m.get("command"), len(sel), ",".join(os.path.basename(p) for p in sel))})
+        if m.get("command") == "showme":
+            say({"type": "show", "title": "A result\nfrom the fake", "kind": "diff", "note": "2 lines",
+                 "text": "diff --git a/x b/x\n@@ -1 +1 @@\n-old <b>line</b>\n+new line"})
+        say({"type": "message", "text": "invoked %s on %d: %s%s" % (
+            m.get("command"), len(sel), ",".join(os.path.basename(p) for p in sel),
+            " [" + m["input"] + "]" if m.get("input") else "")})
     if m.get("type") in ("watch", "refresh"):
         if folder.endswith("crash"):
             os._exit(3)

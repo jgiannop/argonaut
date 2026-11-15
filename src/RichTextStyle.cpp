@@ -191,4 +191,60 @@ void apply(QTextDocument *document, const Theme &theme)
     edit.endEditBlock();
 }
 
+void setDiff(QTextDocument *document, const QString &diff, const Theme &theme)
+{
+    const QColor page = theme.dark ? mix(theme.window, Qt::white, 0.06) : mix(theme.window, Qt::black, 0.05);
+    const QColor added = mix(page, QColor(theme.dark ? "#57e389" : "#26a269"), theme.dark ? 0.22 : 0.20);
+    const QColor removed = mix(page, QColor(theme.dark ? "#f66151" : "#c01c28"), theme.dark ? 0.24 : 0.16);
+    const QColor position = mix(page, theme.accent, 0.16);
+    const QColor dim = mix(theme.fg, page, 0.4);
+    QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    const qreal basePoints = document->defaultFont().pointSizeF() > 0 ? document->defaultFont().pointSizeF() : 10;
+    fixed.setPointSizeF(basePoints * 0.93);
+
+    document->clear();
+    document->setDocumentMargin(12);
+    QTextCursor cursor(document);
+    cursor.beginEditBlock();
+    const QList<QStringView> lines = QStringView(diff).split(QLatin1Char('\n'));
+    bool first = true;
+    bool inHunk = false;
+    for (QStringView line : lines) {
+        if (line.endsWith(QLatin1Char('\r')))
+            line.chop(1);
+        QTextBlockFormat block;
+        QTextCharFormat text;
+        text.setFont(fixed);
+        text.setForeground(theme.fg);
+        if (line.startsWith(QLatin1String("diff ")) || (!inHunk && line.startsWith(QLatin1String("# ")))) {
+            // A new file: its name, with room above.
+            inHunk = false;
+            text.setFontWeight(QFont::Bold);
+            block.setTopMargin(first ? 0 : 14);
+        } else if (line.startsWith(QLatin1String("@@"))) {
+            inHunk = true;
+            block.setBackground(position);
+            block.setTopMargin(6);
+            text.setForeground(dim);
+        } else if (!inHunk) {
+            text.setForeground(dim); // index, ---, +++, mode lines
+        } else if (line.startsWith(QLatin1Char('+'))) {
+            block.setBackground(added);
+        } else if (line.startsWith(QLatin1Char('-'))) {
+            block.setBackground(removed);
+        } else if (line.startsWith(QLatin1Char('\\'))) {
+            text.setForeground(dim); // "\ No newline at end of file"
+        }
+        if (first) {
+            cursor.setBlockFormat(block);
+            cursor.setBlockCharFormat(text);
+        } else {
+            cursor.insertBlock(block, text);
+        }
+        cursor.insertText(line.toString(), text);
+        first = false;
+    }
+    cursor.endEditBlock();
+}
+
 } // namespace RichTextStyle

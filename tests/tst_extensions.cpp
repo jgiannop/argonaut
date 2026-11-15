@@ -74,6 +74,7 @@ private slots:
     void documentPreview();
     void gitThroughTheModel();
     void gitStageAndUnstage();
+    void gitChangesCommitAndBranches();
     void sendByEmailIsAnExtension();
 
 private:
@@ -321,7 +322,7 @@ void TestExtensions::commandsFitTheSelection()
     QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
     QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
     QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
-    QCOMPARE(ids(m_dir, {}), (QStringList{"here"}));                    // the folder's empty space
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme"})); // the folder's empty space
     QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
     QVERIFY(ids(QString(), {}).isEmpty());
     // A command limited to items can't reach outside its folder.
@@ -331,6 +332,17 @@ void TestExtensions::commandsFitTheSelection()
     for (const Extensions::Command &c : host.commands(m_dir, {text})) {
         if (c.id == "ask")
             QCOMPARE(c.confirm, QStringLiteral("Really do the risky thing?"));
+    }
+    // A submenu (two levels at most), a tick, and a text it wants typed first.
+    for (const Extensions::Command &c : host.commands(m_dir, {})) {
+        if (c.id != "typed")
+            continue;
+        QCOMPARE(c.group, QStringLiteral("Fake/Sub"));
+        QVERIFY(c.checked);
+        QVERIFY(c.asks);
+        QCOMPARE(c.askLabel, QStringLiteral("Say what:"));
+        QCOMPARE(c.askText, QStringLiteral("default"));
+        QVERIFY(!c.askMultiline);
     }
     // Switched off: nothing is offered.
     host.setEnabled("fake", false);
@@ -351,6 +363,25 @@ void TestExtensions::invokeTellsTheExtension()
     QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
     QCOMPARE(said.first().at(0).toString(), QStringLiteral("Fake")); // who says it
     QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked hello on 2: a.txt,b.txt"));
+
+    // What the user typed goes along; a result to show comes back as content.
+    said.clear();
+    QSignalSpy shown(&host, &Host::showRequested);
+    for (const Extensions::Command &c : host.commands(m_dir, {})) {
+        if (c.id == "typed")
+            host.invoke(c, m_dir, {}, "some words");
+        if (c.id == "showme")
+            host.invoke(c, m_dir, {});
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(said.size(), 2, 10000);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked typed on 0:  [some words]"));
+    QCOMPARE(shown.size(), 1);
+    QCOMPARE(shown.first().at(0).toString(), QStringLiteral("Fake"));
+    QCOMPARE(shown.first().at(1).toString(), QStringLiteral("A result from the fake")); // one line
+    const auto content = shown.first().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Diff);
+    QVERIFY(content.text.contains("+new line"));
+    QCOMPARE(content.note, QStringLiteral("2 lines"));
 }
 
 // Previews: only for the types an extension named, the answer comes back
@@ -583,6 +614,126 @@ void TestExtensions::gitStageAndUnstage()
     QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 20000);
     QCOMPARE(said.last().at(1).toString(), QStringLiteral("Unstaged"));
     QVERIFY(staged().isEmpty());
+    host.setEnabled("git", false);
+}
+
+// The Git menu on a repository: its changes as a diff, committing with a
+// typed message, the branches, and discarding a file's changes.
+void TestExtensions::gitChangesCommitAndBranches()
+{
+    if (QStandardPaths::findExecutable("git").isEmpty())
+        QSKIP("git isn't installed");
+    const QString repo = m_dir + "/repo";
+    QDir().mkpath(repo);
+    QVERIFY(git(repo, {"init", "-q"}));
+    QVERIFY(git(repo, {"config", "user.name", "Test"}));
+    QVERIFY(git(repo, {"config", "user.email", "t@example.com"}));
+    QVERIFY(git(repo, {"config", "commit.gpgsign", "false"}));
+    writeFile(repo + "/tracked.txt", "one\n");
+    QVERIFY(git(repo, {"add", "."}));
+    QVERIFY(git(repo, {"commit", "-q", "-m", "first"}));
+    writeFile(repo + "/tracked.txt", "two\n");
+    writeFile(repo + "/fresh.txt", "new\n");
+    // A hook that would refuse every commit: hooks are off, so it isn't run.
+    writeFile(repo + "/.git/hooks/pre-commit", "#!/bin/sh\ntouch \"$(dirname \"$0\")/ran\"\nexit 1\n", true);
+    auto output = [&](const QStringList &args) {
+        QProcess p;
+        p.setWorkingDirectory(repo);
+        p.start("git", args);
+        p.waitForFinished(20000);
+        return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    };
+
+    Host host;
+    host.setEnabled("git", true);
+    host.watch(repo);
+    auto onFolder = [&](const QString &id) {
+        for (const Extensions::Command &c : host.commands(repo, {})) {
+            if (c.extension == "git" && c.id == id)
+                return c;
+        }
+        return Extensions::Command();
+    };
+    QSignalSpy said(&host, &Host::message);
+    QSignalSpy shown(&host, &Host::showRequested);
+    auto lastSaid = [&] { return said.isEmpty() ? QString() : said.last().at(1).toString(); };
+
+    // The menu: everything under "Git", branches in their own submenu.
+    QTRY_VERIFY_WITH_TIMEOUT(!onFolder("commit").id.isEmpty(), 10000);
+    const Extensions::Command commit = onFolder("commit");
+    QCOMPARE(commit.group, QStringLiteral("Git"));
+    QCOMPARE(commit.label, QStringLiteral("Commit All Changed Files (1)…")); // nothing staged; the new file isn't tracked
+    QVERIFY(commit.asks && commit.askMultiline);
+    QCOMPARE(onFolder("switch:main").group, QStringLiteral("Git/Switch Branch"));
+    QVERIFY(onFolder("switch:main").checked);
+    QVERIFY(onFolder("new-branch").asks);
+
+    // Show All Changes: a diff, with the untracked file named.
+    host.invoke(onFolder("diff-all"), repo, {});
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 1, 10000);
+    auto content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Diff);
+    QVERIFY2(content.text.contains("-one") && content.text.contains("+two"), qPrintable(content.text));
+    QVERIFY(content.text.contains("# New, not tracked yet: fresh.txt"));
+    QCOMPARE(content.note, QStringLiteral("1 changed file · 1 new"));
+    QCOMPARE(shown.last().at(1).toString(), QStringLiteral("Changes on main"));
+
+    // Commit with the typed message: the tracked change, not the new file.
+    host.invoke(commit, repo, {}, "Second commit");
+    QTRY_COMPARE_WITH_TIMEOUT(lastSaid(), QStringLiteral("Committed"), 30000);
+    QCOMPARE(output({"log", "-1", "--format=%s"}), QStringLiteral("Second commit"));
+    QCOMPARE(output({"status", "--porcelain"}), QStringLiteral("?? fresh.txt"));
+    QVERIFY(!QFile::exists(repo + "/.git/hooks/ran"));
+    QTRY_VERIFY_WITH_TIMEOUT(onFolder("commit").id.isEmpty(), 10000); // nothing left to commit
+
+    // Staged work is what a commit takes, and the label says so.
+    QVERIFY(git(repo, {"add", "fresh.txt"}));
+    host.refresh(repo);
+    QTRY_COMPARE_WITH_TIMEOUT(onFolder("commit").label, QStringLiteral("Commit Staged Changes (1)…"), 10000);
+
+    // A new branch, by a typed name; a name that would be an option is refused.
+    host.invoke(onFolder("new-branch"), repo, {}, "--force");
+    QTRY_COMPARE_WITH_TIMEOUT(lastSaid(), QStringLiteral("That can't be a branch's name."), 10000);
+    host.invoke(onFolder("new-branch"), repo, {}, "feature");
+    QTRY_COMPARE_WITH_TIMEOUT(lastSaid(), QStringLiteral("On the new branch feature"), 10000);
+    QCOMPARE(output({"branch", "--show-current"}), QStringLiteral("feature"));
+    QTRY_VERIFY_WITH_TIMEOUT(onFolder("switch:feature").checked, 10000);
+    QVERIFY(!onFolder("switch:main").checked);
+    QTRY_VERIFY_WITH_TIMEOUT(host.info(repo).text.startsWith("feature"), 10000);
+
+    // Back to main through the branch list.
+    host.invoke(onFolder("switch:main"), repo, {});
+    QTRY_COMPARE_WITH_TIMEOUT(lastSaid(), QStringLiteral("Switched to main"), 10000);
+    QCOMPARE(output({"branch", "--show-current"}), QStringLiteral("main"));
+
+    // Discard: asks first (the question travels with the command), then the
+    // file is as it was at the last commit.
+    writeFile(repo + "/tracked.txt", "three\n");
+    host.refresh(repo);
+    const Extensions::Item file{repo + "/tracked.txt", "text/plain", false};
+    auto onFile = [&](const QString &id) {
+        for (const Extensions::Command &c : host.commands(repo, {file})) {
+            if (c.extension == "git" && c.id == id)
+                return c;
+        }
+        return Extensions::Command();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(!onFile("discard").id.isEmpty(), 10000);
+    QVERIFY(onFile("discard").confirm.contains("can't be undone"));
+    host.invoke(onFile("diff"), repo, {file.path});
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 2, 10000);
+    QCOMPARE(shown.last().at(1).toString(), QStringLiteral("Changes in tracked.txt"));
+    host.invoke(onFile("discard"), repo, {file.path});
+    QTRY_COMPARE_WITH_TIMEOUT(lastSaid(), QStringLiteral("Changes discarded"), 10000);
+    QFile f(file.path);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), QByteArray("two\n"));
+    // A new file has no committed version: Discard isn't offered for it.
+    const Extensions::Item added{repo + "/fresh.txt", "text/plain", false};
+    bool offered = false;
+    for (const Extensions::Command &c : host.commands(repo, {added}))
+        offered = offered || c.id == "discard";
+    QVERIFY(!offered);
     host.setEnabled("git", false);
 }
 

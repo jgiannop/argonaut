@@ -31,6 +31,7 @@ public:
 
 signals:
     void pathActivated(const QString &path);
+    void extensionInfoClicked(const QPoint &globalPos); // the extension's text was clicked: its menu goes here
 
 protected:
     // A click on the free space types a path; a drag moves the window (it's

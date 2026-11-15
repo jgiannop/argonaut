@@ -547,6 +547,19 @@ default (names only, ask, or read when needed) and the model, and shows what you
 <li>The path bar shows the branch and how many items changed. Hover over it for the repository's folder.</li>
 <li>It updates when files change, after you run <code>git add</code> or <code>git commit</code>, and when you come back to the window.</li>
 </ul>
+<h2>The Git menu</h2>
+<p>Click the branch in the path bar, or right-click the folder's empty space and choose <b>Git</b>:</p>
+<ul>
+<li><b>Show All Changes</b> opens the preview pane with everything that changed since the last commit:
+added lines on green, removed lines on red. Right-click changed files → <b>Git → Show Changes</b> for those only.</li>
+<li><b>Commit…</b> asks for a message. It commits what is staged; when nothing is staged, every changed file
+Git already tracks. The entry says which, and how many. New files have to be staged first.</li>
+<li><b>Switch Branch</b> lists the branches, the current one ticked. <b>New Branch…</b> asks for a name and switches to it.</li>
+<li>On changed files: <b>Stage</b>, <b>Unstage</b>, and <b>Discard Changes…</b>, which puts a file back to
+its last committed version after asking. That can't be undone, and nothing goes to the Trash.</li>
+</ul>
+<p>Argonaut runs Git with the repository's <b>hooks switched off</b>, so a pre-commit hook does not run for a
+commit made here. Pull and Push are not offered: use the terminal ([[Ctrl+`]]).</p>
 <p>For safety, a repository whose own settings would make Git run programs (for example one you downloaded)
 is not checked; the path bar then says “git: off”. Very big repositories that take too long are skipped too.
 This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+Shift+X]]) if you don't want it

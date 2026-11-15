@@ -35,6 +35,7 @@
 #include "OpenWithDialog.h"
 #include "OperationsPanel.h"
 #include "PathBar.h"
+#include "ExtensionMenu.h"
 #include "ExtensionsDialog.h"
 #include "FadeOverlay.h"
 #include "PreferencesDialog.h"
@@ -141,6 +142,11 @@ MainWindow::MainWindow(QWidget *parent)
         if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
             showMessage(text);
     });
+    connect(Extensions::Host::instance(), &Extensions::Host::showRequested, this,
+            [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
+                if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
+                    showExtensionResult(extension, title, content);
+            });
     connect(m_ops, &FileOperations::conflictRaised, this, &MainWindow::askConflict);
     connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
@@ -761,6 +767,7 @@ QWidget *MainWindow::buildContentPane()
 
     m_pathBar = new PathBar(header);
     connect(m_pathBar, &PathBar::pathActivated, this, [this](const QString &p) { navigateTo(p); });
+    connect(m_pathBar, &PathBar::extensionInfoClicked, this, &MainWindow::showExtensionInfoMenu);
     QMenu *folderMenu = makeMenu();
     folderMenu->addAction(m_pasteAct);
     folderMenu->addSeparator();
@@ -1789,26 +1796,33 @@ void MainWindow::addExtensionCommands(QMenu *menu, const QStringList &selection)
         const bool dir = m_pane->model->isDir(source);
         items.append({path, dir ? QStringLiteral("inode/directory") : effectiveMimeAt(source), dir});
     }
-    Extensions::Host *host = Extensions::Host::instance();
-    const QString folder = m_pane->model->extensionsFolder();
-    const QList<Extensions::Command> commands = host->commands(folder, items);
-    for (const Extensions::Command &command : commands) {
-        menu->addAction(command.label, this, [this, command, folder, selection] {
-            Extensions::Host *host = Extensions::Host::instance();
-            if (!command.confirm.isEmpty()) {
-                QMessageBox box(QMessageBox::Question, host->nameOf(command.extension), command.confirm,
-                                QMessageBox::NoButton, this);
-                box.setTextFormat(Qt::PlainText);
-                QPushButton *go = box.addButton(QString(command.label).remove(QStringLiteral("…")), QMessageBox::AcceptRole);
-                box.addButton(QMessageBox::Cancel);
-                box.setDefaultButton(QMessageBox::Cancel);
-                box.exec();
-                if (box.clickedButton() != go)
-                    return;
-            }
-            host->invoke(command, folder, selection);
-        });
-    }
+    ExtensionMenu::add(menu, this, m_pane->model->extensionsFolder(), items);
+}
+
+// A click on the extension's text in the path bar (Git: the branch): the
+// commands extensions have for this folder, right there.
+void MainWindow::showExtensionInfoMenu(const QPoint &globalPos)
+{
+    if (m_chooser)
+        return;
+    QMenu menu(this);
+    addExtensionCommands(&menu, {});
+    ExtensionMenu::flatten(&menu);
+    if (!menu.isEmpty())
+        menu.exec(globalPos);
+}
+
+// A result an extension wants shown (a diff): in the preview pane, which
+// opens for it. The next file selected takes the pane back.
+void MainWindow::showExtensionResult(const QString &extension, const QString &title,
+                                     const Extensions::PreviewReply &content)
+{
+    if (m_analyzing || m_chooser)
+        return;
+    if (!quickLookVisible())
+        toggleQuickLook();
+    if (m_quickLook)
+        m_quickLook->showResult(title.isEmpty() ? extension : title, extension, content);
 }
 
 // Scripts ▸: the user's Nautilus scripts, run on `selection`. Sub-folders

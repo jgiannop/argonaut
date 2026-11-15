@@ -58,6 +58,12 @@ struct Command
     QString id;
     QString label;
     QString confirm;    // asked before it runs ("Discard the changes?"); empty: not asked
+    QString group;      // the submenu it is in ("Git", "Git/Switch Branch"); empty: the menu itself
+    bool checked = false;       // shown ticked (the current one of several)
+    bool asks = false;          // wants a text from the user first (a commit message, a name)
+    QString askLabel;           // what the text is
+    QString askText;            // what the field starts with
+    bool askMultiline = false;  // several lines
     bool onFolder = false;      // for the open folder (a right-click on empty space), not for items
     enum Kind { Any, Files, Folders } kind = Any;
     bool multiple = true;       // false: exactly one item
@@ -70,8 +76,8 @@ struct Command
 // text or a picture for Argonaut to show; an extension never draws itself.
 struct PreviewReply
 {
-    enum Kind { None, Text, Markdown, Html, Image } kind = None; // None: "not from me", the built-in preview is used
-    QString text;          // Text, Markdown, Html (Qt's rich-text subset, no scripts, nothing loaded)
+    enum Kind { None, Text, Markdown, Html, Diff, Image } kind = None; // None: "not from me", the built-in preview is used
+    QString text;          // Text, Markdown, Html (Qt's rich-text subset, no scripts, nothing loaded), Diff (a unified diff, coloured by Argonaut)
     bool monospace = false; // Text: in a fixed-width font
     QString image;         // Image: a picture file the extension wrote
     QString note;          // one line under the preview ("3 sheets")
@@ -144,8 +150,9 @@ public:
     // folder still apply.
     QList<Command> commands(const QString &folder, const QList<Item> &selection) const;
     // Tells the extension to do it. Not for a command that asks first until
-    // the user said yes.
-    void invoke(const Command &command, const QString &folder, const QStringList &selection);
+    // the user said yes. `input` is the text a command that `asks` was given.
+    void invoke(const Command &command, const QString &folder, const QStringList &selection,
+                const QString &input = QString());
     QString nameOf(const QString &id) const;
 
     // Previews: true if a running extension said it previews this type.
@@ -173,6 +180,8 @@ signals:
     void extensionsChanged();                  // the list, or what is switched on
     void message(const QString &extension, const QString &text); // something to tell the user
     void previewReady(int request, const Extensions::PreviewReply &reply);
+    // A result to show in the preview pane (a command's answer: a diff, a report).
+    void showRequested(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
 
 private:
     struct FolderData
@@ -200,7 +209,8 @@ private:
     void send(Running *ext, const QJsonObject &message);
     void readFrom(Running *ext);
     void handle(Running *ext, const QByteArray &line);
-    QList<Command> readCommands(const Running *ext, const QJsonValue &value) const;
+    QList<Command> readCommands(const Running *ext, const QJsonValue &value, int max) const;
+    static PreviewReply readContent(const QJsonObject &message);
     void exited(Running *ext);
     void forget(Running *ext); // drops what it said and tells the views
 

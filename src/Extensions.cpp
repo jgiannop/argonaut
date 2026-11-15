@@ -24,7 +24,8 @@ constexpr int MaxLineBytes = 8 * 1024 * 1024;
 constexpr int MaxBadgesPerFolder = 50000;
 constexpr int MaxTooltipChars = 300;
 constexpr int MaxInfoChars = 60;
-constexpr int MaxCommands = 20;   // per extension, everywhere and per folder
+constexpr int MaxCommands = 20;   // per extension, everywhere
+constexpr int MaxFolderCommands = 80; // per extension and folder (a list of branches is commands)
 constexpr int MaxLabelChars = 60;
 constexpr int MaxMessageChars = 200;
 constexpr int MaxPreviewChars = 1024 * 1024; // text, Markdown or HTML of a preview
@@ -390,12 +391,40 @@ Info Host::info(const QString &folder) const
     return {};
 }
 
-QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value) const
+// The content of a "preview" or "show" message: text or a picture, checked.
+PreviewReply Host::readContent(const QJsonObject &message)
+{
+    PreviewReply reply;
+    const QString kind = message.value(QLatin1String("kind")).toString();
+    reply.text = message.value(QLatin1String("text")).toString().left(MaxPreviewChars);
+    reply.monospace = message.value(QLatin1String("monospace")).toBool();
+    reply.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    if (kind == QLatin1String("text")) {
+        reply.kind = PreviewReply::Text;
+    } else if (kind == QLatin1String("markdown")) {
+        reply.kind = PreviewReply::Markdown;
+    } else if (kind == QLatin1String("html")) {
+        reply.kind = PreviewReply::Html;
+    } else if (kind == QLatin1String("diff")) {
+        reply.kind = PreviewReply::Diff;
+    } else if (kind == QLatin1String("image")) {
+        // A picture file of its own making: an absolute path to a plain file.
+        const QString image = message.value(QLatin1String("image")).toString();
+        const QFileInfo info(image);
+        if (QDir::isAbsolutePath(image) && info.isFile() && !info.isSymLink()) {
+            reply.kind = PreviewReply::Image;
+            reply.image = image;
+        }
+    }
+    return reply;
+}
+
+QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value, int max) const
 {
     QList<Command> out;
     const QJsonArray list = value.toArray();
     for (const QJsonValue &entry : list) {
-        if (out.size() >= MaxCommands)
+        if (out.size() >= max)
             break;
         const QJsonObject o = entry.toObject();
         Command c;
@@ -405,6 +434,23 @@ QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value) c
         if (c.id.isEmpty() || c.label.isEmpty())
             continue;
         c.confirm = tidy(o.value(QLatin1String("confirm")).toString(), MaxTooltipChars);
+        // "Git" or "Git/Switch Branch": at most two levels of submenu.
+        const QStringList levels = o.value(QLatin1String("group")).toString().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        QStringList group;
+        for (const QString &level : levels.mid(0, 2)) {
+            const QString name = tidy(level, MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            if (!name.isEmpty())
+                group << name;
+        }
+        c.group = group.join(QLatin1Char('/'));
+        c.checked = o.value(QLatin1String("checked")).toBool();
+        if (o.value(QLatin1String("ask")).isObject()) {
+            const QJsonObject ask = o.value(QLatin1String("ask")).toObject();
+            c.asks = true;
+            c.askLabel = tidy(ask.value(QLatin1String("label")).toString(), MaxTooltipChars);
+            c.askText = ask.value(QLatin1String("text")).toString().left(2000);
+            c.askMultiline = ask.value(QLatin1String("multiline")).toBool();
+        }
         c.onFolder = o.value(QLatin1String("target")).toString() == QLatin1String("folder");
         const QString kind = o.value(QLatin1String("kind")).toString();
         c.kind = kind == QLatin1String("files") ? Command::Files
@@ -469,7 +515,7 @@ QList<Command> Host::commands(const QString &folder, const QList<Item> &selectio
     return out;
 }
 
-void Host::invoke(const Command &command, const QString &folder, const QStringList &selection)
+void Host::invoke(const Command &command, const QString &folder, const QStringList &selection, const QString &input)
 {
     for (Running *ext : std::as_const(m_running)) {
         if (ext->manifest.id != command.extension || !ext->process)
@@ -477,7 +523,8 @@ void Host::invoke(const Command &command, const QString &folder, const QStringLi
         send(ext, {{QStringLiteral("type"), QStringLiteral("invoke")},
                    {QStringLiteral("command"), command.id},
                    {QStringLiteral("folder"), folder},
-                   {QStringLiteral("selection"), QJsonArray::fromStringList(selection)}});
+                   {QStringLiteral("selection"), QJsonArray::fromStringList(selection)},
+                   {QStringLiteral("input"), input}});
     }
 }
 
@@ -640,7 +687,7 @@ void Host::handle(Running *ext, const QByteArray &line)
     const QJsonObject message = doc.object();
     const QString type = message.value(QLatin1String("type")).toString();
     if (type == QLatin1String("commands")) { // what it offers everywhere
-        ext->commands = readCommands(ext, message.value(QLatin1String("commands")));
+        ext->commands = readCommands(ext, message.value(QLatin1String("commands")), MaxCommands);
         return;
     }
     if (type == QLatin1String("previews")) { // the types it shows in the preview pane
@@ -653,27 +700,17 @@ void Host::handle(Running *ext, const QByteArray &line)
         return;
     }
     if (type == QLatin1String("preview")) { // its answer to a preview request
-        PreviewReply reply;
-        const QString kind = message.value(QLatin1String("kind")).toString();
-        reply.text = message.value(QLatin1String("text")).toString().left(MaxPreviewChars);
-        reply.monospace = message.value(QLatin1String("monospace")).toBool();
-        reply.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        if (kind == QLatin1String("text")) {
-            reply.kind = PreviewReply::Text;
-        } else if (kind == QLatin1String("markdown")) {
-            reply.kind = PreviewReply::Markdown;
-        } else if (kind == QLatin1String("html")) {
-            reply.kind = PreviewReply::Html;
-        } else if (kind == QLatin1String("image")) {
-            // A picture file of its own making: an absolute path to a plain file.
-            const QString image = message.value(QLatin1String("image")).toString();
-            const QFileInfo info(image);
-            if (QDir::isAbsolutePath(image) && info.isFile() && !info.isSymLink()) {
-                reply.kind = PreviewReply::Image;
-                reply.image = image;
-            }
-        }
+        const PreviewReply reply = readContent(message);
         emit previewReady(message.value(QLatin1String("id")).toInt(), reply);
+        return;
+    }
+    if (type == QLatin1String("show")) { // a result for the preview pane
+        const PreviewReply content = readContent(message);
+        if (content.kind != PreviewReply::None)
+            emit showRequested(ext->manifest.name,
+                               tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars)
+                                   .replace(QLatin1Char('\n'), QLatin1Char(' ')),
+                               content);
         return;
     }
     if (type == QLatin1String("message")) { // something for the user to read
@@ -714,7 +751,7 @@ void Host::handle(Running *ext, const QByteArray &line)
         data.badges.insert(key, badge);
         ++count;
     }
-    data.commands = readCommands(ext, message.value(QLatin1String("commands")));
+    data.commands = readCommands(ext, message.value(QLatin1String("commands")), MaxFolderCommands);
     ext->folders.insert(folder, data);
     emit folderChanged(folder);
 }

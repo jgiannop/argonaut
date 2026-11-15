@@ -248,6 +248,12 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
         m_pages->setCurrentWidget(m_text);
         m_kind = Preview::Kind::Text;
         break;
+    case PreviewReply::Diff:
+        RichTextStyle::setDiff(m_rich->document(), reply.text, currentTheme());
+        m_rich->moveCursor(QTextCursor::Start); // from the top, not where the last line landed
+        m_pages->setCurrentWidget(m_rich);
+        m_kind = Preview::Kind::Text;
+        break;
     case PreviewReply::Markdown:
     case PreviewReply::Html:
         if (reply.kind == PreviewReply::Markdown)
@@ -281,6 +287,15 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
     m_infoText->setStyleSheet(QString());
     m_fromExtension = true;
     return true;
+}
+
+void QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
+{
+    clear(); // no file: nothing to open, nothing still loading
+    m_title->setText(title);
+    m_details->setText(details);
+    if (!applyExtension(content))
+        showInfo(tr("Nothing to show"));
 }
 
 QString QuickLook::shownText() const

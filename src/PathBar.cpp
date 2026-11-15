@@ -60,7 +60,9 @@ PathBar::PathBar(QWidget *parent)
     m_gitBadge->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_gitBadge->setIconSize(QSize(14, 14));
     m_gitBadge->setFocusPolicy(Qt::NoFocus);
-    m_gitBadge->setCursor(Qt::ArrowCursor);
+    m_gitBadge->setCursor(Qt::PointingHandCursor);
+    connect(m_gitBadge, &QToolButton::clicked, this,
+            [this] { emit extensionInfoClicked(m_gitBadge->mapToGlobal(QPoint(0, m_gitBadge->height() + 2))); });
     m_gitBadge->hide();
     row->addWidget(m_gitBadge);
     row->addSpacing(2);

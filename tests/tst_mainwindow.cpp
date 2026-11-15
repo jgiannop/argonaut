@@ -8,6 +8,7 @@
 // that only write down how they were called.
 
 #include "DirectoryModel.h"
+#include "ExtensionMenu.h"
 #include "ExtensionsDialog.h"
 #include "FadeOverlay.h"
 #include "FileOperations.h"
@@ -43,6 +44,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -100,6 +102,8 @@ private slots:
     void previewFromAnExtension();
     void richTextGetsAPageLook();
     void terminalBringsTheFilesAlong();
+    void extensionMenusAskAndShow();
+    void diffIsColoured();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1258,6 +1262,107 @@ void TestMainWindow::terminalBringsTheFilesAlong()
 #else
     QSKIP("no embedded terminal in this build");
 #endif
+}
+
+// Extensions' commands in the menu: submenus, a tick, the text a command
+// wants typed (nothing typed or Cancel: the extension isn't told), and a
+// result shown in the preview pane.
+void TestMainWindow::extensionMenusAskAndShow()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt");
+    open(m_dir);
+    auto findIn = [](QMenu *menu, const QString &text) -> QAction * {
+        for (QAction *action : menu->actions()) {
+            if (action->text() == text)
+                return action;
+        }
+        return nullptr;
+    };
+    QMenu menu;
+    QTRY_VERIFY_WITH_TIMEOUT([&] { menu.clear(); w->addExtensionCommands(&menu, {}); return findIn(&menu, "Fake") != nullptr; }(), 10000);
+    // "Fake ▸ Sub ▸ Type & It…": two levels, the name shown as it is, ticked.
+    QMenu *fake = findIn(&menu, "Fake")->menu();
+    QVERIFY(fake && findIn(fake, "Show Me"));
+    QMenu *sub = findIn(fake, "Sub")->menu();
+    QVERIFY(sub);
+    QAction *typed = findIn(sub, "Type && It…");
+    QVERIFY(typed && typed->isChecked());
+
+    // Types into the next text question and presses its button, or Cancel.
+    QString label;
+    auto answerText = [&](const QString &text, bool accept) {
+        auto *timer = new QTimer(this);
+        timer->setInterval(10);
+        connect(timer, &QTimer::timeout, this, [&label, timer, text, accept] {
+            auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            timer->stop();
+            timer->deleteLater();
+            label = dialog->labelText() + "|" + dialog->textValue() + "|" + dialog->okButtonText();
+            dialog->setTextValue(text);
+            accept ? dialog->accept() : dialog->reject();
+        });
+        timer->start();
+    };
+    QSignalSpy said(host, &Extensions::Host::message);
+    answerText("ignored", false);
+    typed->trigger();
+    QCOMPARE(label, QStringLiteral("Say what:|default|Type & It")); // its label, its starting text, its verb
+    answerText("   ", true); // nothing typed is "never mind"
+    typed->trigger();
+    QTest::qWait(400);
+    QVERIFY(said.isEmpty());
+    answerText("hello there", true);
+    typed->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked typed on 0:  [hello there]"));
+
+    // A result: the preview pane opens for it, with the diff as text.
+    QVERIFY(!w->quickLookVisible());
+    findIn(fake, "Show Me")->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(w->quickLookVisible(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().contains("+new line"), 10000);
+    QVERIFY(w->m_quickLook->shownText().contains("-old <b>line</b>")); // shown, not obeyed
+    QVERIFY(w->m_quickLook->path().isEmpty());
+    // The next file selected takes the pane back.
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTRY_COMPARE(w->m_quickLook->path(), a);
+
+    // A menu that is only one submenu shows what is inside it (the branch button).
+    QMenu wrapped;
+    wrapped.addMenu("Git")->addAction("Commit…");
+    ExtensionMenu::flatten(&wrapped);
+    QVERIFY(findIn(&wrapped, "Commit…"));
+    QVERIFY(!findIn(&wrapped, "Git"));
+    host->setEnabled("fake", false);
+}
+
+void TestMainWindow::diffIsColoured()
+{
+    QTextDocument doc;
+    const QString diff = "diff --git a/x b/x\nindex 1..2\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n same\n-old <i>x</i>\n+new\n";
+    RichTextStyle::setDiff(&doc, diff, currentTheme());
+    QCOMPARE(doc.toPlainText(), diff); // every character as it came
+    auto background = [&](const QString &text) {
+        for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+            if (b.text() == text)
+                return b.blockFormat().background();
+        }
+        return QBrush(Qt::magenta);
+    };
+    QVERIFY(background("+new").style() != Qt::NoBrush);
+    QVERIFY(background("-old <i>x</i>").style() != Qt::NoBrush);
+    QVERIFY(background("+new").color() != background("-old <i>x</i>").color());
+    QVERIFY(background("+new").color().green() > background("+new").color().red());
+    QVERIFY(background("-old <i>x</i>").color().red() > background("-old <i>x</i>").color().green());
+    QCOMPARE(background(" same").style(), Qt::NoBrush);
+    QCOMPARE(background("+++ b/x").style(), Qt::NoBrush); // the file's name, not an added line
+    QVERIFY(doc.begin().begin().fragment().charFormat().fontWeight() == QFont::Bold);
 }
 
 #include "tst_mainwindow.moc"

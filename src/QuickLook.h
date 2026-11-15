@@ -40,6 +40,9 @@ public:
 
     void showItem(const Item &item);
     void clear(); // nothing is selected
+    // Something that isn't a file's preview: a result an extension wants shown
+    // (a diff). It stays until a file is selected or the pane closes.
+    void showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content);
     QString path() const { return m_item.path; }
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
     bool fromExtension() const { return m_fromExtension; } // an extension made what's shown

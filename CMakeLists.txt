@@ -126,6 +126,8 @@ qt_add_library(argonaut_app STATIC
     src/RichTextStyle.cpp
     src/FadeOverlay.h
     src/FadeOverlay.cpp
+    src/ExtensionMenu.h
+    src/ExtensionMenu.cpp
     src/ExtensionsDialog.h
     src/ExtensionsDialog.cpp
     src/PreferencesDialog.h

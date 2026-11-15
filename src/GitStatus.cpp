@@ -68,7 +68,7 @@ GitStatus::~GitStatus()
     }
 }
 
-bool GitStatus::run(const QStringList &arguments, const QStringList &paths, QString *error)
+bool GitStatus::run(const QStringList &arguments, const QStringList &paths, QString *error, int timeoutMs)
 {
     auto fail = [&](const QString &why) {
         if (error)
@@ -89,8 +89,8 @@ bool GitStatus::run(const QStringList &arguments, const QStringList &paths, QStr
     process.setProcessEnvironment(env);
     process.start(gitProgram(), QStringList{QStringLiteral("-c"), QStringLiteral("core.hooksPath=/dev/null"),
                                             QStringLiteral("-c"), QStringLiteral("core.fsmonitor=false")}
-                                    + arguments + QStringList{QStringLiteral("--")} + paths);
-    if (!process.waitForFinished(15000)) {
+                                    + arguments + (paths.isEmpty() ? QStringList() : QStringList{QStringLiteral("--")} + paths));
+    if (!process.waitForFinished(timeoutMs)) {
         process.kill();
         process.waitForFinished(500);
         return fail(QStringLiteral("git took too long."));
@@ -101,6 +101,57 @@ bool GitStatus::run(const QStringList &arguments, const QStringList &paths, QStr
         return fail(said.isEmpty() ? QStringLiteral("git failed.") : said.section(QLatin1Char('\n'), 0, 0));
     }
     return true;
+}
+
+QByteArray GitStatus::read(const QStringList &arguments, const QStringList &paths, bool *ok, qsizetype maxBytes) const
+{
+    if (ok)
+        *ok = false;
+    if (m_root.isEmpty() || m_blocked || m_tooSlow || !m_ready)
+        return {};
+    const QString prefix = m_root + QLatin1Char('/');
+    for (const QString &path : paths) {
+        if (!path.startsWith(prefix))
+            return {};
+    }
+    QProcess process;
+    prepare(&process, m_root);
+    process.start(gitProgram(), QStringList{QStringLiteral("-c"), QStringLiteral("core.hooksPath=/dev/null"),
+                                            QStringLiteral("-c"), QStringLiteral("core.fsmonitor=false"),
+                                            QStringLiteral("-c"), QStringLiteral("core.pager=cat")}
+                                    + arguments + (paths.isEmpty() ? QStringList() : QStringList{QStringLiteral("--")} + paths));
+    QByteArray out;
+    QElapsedTimer timer;
+    timer.start();
+    // Read as it comes: a huge diff is cut off, not waited for.
+    while (process.state() != QProcess::NotRunning || process.bytesAvailable() > 0) {
+        if (process.bytesAvailable() == 0 && !process.waitForReadyRead(200) && process.state() == QProcess::NotRunning)
+            break;
+        out += process.readAllStandardOutput();
+        if (out.size() >= maxBytes || timer.elapsed() > 10000) {
+            process.kill();
+            process.waitForFinished(500);
+            if (ok)
+                *ok = out.size() >= maxBytes; // cut to size is still an answer
+            return out.left(maxBytes);
+        }
+    }
+    process.waitForFinished(500);
+    out += process.readAllStandardOutput();
+    if (ok)
+        *ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    return out.left(maxBytes);
+}
+
+QStringList GitStatus::branches() const
+{
+    bool ok = false;
+    const QByteArray out = read({QStringLiteral("for-each-ref"), QStringLiteral("--format=%(refname:short)"),
+                                 QStringLiteral("--sort=-committerdate"), QStringLiteral("refs/heads")},
+                                {}, &ok, 64 * 1024);
+    if (!ok)
+        return {};
+    return QString::fromUtf8(out).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
 }
 
 QList<GitStatus::Mark> GitStatus::marks(const QString &folder) const
@@ -160,6 +211,8 @@ void GitStatus::clear()
     m_gitDir.clear();
     m_branch.clear();
     m_changeCount = 0;
+    m_staged = 0;
+    m_unstaged = 0;
     m_blocked = false;
     m_tooSlow = false;
     m_ready = false;
@@ -352,10 +405,14 @@ GitStatus::Parsed GitStatus::parse(const QByteArray &output)
         } else if (rec.startsWith("1 ") && rec.size() > 4) {
             parsed.files.insert(pathAfter(rec, 8), fromXY(rec[2], rec[3]));
             ++parsed.changes;
+            parsed.staged += rec[2] != '.';
+            parsed.unstaged += rec[3] != '.';
         } else if (rec.startsWith("2 ") && rec.size() > 4) {
             parsed.files.insert(pathAfter(rec, 9), GitStatus::Modified);
             ++i; // the original path follows in its own field
             ++parsed.changes;
+            parsed.staged += rec[2] != '.';
+            parsed.unstaged += rec[3] != '.';
         } else if (rec.startsWith("u ")) {
             parsed.files.insert(pathAfter(rec, 10), GitStatus::Conflicted);
             ++parsed.changes;
@@ -379,6 +436,8 @@ void GitStatus::finished(const QByteArray &output)
     const Parsed parsed = parse(output);
     m_branch = parsed.branch;
     m_changeCount = parsed.changes;
+    m_staged = parsed.staged;
+    m_unstaged = parsed.unstaged;
     m_files.clear();
     m_folders.clear();
     m_untrackedDirs.clear();

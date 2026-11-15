@@ -50,6 +50,8 @@ public:
     QString root() const { return m_root; }
     QString branch() const { return m_branch; } // "main", or a short commit id when detached
     int changeCount() const { return m_changeCount; }
+    int stagedCount() const { return m_staged; }       // items with something staged (what a commit takes)
+    int unstagedCount() const { return m_unstaged; }   // tracked items changed but not staged (`commit -a` takes them)
     bool blocked() const { return m_blocked; }   // its config runs programs: no status
     bool tooSlow() const { return m_tooSlow; }   // status took too long: given up
     bool ready() const { return m_ready; }       // a status has arrived
@@ -74,7 +76,16 @@ public:
     // arrived and the repository isn't blocked: `git add` runs the same
     // filters `git status` does. Hooks are switched off. False with `error`
     // on failure; the status is read again afterwards.
-    bool run(const QStringList &arguments, const QStringList &paths, QString *error = nullptr);
+    bool run(const QStringList &arguments, const QStringList &paths, QString *error = nullptr, int timeoutMs = 15000);
+
+    // Runs a git command that only reads (`diff`, `for-each-ref`) and
+    // returns what it printed, at most `maxBytes`. Same conditions as run();
+    // nothing is locked, no hooks, and for `diff` pass --no-ext-diff and
+    // --no-textconv yourself: a repository can name programs for those too.
+    QByteArray read(const QStringList &arguments, const QStringList &paths, bool *ok = nullptr,
+                    qsizetype maxBytes = 2 * 1024 * 1024) const;
+    // The local branches, the most recently committed-to first.
+    QStringList branches() const;
 
     // The repository that contains `folder` (its top folder), or empty.
     static QString findRoot(const QString &folder);
@@ -85,6 +96,8 @@ public:
         QHash<QString, State> files;  // relative path -> state
         QSet<QString> untrackedDirs;  // relative, without the trailing '/'
         int changes = 0;
+        int staged = 0;   // with something in the index
+        int unstaged = 0; // tracked, changed in the work tree
     };
     static Parsed parse(const QByteArray &output);
 
@@ -106,6 +119,8 @@ private:
     QString m_gitDir;
     QString m_branch;
     int m_changeCount = 0;
+    int m_staged = 0;
+    int m_unstaged = 0;
     bool m_blocked = false;
     bool m_tooSlow = false;
     bool m_ready = false;

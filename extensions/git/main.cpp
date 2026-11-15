@@ -7,6 +7,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -55,6 +56,79 @@ QJsonObject badgeFor(const GitStatus::Mark &mark)
     return badge;
 }
 
+QJsonObject command(const QString &id, const QString &label, const QString &group = QStringLiteral("Git"))
+{
+    return {{QStringLiteral("id"), id}, {QStringLiteral("label"), label}, {QStringLiteral("group"), group}};
+}
+
+// The Git menu. On marked items: Stage, Unstage, Show Changes, Discard. On
+// the folder (its empty space, or the branch in the path bar): the changes,
+// committing and the branches.
+QJsonArray commandsFor(const GitStatus *git, const QList<GitStatus::Mark> &marks)
+{
+    QJsonArray commands;
+    QJsonArray marked, modified;
+    for (const GitStatus::Mark &mark : marks) {
+        if (mark.relativePath.isEmpty())
+            continue;
+        marked.append(mark.relativePath);
+        if (mark.state == GitStatus::Modified)
+            modified.append(mark.relativePath);
+    }
+    if (!marked.isEmpty()) {
+        QJsonObject diff = command(QStringLiteral("diff"), QStringLiteral("Show Changes"));
+        diff.insert(QStringLiteral("items"), marked);
+        QJsonObject stage = command(QStringLiteral("stage"), QStringLiteral("Stage"));
+        stage.insert(QStringLiteral("items"), marked);
+        QJsonObject unstage = command(QStringLiteral("unstage"), QStringLiteral("Unstage"));
+        unstage.insert(QStringLiteral("items"), marked);
+        commands.append(diff);
+        commands.append(stage);
+        commands.append(unstage);
+    }
+    if (!modified.isEmpty()) {
+        // Only files that have a committed version to go back to; folders,
+        // new files and conflicts are left to the command line.
+        QJsonObject discard = command(QStringLiteral("discard"), QStringLiteral("Discard Changes…"));
+        discard.insert(QStringLiteral("items"), modified);
+        discard.insert(QStringLiteral("kind"), QStringLiteral("files"));
+        discard.insert(QStringLiteral("confirm"),
+                       QStringLiteral("Discard the changes in the selected files?\n\nThey go back to how they were at "
+                                      "the last commit. This can't be undone, and the changes are not put in the Trash."));
+        commands.append(discard);
+    }
+
+    auto onFolder = [](QJsonObject c) {
+        c.insert(QStringLiteral("target"), QStringLiteral("folder"));
+        return c;
+    };
+    if (git->changeCount() > 0)
+        commands.append(onFolder(command(QStringLiteral("diff-all"), QStringLiteral("Show All Changes"))));
+    if (git->stagedCount() > 0 || git->unstagedCount() > 0) {
+        // What is staged is what gets committed; with nothing staged, every
+        // changed file git already tracks (new files have to be staged).
+        const bool staged = git->stagedCount() > 0;
+        const int n = staged ? git->stagedCount() : git->unstagedCount();
+        QJsonObject commit = command(QStringLiteral("commit"),
+                                     staged ? QStringLiteral("Commit Staged Changes (%1)…").arg(n)
+                                            : QStringLiteral("Commit All Changed Files (%1)…").arg(n));
+        commit.insert(QStringLiteral("ask"), QJsonObject{{QStringLiteral("label"), QStringLiteral("Commit message:")},
+                                                         {QStringLiteral("multiline"), true}});
+        commands.append(onFolder(commit));
+    }
+    const QStringList branches = git->branches().mid(0, 50);
+    for (const QString &branch : branches) {
+        QJsonObject entry = command(QStringLiteral("switch:") + branch, branch, QStringLiteral("Git/Switch Branch"));
+        if (branch == git->branch())
+            entry.insert(QStringLiteral("checked"), true);
+        commands.append(onFolder(entry));
+    }
+    QJsonObject create = command(QStringLiteral("new-branch"), QStringLiteral("New Branch…"));
+    create.insert(QStringLiteral("ask"), QJsonObject{{QStringLiteral("label"), QStringLiteral("Name of the new branch:")}});
+    commands.append(onFolder(create));
+    return commands;
+}
+
 void report(const QString &folder, const GitStatus *git)
 {
     QJsonObject message{{QStringLiteral("type"), QStringLiteral("folder")}, {QStringLiteral("folder"), folder}};
@@ -84,21 +158,8 @@ void report(const QString &folder, const GitStatus *git)
         for (const GitStatus::Mark &mark : marks)
             badges.insert(mark.relativePath, badgeFor(mark));
         message.insert(QStringLiteral("badges"), badges);
-        // Stage and Unstage, for the marked items only.
-        if (git->ready() && !git->blocked() && !git->tooSlow() && !marks.isEmpty()) {
-            QJsonArray items;
-            for (const GitStatus::Mark &mark : marks) {
-                if (!mark.relativePath.isEmpty())
-                    items.append(mark.relativePath);
-            }
-            message.insert(QStringLiteral("commands"),
-                           QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("stage")},
-                                                  {QStringLiteral("label"), QStringLiteral("Git: Stage")},
-                                                  {QStringLiteral("items"), items}},
-                                      QJsonObject{{QStringLiteral("id"), QStringLiteral("unstage")},
-                                                  {QStringLiteral("label"), QStringLiteral("Git: Unstage")},
-                                                  {QStringLiteral("items"), items}}});
-        }
+        if (git->ready() && !git->blocked() && !git->tooSlow())
+            message.insert(QStringLiteral("commands"), commandsFor(git, marks));
     }
     const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
@@ -115,30 +176,126 @@ void say(const QString &text)
     std::fflush(stdout);
 }
 
+void show(const QString &title, const QString &diff, const QString &note)
+{
+    const QByteArray line = QJsonDocument(QJsonObject{{QStringLiteral("type"), QStringLiteral("show")},
+                                                      {QStringLiteral("title"), title},
+                                                      {QStringLiteral("kind"), QStringLiteral("diff")},
+                                                      {QStringLiteral("text"), diff},
+                                                      {QStringLiteral("note"), note}})
+                                .toJson(QJsonDocument::Compact)
+                            + '\n';
+    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
+    std::fflush(stdout);
+}
+
+// The changes against the last commit, of `paths` or of everything. Files
+// git doesn't track yet have no diff: they are named at the end.
+void showChanges(GitStatus *git, const QString &folder, const QStringList &paths)
+{
+    constexpr qsizetype MaxBytes = 600 * 1000;
+    const QStringList diffArguments = {QStringLiteral("diff"), QStringLiteral("--no-ext-diff"), QStringLiteral("--no-textconv"),
+                                       QStringLiteral("--no-color"), QStringLiteral("-M")};
+    bool ok = false;
+    QByteArray out = git->read(diffArguments + QStringList{QStringLiteral("HEAD")}, paths, &ok, MaxBytes);
+    if (!ok) // no commit yet: what is staged, then what isn't
+        out = git->read(diffArguments + QStringList{QStringLiteral("--cached")}, paths, &ok, MaxBytes)
+              + git->read(diffArguments, paths, &ok, MaxBytes);
+    QString text = QString::fromUtf8(out);
+    int files = int(text.count(QStringLiteral("\ndiff --git "))) + (text.startsWith(QLatin1String("diff --git ")) ? 1 : 0);
+    QStringList fresh;
+    const QString root = git->root() + QLatin1Char('/');
+    const QList<GitStatus::Mark> marks = git->marks(git->root());
+    for (const GitStatus::Mark &mark : marks) {
+        if (mark.state != GitStatus::Untracked || mark.relativePath.isEmpty())
+            continue;
+        const QString full = root + mark.relativePath;
+        bool wanted = paths.isEmpty();
+        for (const QString &path : paths)
+            wanted = wanted || full == path || full.startsWith(path + QLatin1Char('/')) || path.startsWith(full + QLatin1Char('/'));
+        if (wanted)
+            fresh << mark.relativePath + (mark.deep ? QStringLiteral("/") : QString());
+    }
+    fresh.sort();
+    for (const QString &name : std::as_const(fresh))
+        text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QStringLiteral("# New, not tracked yet: ") + name;
+    if (text.trimmed().isEmpty()) {
+        say(QStringLiteral("No changes to show"));
+        return;
+    }
+    QStringList note;
+    if (files > 0)
+        note << (files == 1 ? QStringLiteral("1 changed file") : QStringLiteral("%1 changed files").arg(files));
+    if (!fresh.isEmpty())
+        note << (fresh.size() == 1 ? QStringLiteral("1 new") : QStringLiteral("%1 new").arg(fresh.size()));
+    if (out.size() >= MaxBytes)
+        note << QStringLiteral("showing the first 600 kB");
+    const QString title = paths.size() == 1 ? QStringLiteral("Changes in %1").arg(QFileInfo(paths.first()).fileName())
+                                            : QStringLiteral("Changes on %1").arg(git->branch());
+    Q_UNUSED(folder);
+    show(title, text, note.join(QStringLiteral(" · ")));
+}
+
 void invoke(const QJsonObject &message)
 {
-    GitStatus *git = g_folders.value(message.value(QLatin1String("folder")).toString());
+    const QString folder = message.value(QLatin1String("folder")).toString();
+    GitStatus *git = g_folders.value(folder);
     if (!git)
         return;
     QStringList paths;
     const QJsonArray selection = message.value(QLatin1String("selection")).toArray();
     for (const QJsonValue &path : selection)
         paths << path.toString();
-    if (paths.isEmpty())
-        return;
     const QString command = message.value(QLatin1String("command")).toString();
-    QStringList arguments;
-    if (command == QLatin1String("stage"))
-        arguments = {QStringLiteral("add")};
-    else if (command == QLatin1String("unstage"))
-        arguments = {QStringLiteral("restore"), QStringLiteral("--staged")};
-    else
-        return;
+    const QString input = message.value(QLatin1String("input")).toString().trimmed();
     QString error;
-    if (git->run(arguments, paths, &error))
-        say(command == QLatin1String("stage") ? QStringLiteral("Staged") : QStringLiteral("Unstaged"));
-    else
-        say(error);
+    bool ok = false;
+    QString done;
+    if (command == QLatin1String("diff") && !paths.isEmpty()) {
+        showChanges(git, folder, paths);
+        return;
+    } else if (command == QLatin1String("diff-all")) {
+        showChanges(git, folder, {});
+        return;
+    } else if (command == QLatin1String("stage") && !paths.isEmpty()) {
+        ok = git->run({QStringLiteral("add")}, paths, &error);
+        done = QStringLiteral("Staged");
+    } else if (command == QLatin1String("unstage") && !paths.isEmpty()) {
+        ok = git->run({QStringLiteral("restore"), QStringLiteral("--staged")}, paths, &error);
+        done = QStringLiteral("Unstaged");
+    } else if (command == QLatin1String("discard") && !paths.isEmpty()) {
+        ok = git->run({QStringLiteral("restore"), QStringLiteral("--source=HEAD"), QStringLiteral("--staged"),
+                       QStringLiteral("--worktree")}, paths, &error);
+        done = QStringLiteral("Changes discarded");
+    } else if (command == QLatin1String("commit")) {
+        if (input.isEmpty())
+            return;
+        // What is staged; with nothing staged, all changed files git tracks.
+        QStringList arguments{QStringLiteral("commit")};
+        if (git->stagedCount() == 0)
+            arguments << QStringLiteral("-a");
+        arguments << QStringLiteral("-m") << input;
+        ok = git->run(arguments, {}, &error, 60000); // signing may ask for a passphrase
+        done = QStringLiteral("Committed");
+    } else if (command == QLatin1String("new-branch")) {
+        if (input.isEmpty() || input.startsWith(QLatin1Char('-')) || input.contains(QLatin1Char(' '))) {
+            say(QStringLiteral("That can't be a branch's name."));
+            return;
+        }
+        ok = git->run({QStringLiteral("switch"), QStringLiteral("-c"), input}, {}, &error);
+        done = QStringLiteral("On the new branch %1").arg(input);
+    } else if (command.startsWith(QLatin1String("switch:"))) {
+        const QString branch = command.mid(7);
+        if (!git->branches().contains(branch) || branch.startsWith(QLatin1Char('-')))
+            return; // only to a branch this repository really has
+        if (branch == git->branch())
+            return;
+        ok = git->run({QStringLiteral("switch"), branch}, {}, &error);
+        done = QStringLiteral("Switched to %1").arg(branch);
+    } else {
+        return;
+    }
+    say(ok ? done : error);
 }
 
 void handle(const QByteArray &line)

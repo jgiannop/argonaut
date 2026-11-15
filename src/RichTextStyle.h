@@ -1,5 +1,6 @@
 #pragma once
 
+class QString;
 class QTextDocument;
 struct Theme;
 
@@ -14,5 +15,10 @@ struct Theme;
 namespace RichTextStyle {
 
 void apply(QTextDocument *document, const Theme &theme);
+
+// Fills the document with a unified diff (what `git diff` prints): added
+// lines on green, removed lines on red, file and position lines set apart,
+// all in a fixed-width font. The text is shown as it is, never as markup.
+void setDiff(QTextDocument *document, const QString &diff, const Theme &theme);
 
 } // namespace RichTextStyle

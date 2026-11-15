@@ -29,6 +29,9 @@ class MountActions;
 class Sidebar;
 class AnalyzeView;
 class QuickLook;
+namespace Extensions {
+struct PreviewReply;
+}
 class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
@@ -281,6 +284,8 @@ private:
     void springOver(const QString &folder, int pane);
     // Right-click extras: extensions' commands, Scripts ▸.
     void addExtensionCommands(QMenu *menu, const QStringList &selection);
+    void showExtensionInfoMenu(const QPoint &globalPos);
+    void showExtensionResult(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
     QMenu *scriptsMenu(const QStringList &selection);
     void organizeWithClaude();
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);

@@ -10,8 +10,9 @@ Version 1 of the protocol lets an extension:
 - put a **mark** on items in a folder: one or two characters, or a dot, in one
   of five colours, with a tooltip;
 - show a **short text** for the folder at the right end of the path bar;
-- add **commands** to the right-click menu, and say a line to the user when
-  one is done;
+- add **commands** to the right-click menu, in submenus if there are many,
+  ask the user for a text first (a message, a name), say a line when one is
+  done, and show a longer result (a diff, a report) in the preview pane;
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
@@ -107,7 +108,7 @@ Ignore message types and keys you don't know; newer versions may add some.
 {"type": "refresh", "folder": "/home/me/Documents"}
 {"type": "unwatch", "folder": "/home/me/Documents"}
 {"type": "invoke", "command": "mark-done", "folder": "/home/me/Documents",
- "selection": ["/home/me/Documents/report.txt"]}
+ "selection": ["/home/me/Documents/report.txt"], "input": ""}
 ```
 
 - `watch`: a view now shows this folder. Answer with a `folder` message, now
@@ -121,7 +122,8 @@ Ignore message types and keys you don't know; newer versions may add some.
 - `invoke`: the user chose one of your commands (and said yes to its
   question, if it has one). `selection` holds the full paths of the selected
   items; it is empty for a command on the folder itself. `folder` is the open
-  folder, or `""` in Recent and Starred.
+  folder, or `""` in Recent and Starred. `input` is what the user typed, for
+  a command with `ask` (otherwise empty).
 
 Folders are absolute paths. The Trash, Recent and Starred are never sent. While searching, the folder is the one being
 searched and its results are items deeper inside it.
@@ -182,8 +184,15 @@ Unstage exist only inside a repository, and only for changed items.
 | `types` | Every selected item's type must match one of these: `"image/*"`, or a type such as `"text/plain"` (types derived from it match too). The type is what the file really is, by its content, not only its name. |
 | `items` | Only in a `folder` message: the command is offered only when every selected item is in this list of relative paths. |
 | `confirm` | A question Argonaut asks first, with Cancel as the default. Without a yes you get no `invoke`. |
+| `ask` | `{"label": "Commit message:", "multiline": true, "text": "starting text"}`: Argonaut shows a text field first and sends what was typed as `input`. If the user cancels or types nothing, you get no `invoke`. |
+| `group` | The submenu the command is in: `"Git"`, or `"Git/Switch Branch"` for a submenu inside one. Two levels at most. |
+| `checked` | `true`: shown ticked (the current one of several, such as the branch you are on). |
 
-At most 20 commands everywhere and 20 per folder. Commands aren't offered in
+A click on your path-bar text (`info`) opens a menu of your commands for the
+folder (`"target": "folder"`), so that is the natural place for them; when
+they are all in one group, the menu shows the group's entries directly.
+
+At most 20 commands everywhere and 80 per folder. Commands aren't offered in
 the Trash or in other programs' Open and Save windows.
 
 To tell the user how it went, at any time:
@@ -194,6 +203,17 @@ To tell the user how it went, at any time:
 
 It is shown for a few seconds at the bottom of the window (up to 200
 characters, one line). Use it for results and errors, not for progress.
+
+For a result that needs room, ask for it to be shown in the preview pane:
+
+```json
+{"type": "show", "title": "Changes on main", "kind": "diff",
+ "text": "diff --git a/notes.txt b/notes.txt\n@@ -1 +1 @@\n-old\n+new", "note": "1 changed file"}
+```
+
+`kind`, `text` and `note` are as in a [preview](#previews) answer (`text`,
+`markdown`, `html`, `diff`, `image`). The pane opens if it is closed, and the
+next file the user selects takes it back.
 
 ### Previews
 
@@ -218,6 +238,7 @@ the file really is. When the user previews such a file, you get:
 {"type": "preview", "id": 12, "kind": "markdown", "text": "# Notes\n\nSome *text*."}
 {"type": "preview", "id": 12, "kind": "text", "text": "plain text", "monospace": true}
 {"type": "preview", "id": 12, "kind": "html", "text": "<table>…</table>", "note": "3 sheets"}
+{"type": "preview", "id": 12, "kind": "diff", "text": "@@ -1 +1 @@\n-old\n+new"}
 {"type": "preview", "id": 12, "kind": "image", "image": "/home/me/.cache/my-ext/12.png"}
 {"type": "preview", "id": 12, "kind": "none"}
 ```
@@ -225,6 +246,7 @@ the file really is. When the user previews such a file, you get:
 | Kind | What Argonaut shows |
 |---|---|
 | `markdown` | The text, formatted (CommonMark and GitHub tables). |
+| `diff` | A unified diff (what `git diff` prints), in a fixed-width font with added lines on green and removed lines on red, in the theme's colours. The text is shown as it is. |
 | `text` | The text as it is; `monospace` for a fixed-width font without wrapping. |
 | `html` | Qt's rich-text subset: headings, lists, tables, bold, colours. No scripts, and nothing the HTML names is loaded (no pictures, no style sheets). Links are shown but don't open. |
 | `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. |
