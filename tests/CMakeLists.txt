@@ -123,3 +123,12 @@ qt_add_executable(tst_mediainfo tst_mediainfo.cpp)
 target_link_libraries(tst_mediainfo PRIVATE argonaut_core Qt6::Test)
 add_test(NAME mediainfo COMMAND tst_mediainfo)
 set_tests_properties(mediainfo PROPERTIES TIMEOUT 60)
+
+# The real window, headless: what gets trashed, deleted, dropped or returned.
+qt_add_executable(tst_mainwindow tst_mainwindow.cpp)
+target_link_libraries(tst_mainwindow PRIVATE argonaut_app Qt6::Test)
+add_test(NAME mainwindow COMMAND tst_mainwindow)
+set_tests_properties(mainwindow PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
+    TIMEOUT 300
+)

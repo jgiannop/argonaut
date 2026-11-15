@@ -424,7 +424,7 @@ void TestDirectoryModel::realTypesInBackground()
     {
         QFile f(m_dir + "/real.png");
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(QByteArray("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x06\0\0\0", 33));
+        f.write(QByteArrayLiteral("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x06\0\0\0"));
     }
     const int readsBefore = ContentType::readCount();
     QVERIFY(load(m_dir));

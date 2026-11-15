@@ -156,16 +156,20 @@ bool PathBar::eventFilter(QObject *watched, QEvent *event)
     // A crumb: a click opens its folder, a drag moves the window like the
     // rest of the header.
     if (auto *crumb = qobject_cast<QToolButton *>(watched); crumb && crumb->parent() == m_crumbs) {
-        auto *mouse = static_cast<QMouseEvent *>(event);
-        if (event->type() == QEvent::MouseButtonPress && mouse->button() == Qt::LeftButton) {
-            m_pressPos = mouse->globalPosition().toPoint();
-        } else if (event->type() == QEvent::MouseMove && (mouse->buttons() & Qt::LeftButton)
-                   && (mouse->globalPosition().toPoint() - m_pressPos).manhattanLength()
-                          >= QApplication::startDragDistance()) {
-            crumb->setDown(false); // no click when the button is let go
-            if (QWindow *handle = window()->windowHandle())
-                handle->startSystemMove();
-            return true;
+        // Only mouse events are QMouseEvents: cast after checking the type.
+        const bool press = event->type() == QEvent::MouseButtonPress;
+        if (press || event->type() == QEvent::MouseMove) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (press && mouse->button() == Qt::LeftButton) {
+                m_pressPos = mouse->globalPosition().toPoint();
+            } else if (!press && (mouse->buttons() & Qt::LeftButton)
+                       && (mouse->globalPosition().toPoint() - m_pressPos).manhattanLength()
+                              >= QApplication::startDragDistance()) {
+                crumb->setDown(false); // no click when the button is let go
+                if (QWindow *handle = window()->windowHandle())
+                    handle->startSystemMove();
+                return true;
+            }
         }
         return QFrame::eventFilter(watched, event);
     }

@@ -26,3 +26,26 @@ jobs:
 
       - name: Test
         run: ctest --preset debug
+
+  # The same tests with memory-error checkers (AddressSanitizer + UBSan):
+  # a bad read or write stops the test instead of passing by luck.
+  sanitize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build qt6-base-dev qt6-tools-dev \
+            libvterm-dev libarchive-dev dbus git
+
+      - name: Configure
+        run: cmake --preset sanitize
+
+      - name: Build
+        run: cmake --build build/sanitize
+
+      - name: Test
+        run: ctest --preset sanitize

@@ -54,6 +54,7 @@ class QHeaderView;
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    friend class TestMainWindow; // tests/tst_mainwindow.cpp
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);

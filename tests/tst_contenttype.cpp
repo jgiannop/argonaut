@@ -12,7 +12,7 @@ using ContentType::Verdict;
 
 namespace {
 
-const QByteArray Png("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x06\0\0\0", 33);
+const QByteArray Png = QByteArrayLiteral("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x06\0\0\0");
 const QByteArray Html("<!DOCTYPE html>\n<html><head><title>404 Not Found</title></head></html>\n");
 const QByteArray Elf = QByteArray("\x7f" "ELF\x02\x01\x01\0", 8) + QByteArray(56, '\0');
 const QByteArray DosExe = QByteArray("MZ\x90\0\x03\0\0\0", 8) + QByteArray(120, '\0');

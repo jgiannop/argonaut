@@ -94,8 +94,9 @@ else()
     message(STATUS "Compress / Extract: disabled (install libarchive-dev to enable)")
 endif()
 
-qt_add_executable(argonaut
-    src/main.cpp
+# Everything of the app except main(), as a library, so the window tests
+# (tests/tst_mainwindow) can link the real MainWindow.
+qt_add_library(argonaut_app STATIC
     src/MainWindow.h
     src/MainWindow.cpp
     src/Theme.h
@@ -140,23 +141,26 @@ qt_add_executable(argonaut
     src/OrganizerDialog.cpp
 )
 
-target_link_libraries(argonaut PRIVATE argonaut_core Qt6::Widgets)
+target_link_libraries(argonaut_app PUBLIC argonaut_core Qt6::Widgets)
+
+qt_add_executable(argonaut src/main.cpp)
+target_link_libraries(argonaut PRIVATE argonaut_app)
 # Open/Save windows for other apps (xdg-desktop-portal FileChooser backend), Linux.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(argonaut PRIVATE src/ChooserBar.h src/ChooserBar.cpp)
+    target_sources(argonaut_app PRIVATE src/ChooserBar.h src/ChooserBar.cpp)
     # WM_TRANSIENT_FOR on those windows (X11): one xcb call Qt has no API for.
     if(PkgConfig_FOUND)
         pkg_check_modules(XCB IMPORTED_TARGET xcb)
     endif()
     if(XCB_FOUND)
-        target_compile_definitions(argonaut PRIVATE ARGONAUT_XCB=1)
-        target_link_libraries(argonaut PRIVATE PkgConfig::XCB)
+        target_compile_definitions(argonaut_app PUBLIC ARGONAUT_XCB=1)
+        target_link_libraries(argonaut_app PUBLIC PkgConfig::XCB)
     endif()
 endif()
 # One version number for the app, the About box and the installer.
-target_compile_definitions(argonaut PRIVATE ARGONAUT_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(argonaut_app PUBLIC ARGONAUT_VERSION="${PROJECT_VERSION}")
 if(LIBARCHIVE_FOUND)
-    target_compile_definitions(argonaut PRIVATE ARGONAUT_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
+    target_compile_definitions(argonaut_app PUBLIC ARGONAUT_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
 endif()
 
 # Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
@@ -166,12 +170,12 @@ if(PkgConfig_FOUND)
     pkg_check_modules(VTERM IMPORTED_TARGET vterm)
 endif()
 if(VTERM_FOUND AND UNIX)
-    target_sources(argonaut PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
-    target_compile_definitions(argonaut PRIVATE ARGONAUT_TERMINAL=1 ARGONAUT_VTERM_VERSION="${VTERM_VERSION}")
-    target_link_libraries(argonaut PRIVATE PkgConfig::VTERM)
+    target_sources(argonaut_app PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp)
+    target_compile_definitions(argonaut_app PUBLIC ARGONAUT_TERMINAL=1 ARGONAUT_VTERM_VERSION="${VTERM_VERSION}")
+    target_link_libraries(argonaut_app PUBLIC PkgConfig::VTERM)
     find_library(UTIL_LIBRARY util)
     if(UTIL_LIBRARY)
-        target_link_libraries(argonaut PRIVATE ${UTIL_LIBRARY})
+        target_link_libraries(argonaut_app PUBLIC ${UTIL_LIBRARY})
     endif()
     message(STATUS "Embedded terminal: enabled (libvterm ${VTERM_VERSION})")
 else()
