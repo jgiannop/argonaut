@@ -123,8 +123,6 @@ private:
     void launchWith(const OpenWith::App &app, const QStringList &files);
     void typeAheadFind();
 
-    // Tabs: one shared view/model; each tab keeps its folder, history,
-    // selection and scroll position, restored when it becomes active.
     // Tabs (TabStrip): what a tab is made of here, and a new tab.
     TabStrip::Tab captureTab() const;
     void restoreTab(const TabStrip::Tab &tab);
@@ -286,8 +284,6 @@ private:
     QMenu *scriptsMenu(const QStringList &selection);
     void organizeWithClaude();
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
-    // Remote locations: mounts with GVfs (asking for logins), then opens the
-    // folder. navigateTo() sends addresses (sftp://…) here.
     QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
     QToolButton *m_filterButton = nullptr;  // search filters: type and date
     QActionGroup *m_typeFilters = nullptr;
@@ -309,7 +305,6 @@ private:
     QAction *m_previewAct = nullptr;      // Quick Look (Space, handled in eventFilter)
     QuickLook *m_quickLook = nullptr;     // made on first use
     QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
-    // Recent is shown newest first; the folder sort comes back when leaving.
     QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
     QAction *m_zoomOutAct = nullptr;      // Ctrl+-
     QAction *m_zoomResetAct = nullptr;    // Ctrl+0

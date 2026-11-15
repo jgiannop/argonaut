@@ -2550,10 +2550,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // Empty menu bar space behaves like the header bars: drag to move,
     // double-click to maximise.
     if (m_csd && m_menuBar && (watched == m_menuBar || watched == m_menuRow)) {
-        auto *me = static_cast<QMouseEvent *>(event);
+        const QEvent::Type type = event->type();
+        const bool isMouse = type == QEvent::MouseButtonPress || type == QEvent::MouseMove
+                             || type == QEvent::MouseButtonRelease
+                             || type == QEvent::MouseButtonDblClick;
+        // Only a mouse event may be cast to one (the cases below are all mouse events).
+        auto *me = isMouse ? static_cast<QMouseEvent *>(event) : nullptr;
         // On the bar, a menu title is for its menu; the row has none.
-        const bool onMenu = watched == m_menuBar && (event->type() == QEvent::MouseButtonPress
-                                                     || event->type() == QEvent::MouseButtonDblClick)
+        const bool onMenu = watched == m_menuBar
+                            && (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonDblClick)
                             && m_menuBar->actionAt(me->position().toPoint());
         switch (event->type()) {
         case QEvent::MouseButtonPress:
