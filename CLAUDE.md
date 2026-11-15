@@ -193,6 +193,7 @@ In VS Code, CMake Tools' Testing panel runs them too. Formatting: `.clang-format
   - libvterm does the emulation (screen, alt-screen, scrollback through `sb_pushline`/`sb_popline`). Painting is cell by cell with QPainter; colours come from the theme plus the GNOME Console ANSI palette.
   - Keys: `event()` accepts every `ShortcutOverride`, so the terminal gets Ctrl+C, Delete and so on instead of the window's actions. The exceptions are `setPassthroughShortcuts` (the toggle). `focusNextPrevChild` returns false so Tab reaches the shell, and composed text arrives through `inputMethodEvent`.
   - Following the folder: `showTerminal(dir)` starts a shell in `dir`, or calls `changeDirectory(dir)`. That only types `^E^U cd -- 'dir'` when the shell is idle (`tcgetpgrp(pty) == shell pid`), never into a running program.
+  - The other way: **Ctrl+Up** in the terminal emits `showDirectoryRequested(shellDirectory())` (`/proc/<pid>/cwd`, Linux) and the active pane navigates there, or refreshes if it is there already; nothing is sent to the shell (`tst_mainwindow terminalBringsTheFilesAlong`).
   - `exit` emits `finished`, which closes the panel; opening it again starts a fresh shell.
 - Trash (Linux/BSD, freedesktop spec; `src/Trash.{h,cpp}`):
   - The home trash is `~/.local/share/Trash/{files,info}`. Other drives have `<root>/.Trash-<uid>` or `.Trash/<uid>`, whose `.trashinfo` `Path=` may be relative to the drive root.

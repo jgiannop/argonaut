@@ -610,6 +610,14 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
             return;
         }
     }
+    // Ctrl+Up: the file pane goes to where the shell is. Ours, not the
+    // shell's: nothing is sent to it.
+    if (mods == Qt::ControlModifier && key == Qt::Key_Up) {
+        const QString directory = shellDirectory();
+        if (!directory.isEmpty())
+            emit showDirectoryRequested(directory);
+        return;
+    }
     if (mods == Qt::ShiftModifier && key == Qt::Key_Insert) {
         pasteText(QGuiApplication::clipboard()->text());
         return;

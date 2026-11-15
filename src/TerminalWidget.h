@@ -44,6 +44,8 @@ public:
 signals:
     void titleChanged(const QString &title);
     void finished(); // the shell exited
+    // Ctrl+Up: show the folder the shell is in (its `cd`s aren't followed by themselves).
+    void showDirectoryRequested(const QString &directory);
 
 protected:
     bool event(QEvent *event) override;

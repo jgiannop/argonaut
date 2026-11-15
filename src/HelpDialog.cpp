@@ -586,6 +586,8 @@ source, with a complete example.</p>
 terminal follows, but only while the shell is waiting for a command, so a running program is never interrupted.</p>
 <ul>
 <li>Right-click a folder → <b>Open in Terminal</b> opens it there.</li>
+<li>The other way round is [[Ctrl+Up]] in the terminal: after a <code>cd</code> there, it brings the files
+to the folder the shell is in (and reads the folder again if they are already there).</li>
 <li>Shortcuts like [[Ctrl+C]] go to the terminal while it has the focus.</li>
 <li>Typing <code>exit</code> closes it; opening it again starts a new shell.</li>
 </ul>

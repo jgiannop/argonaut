@@ -23,6 +23,9 @@
 #include "Theme.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
+#if defined(ARGONAUT_TERMINAL)
+#include "TerminalWidget.h"
+#endif
 #include "TestSupport.h"
 #include "Trash.h"
 
@@ -96,6 +99,7 @@ private slots:
     void fadeNeverGetsInTheWay();
     void previewFromAnExtension();
     void richTextGetsAPageLook();
+    void terminalBringsTheFilesAlong();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1221,6 +1225,39 @@ void TestMainWindow::richTextGetsAPageLook()
     QVERIFY(table->format().borderCollapse());
     QCOMPARE(table->cellAt(0, 0).firstCursorPosition().block().begin().fragment().charFormat().fontWeight(), int(QFont::Bold));
     QVERIFY(table->cellAt(1, 0).firstCursorPosition().block().begin().fragment().charFormat().fontWeight() != int(QFont::Bold));
+}
+
+// Ctrl+Up in the terminal: the files go to the folder the shell is in.
+void TestMainWindow::terminalBringsTheFilesAlong()
+{
+#if defined(ARGONAUT_TERMINAL) && defined(Q_OS_LINUX)
+    const QString other = m_dir + "/elsewhere";
+    QDir().mkpath(other);
+    make("elsewhere/inside.txt");
+    open(m_dir);
+    w->m_terminalAct->trigger();
+    TerminalWidget *terminal = w->m_terminal;
+    QVERIFY(terminal && terminal->isRunning());
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle() && terminal->shellDirectory() == m_dir, 10000);
+
+    // `cd` in the shell: the files stay where they are...
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->changeDirectory(other), 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), other, 10000);
+    QCOMPARE(w->m_pane->current, m_dir);
+    // ...until Ctrl+Up.
+    QTest::keyClick(terminal, Qt::Key_Up, Qt::ControlModifier);
+    QCOMPARE(w->m_pane->current, other);
+    QTRY_VERIFY(w->m_pane->model->indexForPath(other + "/inside.txt").isValid());
+    QCOMPARE(terminal->shellDirectory(), other); // nothing was typed into the shell
+    // Already there: the folder is read again, without a new step in the history.
+    QVERIFY(w->m_backAct->isEnabled());
+    const int history = int(w->m_pane->back.size());
+    QTest::keyClick(terminal, Qt::Key_Up, Qt::ControlModifier);
+    QCOMPARE(int(w->m_pane->back.size()), history);
+    w->m_terminalAct->trigger();
+#else
+    QSKIP("no embedded terminal in this build");
+#endif
 }
 
 #include "tst_mainwindow.moc"

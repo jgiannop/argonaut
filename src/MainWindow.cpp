@@ -3922,6 +3922,15 @@ QWidget *MainWindow::buildTerminalPanel()
     connect(m_terminal, &TerminalWidget::titleChanged, this, [this](const QString &title) {
         m_terminalTitle->setText(title.isEmpty() ? tr("Terminal") : title);
     });
+    // Ctrl+Up in the terminal: the pane you are in shows the shell's folder
+    // (read again if it is already there). The keyboard stays in the terminal.
+    connect(m_terminal, &TerminalWidget::showDirectoryRequested, this, [this](const QString &directory) {
+        if (QDir::cleanPath(directory) == QDir::cleanPath(m_pane->current))
+            m_pane->model->refresh();
+        else
+            navigateTo(directory);
+        m_terminal->setFocus();
+    });
     // `exit` closes the panel; the next one starts a fresh shell.
     connect(m_terminal, &TerminalWidget::finished, this, [this] {
         m_terminalTitle->setText(tr("Terminal"));
