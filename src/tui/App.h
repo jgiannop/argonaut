@@ -78,9 +78,13 @@ public:
     bool isLoading() const;             // a folder is still being listed
     FileOperations *operations() const { return m_ops; }
     void selectPath(const QString &path); // puts the cursor on it (when it is listed)
+    void notify(const QString &text) { say(text); } // a line for the user, from outside (the pager is missing)
 
 signals:
     void changed();       // something to draw
+    // Show this text file in the terminal (a pager), then come back. The
+    // interface can't do that itself: it never touches the terminal.
+    void viewRequested(const QString &path);
     void quitRequested();
 
 private:
@@ -108,6 +112,8 @@ private:
     bool navigate(Pane &p, const QString &path, bool remember = true);
     void goUp();
     void openCursor();
+    void openFile(const QString &path); // Enter or a double click on a file
+    void viewFile(const QString &path); // F3
     void moveCursor(Pane &p, int row);
     void rowsChanged(Pane &p);
     int upRows(const Pane &p) const;   // 1 when the list starts with ".."

@@ -7,6 +7,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QSocketNotifier>
 #include <QTimer>
 
@@ -81,6 +83,35 @@ int run(int argc, char **argv)
     };
     QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
     QObject::connect(&input, &QSocketNotifier::activated, &app, readKeys);
+
+    // A text file to read: the terminal goes to `less` until it is closed.
+    // It only shows the file: no helper programs are run on it (LESSOPEN),
+    // and from inside it nothing can be started or written (LESSSECURE).
+    QObject::connect(&tui, &App::viewRequested, &app, [&](const QString &path) {
+        QString pager = QStandardPaths::findExecutable(QStringLiteral("less"));
+        if (pager.isEmpty())
+            pager = QStandardPaths::findExecutable(QStringLiteral("more"));
+        if (pager.isEmpty()) {
+            tui.notify(QStringLiteral("Neither `less` nor `more` is installed to show the file with"));
+            return;
+        }
+        input.setEnabled(false);
+        terminal->suspend();
+        QProcess viewer;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.remove(QStringLiteral("LESSOPEN"));
+        env.remove(QStringLiteral("LESSCLOSE"));
+        env.insert(QStringLiteral("LESSSECURE"), QStringLiteral("1"));
+        viewer.setProcessEnvironment(env);
+        viewer.setProcessChannelMode(QProcess::ForwardedChannels);
+        viewer.setInputChannelMode(QProcess::ForwardedInputChannel);
+        viewer.start(pager, {QStringLiteral("--"), path});
+        viewer.waitForFinished(-1);
+        terminal->resume();
+        input.setEnabled(true);
+        dirty = true;
+        draw();
+    });
     // A resize is not input: looked for now and then. Also the progress of
     // a running operation, which says nothing when a big file is copied.
     QTimer poll;

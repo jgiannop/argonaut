@@ -6,6 +6,10 @@
 #include "FileOperations.h"
 #include "Format.h"
 #include "Naming.h"
+#include "OpenWith.h"
+#include "Preview.h"
+#include "RecentFiles.h"
+#include "ContentType.h"
 #include "Starred.h"
 #include "Trash.h"
 
@@ -259,9 +263,87 @@ void App::openCursor()
             return;
         }
         navigate(p, p.model->filePath(index));
+    } else if (p.model->isTrash()) {
+        say(QStringLiteral("Files in the Trash can't be opened. Restore it first."));
     } else {
-        say(QStringLiteral("Opening files comes in a later version; this one manages them."));
+        openFile(p.model->filePath(index));
     }
+}
+
+namespace {
+
+// What the file really is (its content, not only its name), as the window
+// decides it: the same check, the same cache.
+ContentType::Result typeOf(const QString &path)
+{
+    const QFileInfo info(path);
+    const qint64 mtime = info.lastModified().toMSecsSinceEpoch();
+    ContentType::Result result;
+    if (!ContentType::Cache::instance().lookup(path, info.size(), mtime, &result)) {
+        result = ContentType::inspect(path);
+        ContentType::Cache::instance().store(path, info.size(), mtime, result);
+    }
+    return result;
+}
+
+// Is there a desktop to open an app's window on? Over SSH there isn't.
+bool hasDisplay()
+{
+    return !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") || !qEnvironmentVariableIsEmpty("DISPLAY");
+}
+
+} // namespace
+
+// Opens a file with the app for what it really is. A program disguised as a
+// document is never opened. Where there is no desktop (a server), a text
+// file is shown in the terminal instead.
+void App::openFile(const QString &path)
+{
+    const QString name = QFileInfo(path).fileName();
+    const ContentType::Result type = typeOf(path);
+    if (type.verdict == ContentType::Verdict::Dangerous) {
+        say(QStringLiteral("“%1” is a program disguised as a document. Argonaut won't open it.").arg(name));
+        return;
+    }
+    const QString mime = ContentType::effectiveMime(type);
+    const bool text = Preview::isTextual(mime);
+    if (hasDisplay() && OpenWith::isSupported()) {
+        QString defaultId;
+        const QList<OpenWith::App> apps = OpenWith::appsFor(mime, &defaultId);
+        for (const OpenWith::App &app : apps) {
+            if (app.id != defaultId && !defaultId.isEmpty())
+                continue;
+            if (OpenWith::launch(app, {path})) {
+                RecentFiles::add(path, mime);
+                say(QStringLiteral("Opening “%1” with %2").arg(name, app.name));
+                return;
+            }
+        }
+        if (!text) {
+            say(QStringLiteral("No app is set for this kind of file (%1)").arg(mime));
+            return;
+        }
+    }
+    if (text) {
+        emit viewRequested(path);
+        return;
+    }
+    say(QStringLiteral("There is no desktop here to open “%1” on (text files are shown in the terminal)").arg(name));
+}
+
+// F3: a text file, read in the terminal. Never run, whatever it is.
+void App::viewFile(const QString &path)
+{
+    const QFileInfo info(path);
+    if (path.isEmpty() || info.isDir()) {
+        say(QStringLiteral("F3 shows a text file; this is a folder"));
+        return;
+    }
+    if (!Preview::isTextual(ContentType::effectiveMime(typeOf(path)))) {
+        say(QStringLiteral("“%1” isn't a text file").arg(info.fileName()));
+        return;
+    }
+    emit viewRequested(path);
 }
 
 void App::moveCursor(Pane &p, int row)
@@ -776,6 +858,9 @@ void App::normalKey(const Key &key)
     case Key::F2:
         rename();
         return;
+    case Key::F3:
+        viewFile(cursorPath());
+        return;
     case Key::F5:
         transfer(false);
         return;
@@ -1061,7 +1146,7 @@ void App::drawBottom(Screen &screen)
         const char *key;
         const char *what;
         Key::Code code;
-    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6},
+    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "View", Key::F3}, {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6},
                 {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8}, {"Tab", "Other Pane", Key::Tab},
                 {"F10", "Quit", Key::F10}};
     int x = 1;
@@ -1084,7 +1169,8 @@ void App::drawHelp(Screen &screen)
         "Argonaut in the terminal",
         "",
         "  Up, Down, PgUp, PgDn, Home, End   move",
-        "  Enter, Right                      open the folder",
+        "  Enter, Right                      open the folder, or the file with its app",
+        "  F3                                read a text file here in the terminal",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",
         "  Tab                               the other pane",
@@ -1105,7 +1191,7 @@ void App::drawHelp(Screen &screen)
         "",
         "  F10, q                            quit",
         "",
-        "  Mouse: click a row to go to it, double-click a folder to open it (.. or the folder's",
+        "  Mouse: click a row to go to it, double-click to open it (.. or the folder's",
         "  name at the top: up), right-click to select, wheel to scroll, click a word on the",
         "  bottom line. Hold Shift to select text.",
         "",

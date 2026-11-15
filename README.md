@@ -197,7 +197,8 @@ argonaut --tui ~/src /mnt/usb  # two folders of your choice
 | Keys | |
 |---|---|
 | Arrows, PgUp/PgDn, Home/End | move |
-| Enter / Backspace | into a folder / up (Enter on `..` goes up too) |
+| Enter / Backspace | into a folder, or open the file with its app / up (Enter on `..` goes up too) |
+| F3 | read a text file in the terminal |
 | Tab | the other pane |
 | Space or Insert | select |
 | F5 / F6 | copy / move to the other pane |
@@ -210,9 +211,11 @@ argonaut --tui ~/src /mnt/usb  # two folders of your choice
 | F1 | all keys |
 | F10 or q | quit |
 
-The mouse works too: click a row to go to it, double-click a folder to open it (`..` or the folder's name at the top of the pane: up), right-click to select, scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
+The mouse works too: click a row to go to it, double-click a folder or a file to open it (`..` or the folder's name at the top of the pane: up), right-click to select, scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
 
-It is a first version: no menus, search, tabs or previews yet, and files can't be opened from it. It needs no display, but the Qt libraries must be installed (they come with the package).
+Opening a file starts the app that is the default for what the file really is, as the window does; a program disguised as a document is never opened. Where there is no desktop (a server over SSH), a text file is shown in the terminal with `less` and other files can't be opened.
+
+It is a first version: no menus, search, tabs or previews yet. It needs no display, but the Qt libraries must be installed (they come with the package).
 
 ### Open and Save windows for other apps
 

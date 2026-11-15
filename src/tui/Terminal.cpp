@@ -148,6 +148,19 @@ void Terminal::show(const Screen &screen)
     ::refresh();
 }
 
+void Terminal::suspend()
+{
+    ::def_prog_mode();
+    ::endwin();
+}
+
+void Terminal::resume()
+{
+    ::reset_prog_mode();
+    ::clearok(stdscr, TRUE); // everything is drawn again
+    ::refresh();
+}
+
 QList<Mouse> Terminal::takeMouse()
 {
     QList<Mouse> out;

@@ -23,6 +23,9 @@ public:
     QList<Key> readKeys(bool *resized);
     // What the mouse did meanwhile (filled by readKeys).
     QList<Mouse> takeMouse();
+    // Hands the terminal to another program (a pager) and takes it back.
+    void suspend();
+    void resume();
 
 private:
     int pairFor(Ink ink, Paper paper);

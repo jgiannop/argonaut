@@ -43,6 +43,7 @@ private slots:
     void hiddenFilesAndGoTo();
     void quitWaitsForTheWork();
     void mouseClicksAndDoubleClicks();
+    void opensFiles();
 
 private:
     QString make(const QString &relative, const QByteArray &content = "x");
@@ -615,11 +616,129 @@ void TestTui::mouseClicksAndDoubleClicks()
     QVERIFY(exists(m_left + "/many/file05.txt"));
 }
 
+// Enter or a double click on a file: its app on a desktop, the terminal's
+// own viewer for text where there is none; a disguised program, never.
+void TestTui::opensFiles()
+{
+    using Tui::Mouse;
+    const QString text = m_left + "/alpha.txt";
+    const QString binary = make("data.bin", QByteArrayLiteral("\x00\x01\x02\x03 not text \x00\xff"));
+    const QString disguised = make("invoice.txt", QByteArray("\x7f" "ELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x02\0\x3e\0", 20)
+                                                      + QByteArray(200, '\0'));
+    keys({Key::control('r')});
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("invoice.txt") && screen().contains("data.bin"), 10000);
+    QSignalSpy view(app.get(), &App::viewRequested);
+    const QString log = QFileInfo(qEnvironmentVariable("ARGONAUT_GIO_PROGRAM")).path() + "/gio.log";
+    auto launched = [&] {
+        QFile f(log);
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    // No desktop (a server over SSH): text is shown in the terminal.
+    qunsetenv("DISPLAY");
+    qunsetenv("WAYLAND_DISPLAY");
+    app->selectPath(text);
+    QCOMPARE(app->cursorPath(), text);
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(view.size(), 1);
+    QCOMPARE(view.first().at(0).toString(), text);
+    QCOMPARE(app->folder(0), m_left); // still here
+    app->selectPath(binary);
+    QCOMPARE(app->cursorPath(), binary);
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(view.size(), 1);
+    QVERIFY2(app->message().contains("no desktop"), qPrintable(app->message()));
+    QVERIFY(launched().isEmpty()); // no app was started
+
+    // A desktop: the app that is the default for the file's real type.
+    qputenv("DISPLAY", ":99");
+    app->selectPath(text);
+    QCOMPARE(app->cursorPath(), text);
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->message(), QStringLiteral("Opening “alpha.txt” with Test Viewer"));
+    QTRY_VERIFY_WITH_TIMEOUT(launched().contains("launch"), 5000);
+    QVERIFY(launched().contains(text));
+    QCOMPARE(view.size(), 1); // not also in the terminal
+
+    // A double click does the same as Enter.
+    QFile::remove(log);
+    screen();
+    QTest::qWait(500);
+    int row = -1;
+    {
+        Screen s(100, 24);
+        app->render(s);
+        for (int y = 3; y < 20 && row < 0; ++y) { // the list's rows, not the message line
+            if (s.line(y).left(48).contains("alpha.txt"))
+                row = y;
+        }
+    }
+    QVERIFY(row > 0);
+    app->mouse({Mouse::Press, 10, row});
+    QVERIFY(launched().isEmpty()); // one click only goes there
+    app->mouse({Mouse::Press, 10, row});
+    QTRY_VERIFY_WITH_TIMEOUT(launched().contains(text), 5000);
+
+    // A program named like a document is never opened, desktop or not.
+    QFile::remove(log);
+    app->selectPath(disguised);
+    QCOMPARE(app->cursorPath(), disguised);
+    keys({Key::of(Key::Enter)});
+    QVERIFY2(app->message().contains("program disguised as a document"), qPrintable(app->message()));
+    QTest::qWait(300);
+    QVERIFY(launched().isEmpty());
+    QCOMPARE(view.size(), 1);
+    qunsetenv("DISPLAY");
+    keys({Key::of(Key::Enter)});
+    QVERIFY(app->message().contains("program disguised as a document"));
+    QCOMPARE(view.size(), 1);
+
+    // F3 reads a text file in the terminal, wherever we are; nothing else.
+    app->selectPath(text);
+    QCOMPARE(app->cursorPath(), text);
+    keys({Key::of(Key::F3)});
+    QCOMPARE(view.size(), 2);
+    app->selectPath(binary);
+    QCOMPARE(app->cursorPath(), binary);
+    keys({Key::of(Key::F3)});
+    QCOMPARE(app->message(), QStringLiteral("“data.bin” isn't a text file"));
+    app->selectPath(m_left + "/Documents");
+    keys({Key::of(Key::F3)});
+    QCOMPARE(view.size(), 2);
+    QCOMPARE(app->folder(0), m_left);
+}
+
 int main(int argc, char **argv)
 {
     TestSupport::Sandbox sandbox;
     if (!sandbox.isValid())
         return 1;
+    // No real app is ever started: a stand-in for `gio` that names one app
+    // for every type and writes down what it is asked to launch.
+    {
+        const QString root = sandbox.path();
+        QDir().mkpath(root + "/data/applications");
+        QFile desktop(root + "/data/applications/viewer.desktop");
+        if (!desktop.open(QIODevice::WriteOnly))
+            return 1;
+        desktop.write("[Desktop Entry]\nType=Application\nName=Test Viewer\nExec=true %f\n");
+        desktop.close();
+        QFile gio(root + "/gio");
+        if (!gio.open(QIODevice::WriteOnly))
+            return 1;
+        gio.write("#!/bin/sh\n"
+                  "if [ \"$1\" = mime ]; then\n"
+                  "  printf 'Default application for \"%s\": viewer.desktop\\nRegistered applications:\\n\\tviewer.desktop\\n"
+                  "Recommended applications:\\n\\tviewer.desktop\\n' \"$2\"\n"
+                  "else\n"
+                  "  echo \"$@\" >> \"$(dirname \"$0\")/gio.log\"\n"
+                  "fi\n");
+        gio.close();
+        QFile::setPermissions(root + "/gio", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(root + "/gio"));
+        qputenv("ARGONAUT_REMEMBER_RECENT", "1");
+    }
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("argonaut-test");
     QCoreApplication::setApplicationName("tui");
