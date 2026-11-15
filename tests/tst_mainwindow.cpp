@@ -57,6 +57,8 @@ private slots:
     void dropRules();
     void dropOnTheTrashTrashes();
     void splitViewActsOnThePaneYouAreIn();
+    void showHiddenAppliesToBothPanes();
+    void tabsOfPlacesHaveTheirNames();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -421,6 +423,43 @@ void TestMainWindow::splitViewActsOnThePaneYouAreIn()
     runJob([&] { w->m_trashAct->trigger(); });
     QVERIFY(!exists(left));
     QVERIFY(exists(m_dir + "/right/stay.txt"));
+}
+
+// "Show Hidden Files" is one switch for the window: both panes follow it.
+void TestMainWindow::showHiddenAppliesToBothPanes()
+{
+    const QString left = make("left/.secret");
+    const QString right = make("right/.secret");
+    make("left/a.txt");
+    make("right/b.txt");
+    if (w->m_hiddenAct->isChecked())
+        w->m_hiddenAct->setChecked(false);
+    open(m_dir + "/left");
+    w->setSplitView(true);
+    w->activatePane(1);
+    open(m_dir + "/right");
+    QVERIFY(!w->m_panes[0].model->indexForPath(left).isValid());
+    QVERIFY(!w->m_panes[1].model->indexForPath(right).isValid());
+
+    w->m_hiddenAct->setChecked(true); // while in the second pane
+    QTRY_VERIFY(w->m_panes[1].model->indexForPath(right).isValid());
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_panes[0].model->indexForPath(left).isValid(), 3000);
+
+    w->activatePane(0);
+    w->m_hiddenAct->setChecked(false);
+    QTRY_VERIFY(!w->m_panes[0].model->indexForPath(left).isValid());
+    QTRY_VERIFY_WITH_TIMEOUT(!w->m_panes[1].model->indexForPath(right).isValid(), 3000);
+}
+
+// A tab shows the place's name, as the window title does: not "recent:///".
+void TestMainWindow::tabsOfPlacesHaveTheirNames()
+{
+    QCOMPARE(w->tabTitle(DirectoryModel::recentPath()), w->titleFor(DirectoryModel::recentPath()));
+    QCOMPARE(w->tabTitle(DirectoryModel::starredPath()), w->titleFor(DirectoryModel::starredPath()));
+    QCOMPARE(w->tabTitle(DirectoryModel::recentPath()), QStringLiteral("Recent"));
+    QDir().mkpath(Trash::homeFilesDir());
+    QCOMPARE(w->tabTitle(Trash::homeFilesDir()), QStringLiteral("Trash"));
+    QCOMPARE(w->tabTitle(m_dir), QFileInfo(m_dir).fileName());
 }
 
 #if defined(ARGONAUT_DBUS)

@@ -1,5 +1,7 @@
 #include "DiskUsageModel.h"
 
+#include "Naming.h"
+#include "StatTime.h"
 #include "Format.h"
 
 #include <QCollator>
@@ -122,7 +124,7 @@ struct Scanner
                 hardLinks.insert(key);
             }
             const qint64 used = qint64(st.st_blocks) * 512;
-            const qint64 mtime = qint64(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
+            const qint64 mtime = statMtimeMs(st);
             bytesSeen.fetchAndAddRelaxed(used);
             if (isDir && st.st_dev == device) {
                 subs.push_back({QFile::decodeName(name), mtime, used});
@@ -200,15 +202,7 @@ void fixParents(Node *node)
 
 QCollator &collator()
 {
-    static QCollator c = [] {
-        QLocale locale;
-        if (locale.language() == QLocale::C)
-            locale = QLocale(QLocale::English);
-        QCollator coll(locale);
-        coll.setNumericMode(true);
-        coll.setCaseSensitivity(Qt::CaseInsensitive);
-        return coll;
-    }();
+    static QCollator c = Naming::naturalCollator();
     return c;
 }
 

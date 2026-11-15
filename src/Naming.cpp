@@ -28,9 +28,17 @@ bool sameName(const QString &a, const QString &b)
     return a.compare(b, Qt::CaseInsensitive) == 0;
 }
 
-QCollator naturalOrder()
+QString parentOf(const QString &path)
 {
-    // In the "C" locale Qt can't sort numerically; use English rules there.
+    return QFileInfo(path).absolutePath();
+}
+
+} // namespace
+
+namespace Naming {
+
+QCollator naturalCollator()
+{
     QLocale locale;
     if (locale.language() == QLocale::C)
         locale = QLocale(QLocale::English);
@@ -40,14 +48,11 @@ QCollator naturalOrder()
     return collator;
 }
 
-QString parentOf(const QString &path)
+bool hasHiddenPart(const QString &relativePath)
 {
-    return QFileInfo(path).absolutePath();
+    const QStringList parts = relativePath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    return std::any_of(parts.cbegin(), parts.cend(), isHiddenName);
 }
-
-} // namespace
-
-namespace Naming {
 
 QString baseName(const QString &name, bool isDir, QString *extension)
 {
@@ -288,7 +293,7 @@ QList<Entry> list(const QString &folder, int depth)
         }
         entries.append(entry);
     }
-    const QCollator collator = naturalOrder();
+    const QCollator collator = Naming::naturalCollator();
     std::sort(entries.begin(), entries.end(), [&collator](const Entry &a, const Entry &b) {
         if (a.isFolder != b.isFolder)
             return a.isFolder; // sub-menus first, like the files view

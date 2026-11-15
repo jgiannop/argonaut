@@ -1,6 +1,7 @@
 #include "GitStatus.h"
 
 #include "FileJob.h"
+#include "Tools.h"
 
 #include <QDir>
 #include <QFile>
@@ -18,11 +19,7 @@ namespace {
 
 QString gitProgram()
 {
-    const QString overridden = qEnvironmentVariable("ARGONAUT_GIT_PROGRAM"); // tests
-    if (!overridden.isEmpty())
-        return overridden;
-    static const QString found = QStandardPaths::findExecutable(QStringLiteral("git"));
-    return found;
+    return Tools::find("ARGONAUT_GIT_PROGRAM", QStringLiteral("git"));
 }
 
 // Settings that make `git status` start other programs.

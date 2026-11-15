@@ -3,12 +3,25 @@
 #include "FileJob.h"
 
 #include <QList>
+#include <QCollator>
 #include <QString>
 #include <QStringList>
 
 // Name helpers shared by Select Items Matching, Batch Rename and New
 // Document (Templates). Core code: no widgets, so tests can use it.
 namespace Naming {
+
+// Natural, case-insensitive order: "file2" before "file10". In the "C"/POSIX
+// locale Qt can't sort numerically, so English rules are used there.
+QCollator naturalCollator();
+
+// Hidden by its name: a dot-file or an editor backup ("notes.txt~").
+inline bool isHiddenName(const QString &name)
+{
+    return name.startsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char('~'));
+}
+// True if any part of a relative path ("a/.git/config") is hidden.
+bool hasHiddenPart(const QString &relativePath);
 
 // Splits "Photo.tar.gz" into "Photo" + ".tar.gz" (folders and dotfiles
 // like ".bashrc" have no extension), the same way rename selects the base.

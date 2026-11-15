@@ -246,7 +246,7 @@ private:
     OperationsPanel *m_opsPanel = nullptr;
     Toast *m_toast = nullptr;
     DirectoryModel *m_model = nullptr;
-    FileFilterProxy *m_proxy = nullptr; // search filter between model and view
+    FileFilterProxy *m_proxy = nullptr; // between model and view (Open/Save: the file-type filter)
     Thumbnailer *m_thumbnailer = nullptr;
     FileItemDelegate *m_gridDelegate = nullptr; // one per view: each caches its
     FileItemDelegate *m_listDelegate = nullptr; // own sizes and layout
@@ -429,7 +429,6 @@ private:
 
     QStringList m_pendingSelection;
     QElapsedTimer m_pendingSince;
-    bool m_applyingSelection = false;
 
     // ----------------------------------------------------- split view ---
     // Each file pane has its own folder, history, model, views and state.

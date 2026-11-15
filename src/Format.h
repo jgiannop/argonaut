@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QLocale>
 #include <QString>
 
@@ -15,4 +16,14 @@ inline QString formatSize(qint64 bytes)
                           : QCoreApplication::translate("Format", "%1 bytes").arg(bytes);
     }
     return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeSIFormat);
+}
+
+// A folder for display, with ~ for the home folder (like Nautilus):
+// "/home/ann/Music" -> "~/Music".
+inline QString tildePath(const QString &path)
+{
+    const QString home = QDir::homePath();
+    if (path == home || path.startsWith(home + QLatin1Char('/')))
+        return QDir::toNativeSeparators(QLatin1Char('~') + path.mid(home.size()));
+    return QDir::toNativeSeparators(path);
 }

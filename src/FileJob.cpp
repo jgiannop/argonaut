@@ -12,6 +12,9 @@
 #include <QStorageInfo>
 #include <QThreadPool>
 
+#include <filesystem>
+#include <system_error>
+
 #if defined(Q_OS_UNIX)
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -559,7 +562,12 @@ bool FileJob::copyTree(const QString &source, const QString &target)
     }
 #else
     if (info.isSymbolicLink()) {
-        if (!QFile::link(info.symLinkTarget(), target)) {
+        // The link as it is, like the Unix branch: QFileInfo::symLinkTarget()
+        // is absolute and would point back into the original folder.
+        std::error_code failed;
+        std::filesystem::copy_symlink(std::filesystem::path(source.toStdWString()),
+                                      std::filesystem::path(target.toStdWString()), failed);
+        if (failed) {
             addError(tr("Couldn't copy the link “%1”.").arg(info.fileName()));
             return false;
         }

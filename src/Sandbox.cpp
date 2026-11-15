@@ -28,6 +28,23 @@ bool available()
     return found;
 }
 
+QStringList systemArgs()
+{
+    QStringList box = {QStringLiteral("--ro-bind"), QStringLiteral("/usr"), QStringLiteral("/usr"),
+                       QStringLiteral("--ro-bind-try"), QStringLiteral("/etc"), QStringLiteral("/etc"),
+                       QStringLiteral("--proc"), QStringLiteral("/proc"), QStringLiteral("--dev"), QStringLiteral("/dev"),
+                       QStringLiteral("--unshare-all"), QStringLiteral("--die-with-parent"), QStringLiteral("--new-session")};
+    // Merged-/usr systems: /bin, /lib… are links into /usr.
+    for (const char *link : {"bin", "sbin", "lib", "lib32", "lib64", "libx32"}) {
+        const QFileInfo info(QStringLiteral("/") + QLatin1String(link));
+        if (info.isSymLink())
+            box << QStringLiteral("--symlink") << info.symLinkTarget().mid(1) << info.filePath();
+        else if (info.isDir())
+            box << QStringLiteral("--ro-bind") << info.filePath() << info.filePath();
+    }
+    return box;
+}
+
 QByteArray run(const QString &program, const QStringList &args, const QString &file, bool *ok, int timeoutMs,
                qsizetype maxBytes)
 {
@@ -40,20 +57,8 @@ QByteArray run(const QString &program, const QStringList &args, const QString &f
     // Keep the real suffix: some tools look at it.
     const QString suffix = QFileInfo(file).suffix();
     const QString inside = QStringLiteral("/tmp/input") + (suffix.isEmpty() ? QString() : QLatin1Char('.') + suffix);
-    QStringList box = {QStringLiteral("--ro-bind"), QStringLiteral("/usr"), QStringLiteral("/usr"),
-                       QStringLiteral("--ro-bind-try"), QStringLiteral("/etc"), QStringLiteral("/etc"),
-                       QStringLiteral("--proc"), QStringLiteral("/proc"), QStringLiteral("--dev"), QStringLiteral("/dev"),
-                       QStringLiteral("--tmpfs"), QStringLiteral("/tmp"),
-                       QStringLiteral("--unshare-all"), QStringLiteral("--die-with-parent"), QStringLiteral("--new-session"),
-                       QStringLiteral("--ro-bind"), file, inside};
-    // Merged-/usr systems: /bin, /lib… are links into /usr.
-    for (const char *link : {"bin", "sbin", "lib", "lib32", "lib64", "libx32"}) {
-        const QFileInfo info(QStringLiteral("/") + QLatin1String(link));
-        if (info.isSymLink())
-            box << QStringLiteral("--symlink") << info.symLinkTarget().mid(1) << info.filePath();
-        else if (info.isDir())
-            box << QStringLiteral("--ro-bind") << info.filePath() << info.filePath();
-    }
+    QStringList box = systemArgs();
+    box << QStringLiteral("--tmpfs") << QStringLiteral("/tmp") << QStringLiteral("--ro-bind") << file << inside;
     box << tool;
     for (const QString &a : args)
         box << (a == QLatin1String("@FILE@") ? inside : a);

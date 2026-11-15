@@ -7,8 +7,10 @@
 
 #include "FileJob.h"
 #include "FileOperations.h"
+#include "Naming.h"
 #include "RecentFiles.h"
 #include "Starred.h"
+#include "StatTime.h"
 #include "Trash.h"
 
 #include <QCollator>
@@ -45,19 +47,6 @@ constexpr int FirstBatchMs = 15;    // big folders: show the first files quickly
 constexpr int BatchIntervalMs = 80; // then the rest in batches this often
 constexpr size_t BigChange = 500;   // more added/removed than this: reset instead
 
-QCollator naturalCollator()
-{
-    // The "C"/POSIX locale has no natural-number collation ("file10" would
-    // sort before "file2"); use English rules there instead.
-    QLocale locale;
-    if (locale.language() == QLocale::C)
-        locale = QLocale(QLocale::English);
-    QCollator collator(locale);
-    collator.setNumericMode(true);
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
-    return collator;
-}
-
 #if defined(Q_OS_UNIX)
 quint16 permissionBits(mode_t mode)
 {
@@ -73,14 +62,6 @@ quint16 permissionBits(mode_t mode)
     return quint16(p.toInt());
 }
 
-qint64 msecs(const struct stat &st)
-{
-#if defined(Q_OS_MACOS)
-    return qint64(st.st_mtimespec.tv_sec) * 1000 + st.st_mtimespec.tv_nsec / 1000000;
-#else
-    return qint64(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
-#endif
-}
 #endif
 
 // Reads one entry. On Unix it is one lstat (plus a stat for symlinks), not
@@ -106,12 +87,12 @@ std::optional<FileEntry> makeEntry(const QString &dir, const QString &name, cons
     }
     e.isDir = S_ISDIR(st.st_mode);
     e.size = e.isDir || S_ISLNK(st.st_mode) ? 0 : qint64(st.st_size); // broken link: 0
-    e.mtime = msecs(st);
+    e.mtime = statMtimeMs(st);
     e.permissions = permissionBits(st.st_mode);
     e.ownerId = uint(st.st_uid);
     e.groupId = uint(st.st_gid);
     // Dot-files and editor backups ("file~"); macOS also has a hidden flag.
-    e.isHidden = name.startsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char('~'));
+    e.isHidden = Naming::isHiddenName(name);
 #if defined(Q_OS_MACOS)
     e.isHidden = e.isHidden || (st.st_flags & UF_HIDDEN);
 #endif
@@ -520,7 +501,7 @@ void DirectoryModel::startScan(bool initial)
     }
     m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed, contents,
                   scanText, indexWords, filtered, typeFilter, dateFilter, now] {
-        const QCollator collator = naturalCollator();
+        const QCollator collator = Naming::naturalCollator();
         Entries batch;
         QElapsedTimer sinceSend;
         sinceSend.start();
@@ -586,8 +567,7 @@ void DirectoryModel::startScan(bool initial)
                 if (search) {
                     const QFileInfo &fi = it.fileInfo();
                     const QString name = it.fileName();
-                    const bool hidden = name.startsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char('~'));
-                    if (hidden && !showHidden)
+                    if (Naming::isHiddenName(name) && !showHidden)
                         continue;
                     if (!trash && fi.isDir() && !fi.isSymLink()) {
                         bool sameDrive = true;
@@ -665,11 +645,7 @@ void DirectoryModel::startScan(bool initial)
                 const QString &path = it.key();
                 if (emitted.contains(path) || !path.startsWith(prefix))
                     continue;
-                const QStringList parts = path.mid(prefix.size()).split(QLatin1Char('/'), Qt::SkipEmptyParts);
-                const bool hidden = std::any_of(parts.cbegin(), parts.cend(), [](const QString &p) {
-                    return p.startsWith(QLatin1Char('.')) || p.endsWith(QLatin1Char('~'));
-                });
-                if (hidden && !showHidden)
+                if (Naming::hasHiddenPart(path.mid(prefix.size())) && !showHidden)
                     continue;
                 const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
                 std::optional<FileEntry> made = makeEntry(path.left(slash), path.mid(slash + 1), collator);
@@ -987,11 +963,7 @@ void DirectoryModel::setShowHidden(bool show)
         const QStringList opened = expandedFolders();
         for (const QString &folder : opened) {
             const int skip = int(m_path.size()) + (m_path.endsWith(QLatin1Char('/')) ? 0 : 1);
-            const QStringList parts = folder.mid(skip).split(QLatin1Char('/'), Qt::SkipEmptyParts);
-            const bool hidden = std::any_of(parts.cbegin(), parts.cend(), [](const QString &p) {
-                return p.startsWith(QLatin1Char('.')) || p.endsWith(QLatin1Char('~'));
-            });
-            if (hidden)
+            if (Naming::hasHiddenPart(folder.mid(skip)))
                 collapse(folder);
         }
     }
@@ -1217,7 +1189,7 @@ void DirectoryModel::startChildScan(const QString &dir)
 {
     const quint64 generation = m_generation;
     m_pool.start([this, generation, dir] {
-        const QCollator collator = naturalCollator();
+        const QCollator collator = Naming::naturalCollator();
         Entries entries;
         QDirIterator it(dir, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
         while (it.hasNext()) {
@@ -1455,11 +1427,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
             }
             if (m_trash) {
                 // Folder it came from, with ~ for home (like Nautilus).
-                QString where = QFileInfo(e.originalPath).absolutePath();
-                const QString home = QDir::homePath();
-                if (where == home || where.startsWith(home + QLatin1Char('/')))
-                    where = QLatin1Char('~') + where.mid(home.size());
-                return e.originalPath.isEmpty() ? tr("Unknown") : QDir::toNativeSeparators(where);
+                return e.originalPath.isEmpty() ? tr("Unknown")
+                                                : tildePath(QFileInfo(e.originalPath).absolutePath());
             }
             return typeFor(e);
         case ModifiedColumn: {
@@ -1577,8 +1546,8 @@ bool DirectoryModel::isLocked(const FileEntry &e) const
     return !Access::likelyWritable(QFile::Permissions::fromInt(e.permissions), e.ownerId, e.groupId);
 }
 
-// Mime type from the name only (no file access). Cached per name pattern:
-// the part after the first dot, or the whole name ("Makefile").
+// The effective type: what the content says when it was checked and
+// disagrees with (or replaces) the name, else the type from the name.
 const QString &DirectoryModel::mimeFor(const FileEntry &e) const
 {
     switch (e.verdict) {
@@ -1643,11 +1612,7 @@ QIcon DirectoryModel::iconFor(const FileEntry &e) const
 QString DirectoryModel::searchLocation(const FileEntry &e) const
 {
     if (isVirtual()) { // the folder it's in, with ~ for home (like Nautilus)
-        const QString home = QDir::homePath();
-        QString where = e.dir;
-        if (where == home || where.startsWith(home + QLatin1Char('/')))
-            where = QLatin1Char('~') + where.mid(home.size());
-        return QDir::toNativeSeparators(where);
+        return tildePath(e.dir);
     }
     if (e.dir == m_path)
         return QFileInfo(m_path).fileName().isEmpty() ? QDir::toNativeSeparators(m_path)

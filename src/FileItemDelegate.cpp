@@ -357,8 +357,6 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
         drawCentered(painter, rect, pm);
 }
 
-// "!" in a circle at the icon's corner when the content doesn't match the
-// name: amber for a mismatch, red for a program in disguise.
 // A small gold star on the icon's top-right corner for starred items.
 void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const
 {

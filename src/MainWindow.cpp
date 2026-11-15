@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+
 #if defined(ARGONAUT_XCB)
 #include <xcb/xcb.h>
 #endif
@@ -43,6 +44,7 @@
 #include "TerminalWidget.h"
 #endif
 #include "Toast.h"
+#include "Tools.h"
 #include "UsageDelegate.h"
 #include "Trash.h"
 
@@ -843,9 +845,7 @@ void MainWindow::setupActions()
     connect(m_searchContentsAct, &QAction::toggled, this, [this](bool on) {
         QSettings().setValue("search/contents", on);
         for (int i = 0; i < m_paneCount; ++i) {
-            DirectoryModel *model = i == m_activePane ? m_model : m_panes[i].model;
-            if (model)
-                model->setSearchContents(on);
+            m_panes[i].model->setSearchContents(on);
         }
         updateFloatingBar();
     });
@@ -1648,22 +1648,16 @@ void MainWindow::updateGitBadge()
 
 void MainWindow::refreshGitAll()
 {
-    for (int i = 0; i < m_paneCount; ++i) {
-        DirectoryModel *model = i == m_activePane ? m_model : m_panes[i].model;
-        if (model)
-            model->refreshGit();
-    }
+    for (int i = 0; i < m_paneCount; ++i)
+        m_panes[i].model->refreshGit();
 }
 
 void MainWindow::resetGitEverywhere()
 {
     for (QWidget *widget : QApplication::topLevelWidgets()) {
         if (auto *window = qobject_cast<MainWindow *>(widget)) {
-            for (int i = 0; i < window->m_paneCount; ++i) {
-                DirectoryModel *model = i == window->m_activePane ? window->m_model : window->m_panes[i].model;
-                if (model)
-                    model->resetGit();
-            }
+            for (int i = 0; i < window->m_paneCount; ++i)
+                window->m_panes[i].model->resetGit();
         }
     }
 }
@@ -1671,11 +1665,10 @@ void MainWindow::resetGitEverywhere()
 void MainWindow::applyExpandFolders()
 {
     for (int i = 0; i < m_paneCount; ++i) {
-        const bool active = i == m_activePane;
-        DirectoryModel *model = active ? m_model : m_panes[i].model;
-        const bool grid = active ? m_grid : m_panes[i].grid;
-        if (model)
-            model->setTreeEnabled(m_expandFolders && !grid);
+        // The widgets in Pane never change; its state is only current for
+        // the pane that isn't active (the active one's lives in the members).
+        const bool grid = i == m_activePane ? m_grid : m_panes[i].grid;
+        m_panes[i].model->setTreeEnabled(m_expandFolders && !grid);
     }
     if (m_detailView)
         m_detailView->viewport()->update();
@@ -1726,9 +1719,7 @@ bool MainWindow::handleTreeKey(QKeyEvent *key)
 void MainWindow::applyListColumns()
 {
     for (int i = 0; i < m_paneCount; ++i) {
-        QTreeView *view = i == m_activePane ? m_detailView : m_panes[i].detailView;
-        if (!view)
-            continue;
+        QTreeView *view = m_panes[i].detailView;
         QHeaderView *header = view->header();
         for (int column : {DirectoryModel::OwnerColumn, DirectoryModel::GroupColumn,
                            DirectoryModel::PermissionsColumn}) {
@@ -2371,7 +2362,7 @@ void MainWindow::sendByEmail(const QStringList &paths)
     QStringList args;
     for (const QString &p : paths)
         args << QStringLiteral("--attach") << p;
-    const QString program = qEnvironmentVariable("ARGONAUT_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
+    const QString program = Tools::program("ARGONAUT_EMAIL_PROGRAM", QStringLiteral("xdg-email"));
     if (!QProcess::startDetached(program, args))
         showMessage(tr("Couldn't open the email app (xdg-email is missing)"));
 }
@@ -2390,7 +2381,7 @@ void MainWindow::setAsBackground(const QString &image)
         return;
     }
     const QString uri = QUrl::fromLocalFile(copy).toString();
-    const QString gsettings = qEnvironmentVariable("ARGONAUT_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
+    const QString gsettings = Tools::program("ARGONAUT_GSETTINGS_PROGRAM", QStringLiteral("gsettings"));
     bool ok = true;
     for (const char *key : {"picture-uri", "picture-uri-dark"}) {
         ok = QProcess::execute(gsettings, {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.background"),
@@ -2609,7 +2600,7 @@ void MainWindow::chooseShare(const QString &serverAddress)
             base += QLatin1Char('/');
         connectToServer(base + QString::fromUtf8(QUrl::toPercentEncoding(share)));
     });
-    list->start(qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio")), {QStringLiteral("list"), serverAddress});
+    list->start(Tools::gio(), {QStringLiteral("list"), serverAddress});
 }
 
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
@@ -2636,7 +2627,7 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
         });
         return;
     }
-    const QString program = qEnvironmentVariable("ARGONAUT_EJECT_PROGRAM", QStringLiteral("gio"));
+    const QString program = Tools::program("ARGONAUT_EJECT_PROGRAM", QStringLiteral("gio"));
     auto *process = new QProcess(this);
     connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
         if (status == QProcess::NormalExit && code == 0) {
@@ -2947,9 +2938,7 @@ void MainWindow::setGridMode(bool grid)
         QItemSelection rows;
         for (const QModelIndex &index : selectedViewIndexes())
             rows.select(index, index.siblingAtColumn(DirectoryModel::ColumnCount - 1));
-        m_applyingSelection = true;
         m_view->selectionModel()->select(rows, QItemSelectionModel::ClearAndSelect);
-        m_applyingSelection = false;
     }
     m_viewStack->setCurrentWidget(next);
     m_view = next;
@@ -3103,6 +3092,9 @@ void MainWindow::applyZoom()
 void MainWindow::setShowHidden(bool show)
 {
     m_showHidden = show;
+    // One switch for the window: the other pane follows too.
+    for (int i = 0; i < m_paneCount; ++i)
+        m_panes[i].model->setShowHidden(show);
     updateFilter();
     updateFloatingBar();
 }
@@ -3546,9 +3538,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     if (m_renameEdit && isFileViewport(watched) && event->type() == QEvent::Paint)
         updateRenameGeometry(); // item positions are final when the view paints
-    if (m_viewStack && watched == m_viewStack && event->type() == QEvent::Resize)
-        fitListColumns();
     if (m_viewStack && watched == m_viewStack && event->type() == QEvent::Resize) {
+        fitListColumns();
         if (m_floatingBar->isVisible())
             positionFloatingBar();
         if (m_opsPanel->isVisible()) {
@@ -4031,6 +4022,17 @@ void MainWindow::onJobFinished(FileJob *job)
     }
 }
 
+// Defined for every build (the header declares it always); only the Open/Save
+// part needs D-Bus.
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+#if defined(ARGONAUT_DBUS)
+    if (m_chooser) // after Qt's own show(), which clears the property
+        QTimer::singleShot(0, this, &MainWindow::attachToChooserParent);
+#endif
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (!m_ops->activeJobs().isEmpty()) {
@@ -4092,12 +4094,10 @@ void MainWindow::applyPendingSelection()
     if (!first.isValid())
         return;
 
-    m_applyingSelection = true;
     QItemSelectionModel *model = m_view->selectionModel();
     model->select(selection, QItemSelectionModel::ClearAndSelect);
     model->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
     m_view->scrollTo(first);
-    m_applyingSelection = false;
 
     if (found == m_pendingSelection.size())
         m_pendingSelection.clear();
@@ -4942,12 +4942,10 @@ void MainWindow::showNextConflict()
 
 // ---------------------------------------------------------------- tabs ---
 
+// A tab is named like the window: "Recent", "Trash", a server's name.
 QString MainWindow::tabTitle(const QString &path) const
 {
-    if (!Trash::filesDirOf(path).isEmpty() && Trash::isFilesDir(path))
-        return tr("Trash");
-    const QString name = QFileInfo(path).fileName();
-    return name.isEmpty() ? QDir::toNativeSeparators(path) : name;
+    return titleFor(path);
 }
 
 void MainWindow::addTabCloseButton(int index)
@@ -5468,15 +5466,6 @@ void MainWindow::attachToChooserParent()
     xcb_change_property(x11->connection(), XCB_PROP_MODE_REPLACE, xcb_window_t(winId()), XCB_ATOM_WM_TRANSIENT_FOR,
                         XCB_ATOM_WINDOW, 32, 1, &parent);
     xcb_flush(x11->connection());
-#endif
-}
-
-void MainWindow::showEvent(QShowEvent *event)
-{
-    QMainWindow::showEvent(event);
-#if defined(ARGONAUT_DBUS)
-    if (m_chooser) // after Qt's own show(), which clears the property
-        QTimer::singleShot(0, this, &MainWindow::attachToChooserParent);
 #endif
 }
 

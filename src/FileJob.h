@@ -15,7 +15,8 @@ class QFileInfo;
 class QThreadPool;
 
 // One item to transfer: `source` goes into `targetDir` as `targetName`
-// (an existing name is never overwritten: "name (copy).ext" is used instead).
+// (an existing name is never overwritten: the job asks, or keeps both as
+// "name (copy).ext" when it isn't allowed to ask).
 struct Transfer
 {
     QString source;

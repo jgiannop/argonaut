@@ -1,5 +1,7 @@
 #include "OpenWith.h"
 
+#include "Tools.h"
+
 #include <QFile>
 #include <QLocale>
 #include <QProcess>
@@ -8,11 +10,6 @@
 
 namespace {
 
-QString gioProgram()
-{
-    return qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio"));
-}
-
 } // namespace
 
 namespace OpenWith {
@@ -20,7 +17,7 @@ namespace OpenWith {
 bool isSupported()
 {
 #if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    return !QStandardPaths::findExecutable(gioProgram()).isEmpty();
+    return !QStandardPaths::findExecutable(Tools::gio()).isEmpty();
 #else
     return false;
 #endif
@@ -107,7 +104,7 @@ QList<App> appsFor(const QString &mimeType, QString *defaultId)
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C")); // parseable English output
     gio.setProcessEnvironment(env);
-    gio.start(gioProgram(), {QStringLiteral("mime"), mimeType});
+    gio.start(Tools::gio(), {QStringLiteral("mime"), mimeType});
     if (!gio.waitForFinished(3000))
         return apps;
     const Apps found = parseGioMime(QString::fromUtf8(gio.readAllStandardOutput()));
@@ -139,14 +136,14 @@ bool launch(const App &app, const QStringList &files)
 {
     QStringList args{QStringLiteral("launch"), app.desktopFile};
     args += files;
-    return QProcess::startDetached(gioProgram(), args);
+    return QProcess::startDetached(Tools::gio(), args);
 }
 
 bool setDefault(const QString &mimeType, const App &app)
 {
     if (mimeType.isEmpty() || app.id.isEmpty())
         return false;
-    return QProcess::execute(gioProgram(), {QStringLiteral("mime"), mimeType, app.id}) == 0;
+    return QProcess::execute(Tools::gio(), {QStringLiteral("mime"), mimeType, app.id}) == 0;
 }
 
 } // namespace OpenWith

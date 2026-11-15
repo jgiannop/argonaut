@@ -1,5 +1,7 @@
 #include "PortalConfig.h"
 
+#include "Tools.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -178,10 +180,7 @@ bool disable(QString *error)
 
 void restartPortal()
 {
-    QString program = qEnvironmentVariable("ARGONAUT_SYSTEMCTL_PROGRAM");
-    if (program.isEmpty())
-        program = QStringLiteral("systemctl");
-    QProcess::startDetached(program, {QStringLiteral("--user"), QStringLiteral("try-restart"),
+    QProcess::startDetached(Tools::program("ARGONAUT_SYSTEMCTL_PROGRAM", QStringLiteral("systemctl")), {QStringLiteral("--user"), QStringLiteral("try-restart"),
                                       QStringLiteral("xdg-desktop-portal.service")});
 }
 

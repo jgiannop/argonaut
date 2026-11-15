@@ -171,26 +171,16 @@ QImage runProgram(const Thumbnailer::Program &program, const QString &path, cons
 #endif
     if (sandbox) {
         const QString home = QDir::homePath();
-        QStringList box = {
-            "--ro-bind", "/usr", "/usr",
-            "--ro-bind-try", "/etc", "/etc",
+        QStringList box = Sandbox::systemArgs();
+        box << QStringList{
             "--ro-bind-try", "/var/cache/fontconfig", "/var/cache/fontconfig",
             "--ro-bind-try", home + "/.cache/fontconfig", home + "/.cache/fontconfig",
             "--ro-bind-try", home + "/.cache/gstreamer-1.0", home + "/.cache/gstreamer-1.0",
-            "--proc", "/proc", "--dev", "/dev", "--chdir", "/",
+            "--chdir", "/",
             "--setenv", "GIO_USE_VFS", "local", "--setenv", "HOME", home,
-            "--unshare-all", "--die-with-parent", "--new-session",
             "--bind", work.path(), "/tmp",
             "--ro-bind", path, input,
         };
-        // Merged-/usr systems: /bin, /lib… are links into /usr.
-        for (const char *link : {"bin", "sbin", "lib", "lib32", "lib64", "libx32"}) {
-            const QFileInfo info(QStringLiteral("/") + QLatin1String(link));
-            if (info.isSymLink())
-                box << "--symlink" << info.symLinkTarget().mid(1) << info.filePath();
-            else if (info.isDir())
-                box << "--ro-bind" << info.filePath() << info.filePath();
-        }
         process.start(QStringLiteral("bwrap"), box + args);
     } else {
         process.start(args.takeFirst(), args);
@@ -258,8 +248,7 @@ bool Thumbnailer::sandboxAvailable()
 #if defined(Q_OS_LINUX)
     if (qEnvironmentVariable("ARGONAUT_THUMBNAIL_SANDBOX") == QLatin1String("0"))
         return false; // tests with fake thumbnailers outside /usr
-    static const bool found = !QStandardPaths::findExecutable("bwrap").isEmpty();
-    return found;
+    return Sandbox::available();
 #else
     return false;
 #endif

@@ -13,6 +13,12 @@ namespace Sandbox {
 
 bool available(); // bwrap is installed
 
+// The bwrap arguments every box starts with: read-only /usr and /etc (and
+// the /bin, /lib… links of merged-/usr systems), /proc, /dev, no network or
+// other namespaces shared, and the box dies with us. The caller adds its own
+// /tmp and the one file to read.
+QStringList systemArgs();
+
 // The environment for a program that reads an untrusted file: only what it
 // needs to run (PATH, HOME, the language and time zone, the XDG cache and
 // data folders). Everything else stays out, so secrets in the environment

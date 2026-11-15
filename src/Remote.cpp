@@ -1,5 +1,7 @@
 #include "Remote.h"
 
+#include "Tools.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
@@ -9,11 +11,6 @@
 #include <QUrl>
 
 namespace {
-
-QString gioProgram()
-{
-    return qEnvironmentVariable("ARGONAUT_GIO_PROGRAM", QStringLiteral("gio"));
-}
 
 // "host=x,user=y,port=22" -> {host: x, user: y, port: 22}; values are
 // %-encoded by GVfs (a share name with a comma, a WebDAV prefix with '/').
@@ -202,7 +199,7 @@ void Mounter::start(bool anonymous)
     if (anonymous)
         args << QStringLiteral("--anonymous");
     args << m_address;
-    process->start(gioProgram(), args);
+    process->start(Tools::gio(), args);
 }
 
 void Mounter::write(const QString &line)
@@ -365,7 +362,7 @@ void Mounter::resolveLocalPath()
         m_done = true;
         emit finished(true, QString(), QString());
     });
-    info->start(gioProgram(), {QStringLiteral("info"), m_address});
+    info->start(Tools::gio(), {QStringLiteral("info"), m_address});
 }
 
 void unmount(const QString &address, QObject *context, const std::function<void(bool, const QString &)> &done)
@@ -384,7 +381,7 @@ void unmount(const QString &address, QObject *context, const std::function<void(
         process->deleteLater();
         done(false, QObject::tr("The gio tool isn't installed"));
     });
-    process->start(gioProgram(), {QStringLiteral("mount"), QStringLiteral("-u"), address});
+    process->start(Tools::gio(), {QStringLiteral("mount"), QStringLiteral("-u"), address});
 }
 
 } // namespace Remote

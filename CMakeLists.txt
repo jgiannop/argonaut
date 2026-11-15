@@ -61,6 +61,9 @@ qt_add_library(argonaut_core STATIC
     src/Organizer.h
     src/Organizer.cpp
     src/Sandbox.h
+    src/StatTime.h
+    src/Tools.h
+    src/Tools.cpp
     src/Sandbox.cpp
     src/MediaInfo.h
     src/MediaInfo.cpp

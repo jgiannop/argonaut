@@ -1,6 +1,7 @@
 #include "ContentSearch.h"
 
 #include "DirectoryModel.h"
+#include "Tools.h"
 
 #include <QFile>
 #include <QMimeDatabase>
@@ -15,11 +16,7 @@ namespace {
 
 QString trackerProgram()
 {
-    const QString overridden = qEnvironmentVariable("ARGONAUT_TRACKER_PROGRAM");
-    if (!overridden.isEmpty())
-        return overridden;
-    static const QString found = QStandardPaths::findExecutable(QStringLiteral("tracker3"));
-    return found;
+    return Tools::find("ARGONAUT_TRACKER_PROGRAM", QStringLiteral("tracker3"));
 }
 
 // Runs one SPARQL query; each result row is one line "  <value>".
