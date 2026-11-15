@@ -187,7 +187,7 @@ Notes:
 
 ### Open and Save windows for other apps
 
-Apps like Firefox, Signal and Chrome ask the desktop for their **Open** and **Save** windows. **Preferences → Open and Save Windows → Use Argonaut for Open and Save** makes those Argonaut windows: your sidebar, bookmarks, search and views, the app's file types and options at the bottom, and a question before a file is replaced. They also open faster than GNOME's own (about 0.1 s here).
+Apps like Firefox, Signal and Chrome ask the desktop for their **Open** and **Save** windows. **Preferences → Open and Save Windows → Use Argonaut for Open and Save** makes those Argonaut windows: your sidebar, bookmarks, search and views, the app's file types and options at the bottom, and a question before a file is replaced. They also open much faster than GNOME's own on X11: about 0.2 s against several seconds for a big folder ([measurements and the reason](docs/compare.md)).
 
 It works with the `.deb` package (the desktop portal only looks in `/usr/share`), and it changes only your own `~/.config/xdg-desktop-portal/` settings; the same button switches back.
 
