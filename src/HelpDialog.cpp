@@ -561,7 +561,9 @@ Argonaut are on; any other is <b>off until you switch it on</b>.</p>
 <p>An extension is an ordinary program: it can do anything you can do, including reading and changing your
 files. Switch on only extensions from people you trust.</p>
 <h2>Adding one</h2>
-<p>Put the extension's folder in <code>~/.local/share/argonaut/extensions</code>, then open the Extensions window and
+<p>Put the extension's folder in <code>~/.local/share/argonaut/extensions</code> (the window's
+<b>Open My Extensions Folder</b> button takes you there; it is empty until you add one, because the extensions
+that come with Argonaut are part of the program), then open the Extensions window and
 switch it on. To remove it, switch it off and delete its folder.</p>
 <p>If an extension stops working, Argonaut carries on without it: its marks disappear and everything else
 works as before.</p>

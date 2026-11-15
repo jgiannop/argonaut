@@ -70,8 +70,19 @@ ExtensionsDialog::ExtensionsDialog(QWidget *parent) : QDialog(parent)
     outer->addWidget(scroll, 1);
     outer->addSpacing(8);
 
+    // Two kinds, in two places: say so, or the user's (empty) folder looks wrong.
+    auto *where = new QLabel(tr("Extensions that come with Argonaut are part of the program. Ones you add yourself "
+                                "go in your extensions folder (%1), which is empty until you add one.")
+                                 .arg(QDir::toNativeSeparators(Extensions::userFolder())),
+                             this);
+    where->setObjectName("prefHint");
+    where->setWordWrap(true);
+    where->setTextFormat(Qt::PlainText);
+    outer->addWidget(where);
+    outer->addSpacing(6);
+
     auto *buttons = new QHBoxLayout;
-    auto *folder = new QPushButton(tr("Open Extensions Folder"), this);
+    auto *folder = new QPushButton(tr("Open My Extensions Folder"), this);
     auto *look = new QPushButton(tr("Look Again"), this);
     auto *guide = new QPushButton(tr("About Extensions"), this);
     for (QPushButton *b : {folder, look, guide}) {
@@ -79,7 +90,7 @@ ExtensionsDialog::ExtensionsDialog(QWidget *parent) : QDialog(parent)
         b->setCursor(Qt::PointingHandCursor);
         b->setAutoDefault(false);
     }
-    folder->setToolTip(tr("Extensions you add go in %1").arg(QDir::toNativeSeparators(Extensions::userFolder())));
+    folder->setToolTip(tr("Where extensions you add yourself go. The ones that come with Argonaut aren't there."));
     look->setToolTip(tr("Read the extension folders again"));
     buttons->addWidget(folder);
     buttons->addWidget(look);
