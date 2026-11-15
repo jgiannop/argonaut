@@ -68,14 +68,28 @@ GitStatus::~GitStatus()
     }
 }
 
-bool GitStatus::enabled()
+QList<GitStatus::Mark> GitStatus::marks(const QString &folder) const
 {
-    return QSettings().value(QStringLiteral("git/badges"), true).toBool();
-}
-
-void GitStatus::setEnabled(bool on)
-{
-    QSettings().setValue(QStringLiteral("git/badges"), on);
+    QList<Mark> out;
+    if (m_root.isEmpty() || m_blocked || folder.isEmpty())
+        return out;
+    const QString prefix = folder.endsWith(QLatin1Char('/')) ? folder : folder + QLatin1Char('/');
+    for (auto it = m_files.constBegin(); it != m_files.constEnd(); ++it) {
+        if (it.key().startsWith(prefix))
+            out.append({it.key().mid(prefix.size()), it.value(), m_untrackedDirs.contains(it.key())});
+    }
+    for (auto it = m_folders.constBegin(); it != m_folders.constEnd(); ++it) {
+        if (it.key().startsWith(prefix) && !m_files.contains(it.key()))
+            out.append({it.key().mid(prefix.size()), it.value(), false});
+    }
+    // The folder itself is (inside) one git doesn't track: all of it is new.
+    for (QString dir = folder; dir.size() > m_root.size(); dir = QFileInfo(dir).path()) {
+        if (m_untrackedDirs.contains(dir)) {
+            out.append({QString(), Untracked, true});
+            break;
+        }
+    }
+    return out;
 }
 
 QString GitStatus::findRoot(const QString &folder)
@@ -140,7 +154,7 @@ void GitStatus::setFolder(const QString &folder)
         return;
     m_folder = folder;
     QString root;
-    if (enabled() && !gitProgram().isEmpty() && !folder.isEmpty() && !isNetworkFilesystem(folder))
+    if (!gitProgram().isEmpty() && !folder.isEmpty() && !isNetworkFilesystem(folder))
         root = findRoot(folder);
     if (root == m_root && !root.isEmpty())
         return; // another folder of the same repository: same status

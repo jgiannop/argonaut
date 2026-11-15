@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QList>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
@@ -56,9 +57,17 @@ public:
     // State of an item, by full path.
     State state(const QString &path) const;
 
-    // Preferences: "git/badges" (on by default). Off: no repository is looked for.
-    static bool enabled();
-    static void setEnabled(bool on);
+    // Every marked item inside `folder`, at any depth, by its path relative
+    // to the folder. `deep` marks a folder git lists only as a whole (not
+    // tracked): everything inside it has the same state. A folder that is
+    // itself inside such a folder gets one mark with an empty path.
+    struct Mark
+    {
+        QString relativePath;
+        State state = None;
+        bool deep = false;
+    };
+    QList<Mark> marks(const QString &folder) const;
 
     // The repository that contains `folder` (its top folder), or empty.
     static QString findRoot(const QString &folder);

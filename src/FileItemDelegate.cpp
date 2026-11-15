@@ -179,7 +179,7 @@ void FileItemDelegate::paintGrid(QPainter *painter, const QStyleOptionViewItem &
     paintIcon(painter, iconRect, index);
     paintContentBadge(painter, iconRect, index);
     paintAccessBadges(painter, iconRect, index);
-    paintGitTag(painter, iconRect, index);
+    paintBadgeTag(painter, iconRect, index);
     paintStarBadge(painter, iconRect, index);
 
     painter->setPen(m_theme.fg);
@@ -235,9 +235,11 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
         const int left = iconRect.right() + 12;
         QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
                        option.rect.height());
-        const int git = index.data(DirectoryModel::GitStatusRole).toInt();
-        if (git != 0) { // the git letter at the right end of the name cell
-            const QString letter = gitLetter(git);
+        const QVariant mark = index.data(DirectoryModel::BadgeRole);
+        if (mark.isValid()) { // an extension's letter at the right end of the name cell
+            const Extensions::Badge badge = mark.value<Extensions::Badge>();
+            const QString letter = badge.text;
+            const QColor markColor = badgeColor(badge.color);
             QFont bold = option.font;
             bold.setBold(true);
             const int w = QFontMetrics(bold).horizontalAdvance(letter.isEmpty() ? QStringLiteral("M") : letter) + 10;
@@ -247,11 +249,11 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
             if (letter.isEmpty()) { // a folder with changes inside: a dot
                 painter->setRenderHint(QPainter::Antialiasing);
                 painter->setPen(Qt::NoPen);
-                painter->setBrush(gitColor(git));
+                painter->setBrush(markColor);
                 painter->drawEllipse(QRectF(tag.center().x() - 3, tag.center().y() - 2, 6, 6));
             } else {
                 painter->setFont(bold);
-                painter->setPen(gitColor(git));
+                painter->setPen(markColor);
                 painter->drawText(tag, Qt::AlignCenter, letter);
             }
             painter->restore();
@@ -383,58 +385,44 @@ void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, 
     painter->restore();
 }
 
-QString FileItemDelegate::gitLetter(int state)
-{
-    switch (GitStatus::State(state)) {
-    case GitStatus::Modified:
-        return QStringLiteral("M");
-    case GitStatus::Added:
-        return QStringLiteral("A");
-    case GitStatus::Untracked:
-        return QStringLiteral("U");
-    case GitStatus::Conflicted:
-        return QStringLiteral("C");
-    default:
-        return {}; // Changed (a folder): a dot
-    }
-}
-
-QColor FileItemDelegate::gitColor(int state) const
+QColor FileItemDelegate::badgeColor(const QString &name) const
 {
     // libadwaita's palette: brighter shades on dark themes.
-    switch (GitStatus::State(state)) {
-    case GitStatus::Added:
-    case GitStatus::Untracked:
+    if (name == QLatin1String("success"))
         return m_theme.dark ? QColor("#57e389") : QColor("#26a269");
-    case GitStatus::Conflicted:
+    if (name == QLatin1String("error"))
         return m_theme.dark ? QColor("#f66151") : QColor("#c01c28");
-    default:
-        return m_theme.dark ? QColor("#ffa348") : QColor("#c64600");
-    }
+    if (name == QLatin1String("accent"))
+        return m_theme.accent;
+    if (name == QLatin1String("dim"))
+        return m_theme.dark ? QColor("#9a9996") : QColor("#77767b");
+    return m_theme.dark ? QColor("#ffa348") : QColor("#c64600"); // warning
 }
 
 // Grid: a small round tag at the icon's bottom-left (next to a link arrow).
-void FileItemDelegate::paintGitTag(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const
+void FileItemDelegate::paintBadgeTag(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const
 {
-    const int git = index.data(DirectoryModel::GitStatusRole).toInt();
-    if (git == 0)
+    const QVariant mark = index.data(DirectoryModel::BadgeRole);
+    if (!mark.isValid())
         return;
+    const Extensions::Badge badge = mark.value<Extensions::Badge>();
+    const QColor markColor = badgeColor(badge.color);
     const qreal d = qBound(10, iconRect.width() * 3 / 8, 20);
     qreal left = iconRect.left() - 3;
     if (index.data(DirectoryModel::SymLinkRole).toBool())
         left += d + 1;
-    const QString letter = gitLetter(git);
+    const QString letter = badge.text;
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     if (letter.isEmpty()) {
         const qreal dot = d * 0.55;
         painter->setPen(QPen(m_theme.window, 1.5));
-        painter->setBrush(gitColor(git));
+        painter->setBrush(markColor);
         painter->drawEllipse(QRectF(left + (d - dot) / 2, iconRect.bottom() - d + 3 + (d - dot) / 2, dot, dot));
     } else {
         const QRectF r(left, iconRect.bottom() - d + 3, d, d);
         painter->setPen(QPen(m_theme.window, 1.5));
-        painter->setBrush(gitColor(git));
+        painter->setBrush(markColor);
         painter->drawEllipse(r);
         QFont font = painter->font();
         font.setBold(true);

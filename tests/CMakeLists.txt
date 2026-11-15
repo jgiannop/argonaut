@@ -24,7 +24,7 @@ function(argonaut_test name)
         add_test(NAME ${name} COMMAND tst_${name})
     endif()
     set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;ARGONAUT_KEYSTORE=file;${ARG_ENV}"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;ARGONAUT_KEYSTORE=file;ARGONAUT_EXTENSIONS_PATH=;${ARG_ENV}"
         TIMEOUT ${ARG_TIMEOUT}
     )
 endfunction()
@@ -45,6 +45,12 @@ argonaut_test(thumbnailer)
 argonaut_test(preview)
 argonaut_test(mediainfo)
 argonaut_test(git ENV GIT_CONFIG_NOSYSTEM=1)
+if(TARGET argonaut-git-extension)
+    argonaut_test(extensions ENV GIT_CONFIG_NOSYSTEM=1)
+    target_compile_definitions(tst_extensions PRIVATE GIT_EXTENSION_FOLDER="${CMAKE_BINARY_DIR}/extensions"
+        FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
+    add_dependencies(tst_extensions argonaut-git-extension)
+endif()
 
 # Places, bookmarks, other programs.
 argonaut_test(places)

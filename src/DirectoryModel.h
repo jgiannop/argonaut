@@ -11,7 +11,7 @@
 #include <QTimer>
 
 #include "ContentType.h"
-#include "GitStatus.h"
+#include "Extensions.h"
 
 #include <vector>
 
@@ -101,7 +101,7 @@ public:
         TreeDepthRole,               // int: 0 = in the open folder, 1 = one level in…; -1 = no tree
         ExpandedRole,                // bool: an opened folder (tree)
         ExpandableRole,              // bool: a folder that can be opened in place (tree)
-        GitStatusRole,               // int, GitStatus::State (in a git repository)
+        BadgeRole,                   // Extensions::Badge: an extension's mark (invalid QVariant: none)
     };
     // Places that aren't folders: lists of items from anywhere. setPath()
     // takes these paths; they're never on disk.
@@ -168,11 +168,11 @@ public:
     QStringList expandedFolders() const { return QStringList(m_expanded.cbegin(), m_expanded.cend()); }
 
     // Git status of the folder's repository (badges, branch in the path bar).
-    const GitStatus *git() const { return m_git; }
+    // The folder extensions are asked about (empty in the Trash and in places).
+    QString extensionsFolder() const { return m_extFolder; }
     // Soon: files may have changed where nothing is watched (deeper in the
     // repository). The window calls it when it's activated and after jobs.
-    void refreshGit();
-    void resetGit(); // look for the repository again (Preferences switched badges)
+    void refreshExtensions(); // files may have changed without the folder saying so
 
     void setShowHidden(bool show);
     bool showHidden() const { return m_showHidden; }
@@ -205,7 +205,7 @@ public:
     Qt::DropActions supportedDragActions() const override;
 
 signals:
-    void gitChanged();                    // badges, branch or repository changed
+    void extensionInfoChanged();          // what extensions say about the folder changed
     void loaded(const QString &path);     // first complete listing of `path`
     void folderGone(const QString &path); // the open folder was deleted or moved
 
@@ -293,7 +293,8 @@ private:
     bool m_searchContents = false;
     TypeFilter m_typeFilter = TypeFilter::Any;
     DateFilter m_dateFilter = DateFilter::Any;
-    GitStatus *m_git = nullptr;
+    void watchForExtensions(const QString &folder);
+    QString m_extFolder;
     QSet<QString> m_expanded; // opened folders (tree); each is also in m_dirs
     QTimer m_rescanTimer;
     QThreadPool m_pool;

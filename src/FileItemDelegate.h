@@ -64,9 +64,8 @@ private:
     void paintAccessBadges(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     // Git: a coloured letter (M, A, U, C) or a dot for folders with changes.
     // List: at the right end of the name; grid: a tag on the icon.
-    static QString gitLetter(int state);
-    QColor gitColor(int state) const;
-    void paintGitTag(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
+    QColor badgeColor(const QString &name) const;
+    void paintBadgeTag(QPainter *painter, const QRect &iconRect, const QModelIndex &index) const;
     QStringList wrappedName(const QString &name, const QStyleOptionViewItem &option,
                             int width) const;
 

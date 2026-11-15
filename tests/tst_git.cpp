@@ -64,8 +64,7 @@ private slots:
     void conflictsAndRenames();
     void blocksRiskyConfig();
     void notARepository();
-    void switchedOff();
-    void modelRole();
+    void marksForAFolder();
 
 private:
     QTemporaryDir *m_tmp = nullptr;
@@ -90,7 +89,6 @@ void TestGit::init()
     writeFile(m_repo + "/docs/guide.md", "# Guide\n");
     QVERIFY(git(m_repo, {"add", "."}));
     QVERIFY(git(m_repo, {"commit", "-q", "-m", "first"}));
-    GitStatus::setEnabled(true);
 }
 
 void TestGit::cleanup()
@@ -250,37 +248,42 @@ void TestGit::notARepository()
     QCOMPARE(status.state(QDir::cleanPath(m_tmp->path()) + "/repo"), GitStatus::None);
 }
 
-void TestGit::switchedOff()
-{
-    GitStatus::setEnabled(false);
-    GitStatus status;
-    status.setFolder(m_repo);
-    QVERIFY(!status.inRepository());
-    GitStatus::setEnabled(true);
-}
-
-void TestGit::modelRole()
+// What the Git extension sends for a folder: every marked item inside it by
+// relative path, untracked folders as "deep" (all of their content), and one
+// empty-path mark when the folder itself is inside an untracked one.
+void TestGit::marksForAFolder()
 {
     writeFile(m_repo + "/tracked.txt", "two\n");
-    DirectoryModel model;
-    QSignalSpy loaded(&model, &DirectoryModel::loaded);
-    QSignalSpy gitChanged(&model, &DirectoryModel::gitChanged);
-    model.setPath(m_repo);
-    QVERIFY(loaded.wait(10000));
-    QTRY_VERIFY_WITH_TIMEOUT(model.git()->ready(), 8000);
-    const QModelIndex tracked = model.indexForPath(m_repo + "/tracked.txt");
-    QCOMPARE(tracked.data(DirectoryModel::GitStatusRole).toInt(), int(GitStatus::Modified));
-    QVERIFY(tracked.data(Qt::ToolTipRole).toString().contains("Git: modified"));
-    QCOMPARE(model.indexForPath(m_repo + "/src").data(DirectoryModel::GitStatusRole).toInt(), int(GitStatus::None));
-    // A change in the open folder refreshes the badges with the listing.
-    writeFile(m_repo + "/top.txt");
-    QTRY_COMPARE_WITH_TIMEOUT(model.indexForPath(m_repo + "/top.txt").data(DirectoryModel::GitStatusRole).toInt(),
-                              int(GitStatus::Untracked), 8000);
-    // Deeper changes aren't watched: the window asks again (activation, jobs).
-    writeFile(m_repo + "/src/main.cpp", "int main() { return 1; }\n");
-    model.refreshGit();
-    QTRY_COMPARE_WITH_TIMEOUT(model.indexForPath(m_repo + "/src").data(DirectoryModel::GitStatusRole).toInt(),
-                              int(GitStatus::Changed), 8000);
+    writeFile(m_repo + "/src/extra.cpp");
+    writeFile(m_repo + "/fresh/deep/b.txt");
+    GitStatus status;
+    status.setFolder(m_repo);
+    QVERIFY(waitReady(status));
+    auto find = [](const QList<GitStatus::Mark> &marks, const QString &path) {
+        for (const GitStatus::Mark &m : marks) {
+            if (m.relativePath == path)
+                return m;
+        }
+        return GitStatus::Mark{QStringLiteral("?"), GitStatus::None, false};
+    };
+    const QList<GitStatus::Mark> top = status.marks(m_repo);
+    QCOMPARE(find(top, "tracked.txt").state, GitStatus::Modified);
+    QCOMPARE(find(top, "src").state, GitStatus::Changed);
+    QVERIFY(!find(top, "src").deep);
+    QCOMPARE(find(top, "src/extra.cpp").state, GitStatus::Untracked);
+    QCOMPARE(find(top, "fresh").state, GitStatus::Untracked);
+    QVERIFY(find(top, "fresh").deep);
+    QCOMPARE(find(top, "docs").state, GitStatus::None); // nothing changed there
+
+    const QList<GitStatus::Mark> src = status.marks(m_repo + "/src");
+    QCOMPARE(src.size(), 1);
+    QCOMPARE(src.first().relativePath, QStringLiteral("extra.cpp"));
+
+    const QList<GitStatus::Mark> inside = status.marks(m_repo + "/fresh/deep");
+    QCOMPARE(inside.size(), 1);
+    QCOMPARE(inside.first().relativePath, QString());
+    QCOMPARE(inside.first().state, GitStatus::Untracked);
+    QVERIFY(inside.first().deep);
 }
 
 int main(int argc, char **argv)

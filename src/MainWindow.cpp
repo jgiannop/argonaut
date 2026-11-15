@@ -1189,43 +1189,14 @@ void MainWindow::updateGitBadge()
 {
     if (inBackground() || !m_pathBar)
         return;
-    const GitStatus *git = m_pane->model ? m_pane->model->git() : nullptr;
-    if (!git || !git->inRepository()) {
-        m_pathBar->setGitInfo(QString(), 0, QString());
-        return;
-    }
-    QString tip = tr("Git repository: %1").arg(QDir::toNativeSeparators(git->root()));
-    QString branch = git->branch();
-    if (git->blocked()) {
-        branch = tr("git: off");
-        tip += QLatin1Char('\n') + tr("Not checked: this repository's settings would run programs.");
-    } else if (git->tooSlow()) {
-        branch = tr("git: too big");
-        tip += QLatin1Char('\n') + tr("Not checked: git took too long for this repository.");
-    } else if (!git->ready()) {
-        branch = QStringLiteral("…");
-    } else {
-        tip += QLatin1Char('\n') + (git->changeCount() == 0 ? tr("No changes")
-                                     : git->changeCount() == 1 ? tr("1 changed item")
-                                                                : tr("%1 changed items").arg(git->changeCount()));
-    }
-    m_pathBar->setGitInfo(branch, git->blocked() || git->tooSlow() ? 0 : git->changeCount(), tip);
+    const QString folder = m_pane->model ? m_pane->model->extensionsFolder() : QString();
+    const Extensions::Info info = folder.isEmpty() ? Extensions::Info() : Extensions::Host::instance()->info(folder);
+    m_pathBar->setExtensionInfo(info.text, info.tooltip, info.icon);
 }
 
 void MainWindow::refreshGitAll()
 {
-    for (int i = 0; i < m_paneCount; ++i)
-        m_panes[i].model->refreshGit();
-}
-
-void MainWindow::resetGitEverywhere()
-{
-    for (QWidget *widget : QApplication::topLevelWidgets()) {
-        if (auto *window = qobject_cast<MainWindow *>(widget)) {
-            for (int i = 0; i < window->m_paneCount; ++i)
-                window->m_panes[i].model->resetGit();
-        }
-    }
+    Extensions::Host::instance()->refreshAll();
 }
 
 void MainWindow::applyExpandFolders()
@@ -1450,7 +1421,7 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     m_pane->proxy = new FileFilterProxy(this);
     m_pane->proxy->setSourceModel(m_pane->model);
     m_pane->model->setShowHidden(m_showHidden);
-    connect(m_pane->model, &DirectoryModel::gitChanged, this, [this, index] {
+    connect(m_pane->model, &DirectoryModel::extensionInfoChanged, this, [this, index] {
         if (index == paneIndex() && !inBackground())
             updateGitBadge();
     });

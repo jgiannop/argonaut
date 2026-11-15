@@ -544,7 +544,27 @@ default (names only, ask, or read when needed) and the model, and shows what you
 </ul>
 <p>For safety, a repository whose own settings would make Git run programs (for example one you downloaded)
 is not checked; the path bar then says “git: off”. Very big repositories that take too long are skipped too.
-Turn the badges off in Preferences if you don't want them.</p>
+This is the Git extension: switch it off in <b>Preferences → Extensions</b> if you don't want it
+(see <a href="topic:extensions">Extensions</a>).</p>
+)"));
+
+    add("extensions", tr("Extensions"), tr(R"(
+<p>Extensions are small programs that add to what the file views show: a mark on some files (a letter or a
+dot, like Git's <b>M</b>) and a short text at the right end of the path bar. Git support is an extension that
+comes with Argonaut.</p>
+<h2>Switching them on and off</h2>
+<p><b>Preferences → Extensions</b> lists every extension found, with a switch for each. Those that come with
+Argonaut are on; any other is <b>off until you switch it on</b>.</p>
+<p>An extension is an ordinary program: it can do anything you can do, including reading and changing your
+files. Switch on only extensions from people you trust.</p>
+<h2>Adding one</h2>
+<p>Put the extension's folder in <code>~/.local/share/argonaut/extensions</code>, then open Preferences and
+switch it on. To remove it, switch it off and delete its folder.</p>
+<p>If an extension stops working, Argonaut carries on without it: its marks disappear and everything else
+works as before.</p>
+<h2>Writing one</h2>
+<p>An extension can be written in any language. The guide is <code>docs/extensions.md</code> in Argonaut's
+source, with a complete example.</p>
 )"));
 
 #if defined(ARGONAUT_TERMINAL)

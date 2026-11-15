@@ -140,11 +140,12 @@ DirectoryModel::DirectoryModel(QObject *parent)
             emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {StarredRole});
     });
     m_contentPool.setMaxThreadCount(1); // reading file heads: one disk stream
-    m_git = new GitStatus(this);
-    connect(m_git, &GitStatus::changed, this, [this] {
+    connect(Extensions::Host::instance(), &Extensions::Host::folderChanged, this, [this](const QString &folder) {
+        if (folder != m_extFolder || m_extFolder.isEmpty())
+            return;
         if (!m_rows.empty())
-            emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {GitStatusRole, Qt::ToolTipRole});
-        emit gitChanged();
+            emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {BadgeRole, Qt::ToolTipRole});
+        emit extensionInfoChanged();
     });
     m_contentTimer.setSingleShot(true);
     m_contentTimer.setInterval(30); // batch requests from painting
@@ -192,6 +193,8 @@ DirectoryModel::DirectoryModel(QObject *parent)
 
 DirectoryModel::~DirectoryModel()
 {
+    if (!m_extFolder.isEmpty()) // no signal from here: the window may be half gone
+        Extensions::Host::instance()->unwatch(m_extFolder);
     ++m_generation; // ask running jobs to stop
     m_pool.clear();
     m_pool.waitForDone();
@@ -257,7 +260,7 @@ void DirectoryModel::removeWatch(const QString &dir)
 
 void DirectoryModel::folderChanged()
 {
-    m_git->refresh(); // a file changed: its git state may have too
+    refreshExtensions(); // a file changed: what extensions say about it may have too
     if (isVirtual())
         scheduleRescan(); // the list's file changed (or something next to it)
     else if (!QFileInfo(m_path).isDir())
@@ -288,12 +291,12 @@ void DirectoryModel::setPath(const QString &path)
         const QString list = m_place == Place::Recent ? RecentFiles::filePath() : Starred::instance().filePath();
         m_dirs = {QFileInfo(list).absolutePath()};
         QDir().mkpath(m_dirs.first());
-        m_git->setFolder(QString()); // items from anywhere: no repository
+        watchForExtensions(QString()); // items from anywhere: not a folder to ask about
         relist();
         return;
     }
     m_trash = Trash::isFilesDir(path);
-    m_git->setFolder(m_trash ? QString() : path);
+    watchForExtensions(m_trash ? QString() : path);
     m_dirs = m_trash ? Trash::filesDirs() : QStringList{path};
     if (!m_dirs.contains(path))
         m_dirs.prepend(path);
@@ -1091,17 +1094,24 @@ int DirectoryModel::depthOf(const FileEntry &e) const
     return int(QStringView(e.dir).mid(skip).count(QLatin1Char('/'))) + 1;
 }
 
-void DirectoryModel::refreshGit()
+void DirectoryModel::refreshExtensions()
 {
-    m_git->refresh();
+    if (!m_extFolder.isEmpty())
+        Extensions::Host::instance()->refresh(m_extFolder);
 }
 
-void DirectoryModel::resetGit()
+void DirectoryModel::watchForExtensions(const QString &folder)
 {
-    const QString path = m_path;
-    m_git->setFolder(QString()); // look again: the setting may have changed
-    if (!isVirtual() && !m_trash)
-        m_git->setFolder(path);
+    if (folder == m_extFolder)
+        return;
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString old = m_extFolder;
+    m_extFolder = folder;
+    if (!folder.isEmpty())
+        host->watch(folder); // before letting go of the old one: programs keep running
+    if (!old.isEmpty())
+        host->unwatch(old);
+    emit extensionInfoChanged();
 }
 
 // ---------------------------------------------------------------- tree ---
@@ -1474,8 +1484,12 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
         return isLocked(e);
     case OwnerIdRole:
         return e.ownerId;
-    case GitStatusRole:
-        return int(m_git->state(e.path()));
+    case BadgeRole: {
+        if (m_extFolder.isEmpty())
+            return {};
+        const Extensions::Badge badge = Extensions::Host::instance()->badge(m_extFolder, e.path());
+        return badge.valid ? QVariant::fromValue(badge) : QVariant();
+    }
     case TreeDepthRole:
         return isTreeActive() ? depthOf(e) : -1;
     case ExpandedRole:
@@ -1499,24 +1513,10 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
                 extra << (QFileInfo::exists(target) ? tr("Link to %1").arg(shown)
                                                     : tr("Broken link to %1").arg(shown));
             }
-            switch (m_git->state(e.path())) {
-            case GitStatus::Modified:
-                extra << tr("Git: modified");
-                break;
-            case GitStatus::Added:
-                extra << tr("Git: added");
-                break;
-            case GitStatus::Untracked:
-                extra << tr("Git: not tracked yet");
-                break;
-            case GitStatus::Conflicted:
-                extra << tr("Git: merge conflict");
-                break;
-            case GitStatus::Changed:
-                extra << tr("Git: changes inside");
-                break;
-            case GitStatus::None:
-                break;
+            if (!m_extFolder.isEmpty()) {
+                const Extensions::Badge badge = Extensions::Host::instance()->badge(m_extFolder, e.path());
+                if (badge.valid && !badge.tooltip.isEmpty())
+                    extra << badge.tooltip;
             }
             if (isLocked(e))
                 extra << (Access::hasOwners() ? tr("Read-only (owner: %1)").arg(Access::userName(e.ownerId))

@@ -26,7 +26,8 @@ public:
     void startEditing();
     QToolButton *menuButton() const { return m_menuButton; }
     // The git branch pill ("main · 3"), hidden when `branch` is empty.
-    void setGitInfo(const QString &branch, int changes, const QString &tooltip);
+    // An extension's text for the folder (Git: the branch), at the right end.
+    void setExtensionInfo(const QString &text, const QString &tooltip, const QString &icon);
 
 signals:
     void pathActivated(const QString &path);
@@ -51,7 +52,8 @@ private:
     QHBoxLayout *m_crumbLayout;
     QLineEdit *m_edit;
     QToolButton *m_menuButton;
-    QToolButton *m_gitBadge;
+    QToolButton *m_gitBadge; // the extension text (named after its first user)
+    QString m_infoIcon;
     QList<QList<QWidget *>> m_groups; // a crumb button + its trailing "/"
     bool m_pressed = false;
     QPoint m_pressPos;

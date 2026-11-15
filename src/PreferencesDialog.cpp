@@ -3,7 +3,7 @@
 #include "Claude.h"
 #include "DefaultFileManager.h"
 #include "KeyStore.h"
-#include "GitStatus.h"
+#include "Extensions.h"
 #include "MainWindow.h"
 #if defined(ARGONAUT_DBUS)
 #include "PortalConfig.h"
@@ -14,6 +14,7 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QLineEdit>
+#include <QDir>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QCheckBox>
@@ -204,27 +205,44 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addWidget(expand);
     layout->addWidget(expandHint);
 
-    // Git badges in repositories.
+    // Extensions: programs that add marks and information to the views.
     layout->addSpacing(18);
-    auto *gitHeading = new QLabel(tr("Git"), this);
-    gitHeading->setObjectName("prefHeading");
-    auto *gitCheck = new QCheckBox(tr("Show Git status in repositories"), this);
-    gitCheck->setObjectName("prefCheck");
-    gitCheck->setChecked(GitStatus::enabled());
-    auto *gitHint = new QLabel(tr("Marks changed (M), added (A), new (U) and conflicting (C) files, and shows "
-                                  "the branch in the path bar. Repositories whose settings would run "
-                                  "programs are left alone."),
-                               this);
-    gitHint->setObjectName("prefHint");
-    gitHint->setWordWrap(true);
-    connect(gitCheck, &QCheckBox::toggled, this, [](bool on) {
-        GitStatus::setEnabled(on);
-        MainWindow::resetGitEverywhere();
-    });
-    layout->addWidget(gitHeading);
+    auto *extHeading = new QLabel(tr("Extensions"), this);
+    extHeading->setObjectName("prefHeading");
+    layout->addWidget(extHeading);
     layout->addSpacing(4);
-    layout->addWidget(gitCheck);
-    layout->addWidget(gitHint);
+    Extensions::Host *extensions = Extensions::Host::instance();
+    extensions->rescan(); // one put in the folder since the last look
+    const QList<Extensions::Manifest> found = extensions->extensions();
+    for (const Extensions::Manifest &m : found) {
+        auto *check = new QCheckBox(m.version.isEmpty() ? m.name : tr("%1 (%2)").arg(m.name, m.version), this);
+        check->setObjectName("prefCheck");
+        check->setChecked(m.isUsable() && extensions->isEnabled(m.id));
+        check->setEnabled(m.isUsable());
+        QStringList lines;
+        if (!m.isUsable())
+            lines << tr("Can't be used. %1").arg(m.problem);
+        if (!m.description.isEmpty())
+            lines << m.description;
+        if (!m.builtIn)
+            lines << tr("Not part of Argonaut: %1").arg(QDir::toNativeSeparators(m.folder));
+        auto *hint = new QLabel(lines.join(QLatin1Char('\n')), this);
+        hint->setObjectName("prefHint");
+        hint->setWordWrap(true);
+        hint->setTextFormat(Qt::PlainText);
+        const QString id = m.id;
+        connect(check, &QCheckBox::toggled, this, [id](bool on) { Extensions::Host::instance()->setEnabled(id, on); });
+        layout->addWidget(check);
+        layout->addWidget(hint);
+    }
+    auto *extHint = new QLabel(tr("An extension is a program: it can do anything you can, so switch on only "
+                                  "those you trust. Extensions you add go in %1.")
+                                   .arg(QDir::toNativeSeparators(Extensions::userFolder())),
+                               this);
+    extHint->setObjectName("prefHint");
+    extHint->setWordWrap(true);
+    extHint->setTextFormat(Qt::PlainText);
+    layout->addWidget(extHint);
 
     // Default file manager: Argonaut or Nautilus, switchable both ways.
     layout->addSpacing(18);

@@ -50,6 +50,8 @@ qt_add_library(argonaut_core STATIC
     src/Access.cpp
     src/GitStatus.h
     src/GitStatus.cpp
+    src/Extensions.h
+    src/Extensions.cpp
     src/ContentSearch.h
     src/ContentSearch.cpp
     src/Remote.h
@@ -204,6 +206,24 @@ set_target_properties(argonaut PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
 )
+
+# ---------------------------------------------------------- extensions ---
+# Extensions are separate programs (src/Extensions.h, docs/extensions.md).
+# Git is the one that comes with Argonaut. A build folder gets
+# extensions/git/extension.json next to the program, pointing at the program
+# just built; the installed one points at the installed program.
+include(GNUInstallDirs)
+if(UNIX)
+    qt_add_executable(argonaut-git-extension extensions/git/main.cpp)
+    target_link_libraries(argonaut-git-extension PRIVATE argonaut_core)
+    set(ARGONAUT_GIT_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-git-extension")
+    configure_file(extensions/git/extension.json.in ${CMAKE_CURRENT_BINARY_DIR}/extensions/git/extension.json @ONLY)
+    set(ARGONAUT_GIT_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-git-extension")
+    configure_file(extensions/git/extension.json.in ${CMAKE_CURRENT_BINARY_DIR}/install/git/extension.json @ONLY)
+    install(TARGETS argonaut-git-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/git/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/git)
+endif()
 
 # ------------------------------------------------------------- install ---
 # `cmake --install build/release` (the release preset installs into ~/.local):

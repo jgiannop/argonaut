@@ -1,0 +1,9 @@
+{
+    "id": "git",
+    "name": "Git",
+    "description": "Marks changed (M), added (A), new (U) and conflicting (C) files in Git repositories, and shows the branch in the path bar. Repositories whose settings would run programs are left alone.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "exec": ["@ARGONAUT_GIT_EXTENSION_EXE@"]
+}

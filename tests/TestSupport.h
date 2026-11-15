@@ -37,6 +37,9 @@ public:
         qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
         // Never the real keyring.
         qputenv("ARGONAUT_KEYSTORE", "file");
+        // Never the extensions installed on this computer (a test names its own).
+        if (!qEnvironmentVariableIsSet("ARGONAUT_EXTENSIONS_PATH"))
+            qputenv("ARGONAUT_EXTENSIONS_PATH", "");
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
             qputenv("QT_QPA_PLATFORM", "offscreen");
     }

@@ -87,17 +87,21 @@ void PathBar::setTheme(const Theme &theme)
 {
     m_theme = theme;
     m_menuButton->setIcon(glyphIcon(Glyph::Kebab, theme.fg));
-    m_gitBadge->setIcon(glyphIcon(Glyph::Branch, theme.dimFg));
+    m_gitBadge->setIcon(m_infoIcon == QLatin1String("branch") ? glyphIcon(Glyph::Branch, theme.dimFg) : QIcon());
     rebuild();
 }
 
-void PathBar::setGitInfo(const QString &branch, int changes, const QString &tooltip)
+void PathBar::setExtensionInfo(const QString &text, const QString &tooltip, const QString &icon)
 {
-    if (branch.isEmpty()) {
+    if (text.isEmpty()) {
         m_gitBadge->hide();
         return;
     }
-    m_gitBadge->setText(changes > 0 ? QStringLiteral("%1 · %2").arg(branch).arg(changes) : branch);
+    if (icon != m_infoIcon) {
+        m_infoIcon = icon;
+        m_gitBadge->setIcon(icon == QLatin1String("branch") ? glyphIcon(Glyph::Branch, m_theme.dimFg) : QIcon());
+    }
+    m_gitBadge->setText(text);
     m_gitBadge->setToolTip(tooltip);
     m_gitBadge->show();
 }

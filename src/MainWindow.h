@@ -455,14 +455,13 @@ private:
     // Only the list shows them: switching to the grid closes every folder.
     bool m_expandFolders = false;
     void applyExpandFolders(); // to every pane's model
-    void updateGitBadge();     // the branch pill in the path bar
-    void refreshGitAll();      // every pane: files may have changed elsewhere
+    void updateGitBadge();     // the extension text in the path bar (Git: the branch)
+    void refreshGitAll();      // extensions look again: files may have changed elsewhere
     bool handleTreeKey(QKeyEvent *key);
 public:
     // Preferences: turn expandable folders on or off in every window.
     static void setExpandFoldersEverywhere(bool on);
     // Preferences: git badges turned on or off.
-    static void resetGitEverywhere();
 private:
     // Rename, move and trash need a folder you can change: checked exactly,
     // once per folder of the selected items.
