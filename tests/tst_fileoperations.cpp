@@ -13,6 +13,8 @@
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QStorageInfo>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
@@ -347,12 +349,16 @@ void TestFileOperations::cancelRemovesPartialCopy()
     QDir().mkpath(m_dir + "/dest");
 
     FileJob *job = m_ops->copy({m_dir + "/huge.bin"}, m_dir + "/dest");
-    // Direct: cancel on the worker thread, mid-copy. A queued cancel could
-    // arrive after a fast disk (CI) had already copied the whole file.
-    connect(job, &FileJob::progressChanged, job, [job] {
-        if (job->progress().bytesDone > (20 << 20))
-            job->cancel();
-    }, Qt::DirectConnection);
+    // Watch the byte count from here and cancel as soon as 20 MiB are copied.
+    // Not from progressChanged: it is sent at most every few milliseconds, and
+    // a fast disk (CI) copied the whole file between two of them, so the
+    // cancel came after the copy was complete. The job can't be deleted
+    // meanwhile: that needs this thread's event loop.
+    QElapsedTimer waited;
+    waited.start();
+    while (job->progress().bytesDone <= (20 << 20) && waited.elapsed() < 30000)
+        QThread::yieldCurrentThread();
+    job->cancel();
     const Outcome o = waitForJob();
 
     QVERIFY(o.canceled);
