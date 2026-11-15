@@ -182,6 +182,9 @@ public:
     Qt::SortOrder sortOrder() const { return m_sortOrder; }
 
     QModelIndex indexForPath(const QString &path, int column = 0) const;
+    // What the model knows about an item's real type, from an index of this
+    // model or of a proxy over it (the roles pass through).
+    static ContentType::Result contentResult(const QModelIndex &index);
     QString filePath(const QModelIndex &index) const;
     QString fileName(const QModelIndex &index) const;
     bool isDir(const QModelIndex &index) const;

@@ -1546,6 +1546,15 @@ bool DirectoryModel::isLocked(const FileEntry &e) const
     return !Access::likelyWritable(QFile::Permissions::fromInt(e.permissions), e.ownerId, e.groupId);
 }
 
+ContentType::Result DirectoryModel::contentResult(const QModelIndex &index)
+{
+    ContentType::Result result;
+    result.nameMime = index.data(NameMimeRole).toString();
+    result.contentMime = index.data(ContentMimeRole).toString();
+    result.verdict = ContentType::Verdict(index.data(VerdictRole).toInt());
+    return result;
+}
+
 // The effective type: what the content says when it was checked and
 // disagrees with (or replaces) the name, else the type from the name.
 const QString &DirectoryModel::mimeFor(const FileEntry &e) const

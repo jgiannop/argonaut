@@ -319,10 +319,7 @@ void FileItemDelegate::paintIcon(QPainter *painter, const QRect &rect,
         {
             // The real type picks the thumbnailer (a PDF named .bin still gets
             // one); a program in disguise is never handed to one.
-            ContentType::Result real;
-            real.nameMime = index.data(DirectoryModel::NameMimeRole).toString();
-            real.contentMime = index.data(DirectoryModel::ContentMimeRole).toString();
-            real.verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+            const ContentType::Result real = DirectoryModel::contentResult(index);
             const QString mime = real.verdict == ContentType::Verdict::Dangerous
                                      ? QString()
                                      : ContentType::effectiveMime(real);

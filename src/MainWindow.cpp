@@ -796,10 +796,7 @@ void MainWindow::setupActions()
         const QStringList paths = selectedPaths();
         if (paths.isEmpty())
             return;
-        // Unstar only if everything selected is starred already.
-        bool all = true;
-        for (const QString &p : paths)
-            all = all && Starred::instance().isStarred(p);
+        const bool all = selectionIsStarred(); // unstar only if everything is starred
         Starred::instance().setStarred(paths, !all);
         showMessage(all ? (paths.size() == 1 ? tr("Unstarred") : tr("%1 items unstarred").arg(paths.size()))
                         : (paths.size() == 1 ? tr("Starred") : tr("%1 items starred").arg(paths.size())));
@@ -1511,10 +1508,7 @@ void MainWindow::showCommandPalette()
     if (!m_palette)
         m_palette = new CommandPalette(this);
     updateEditActions();
-    bool allStarred = !selectedPaths().isEmpty();
-    for (const QString &p : selectedPaths())
-        allStarred = allStarred && Starred::instance().isStarred(p);
-    m_starAct->setText(allStarred ? tr("Unstar") : tr("Star"));
+    m_starAct->setText(selectionIsStarred() ? tr("Unstar") : tr("Star"));
 
     QList<CommandPalette::Command> commands;
     QSet<QAction *> seen{m_paletteAct};
@@ -3802,23 +3796,12 @@ void MainWindow::showContextMenu(const QPoint &pos)
             if (!fixed.isEmpty())
                 menu->addAction(tr("Rename to “%1”").arg(fixed), this, [this, path] { fixExtension(path); });
         }
-        if (!m_model->isDir(toSource(index)) && OpenWith::isSupported()) {
-            QStringList files;
-            for (const QString &path : selectedPaths()) {
-                if (!QFileInfo(path).isDir())
-                    files << path;
-            }
-            if (!files.isEmpty())
-                menu->addMenu(openWithMenu(files));
-        }
+        const QStringList files = selectedFiles();
+        if (!m_model->isDir(toSource(index)) && OpenWith::isSupported() && !files.isEmpty())
+            menu->addMenu(openWithMenu(files));
 #if defined(Q_OS_LINUX)
         {
             // Send by Email… (files only) and Set as Background (one image).
-            QStringList files;
-            for (const QString &path : selectedPaths()) {
-                if (!QFileInfo(path).isDir())
-                    files << path;
-            }
             if (!files.isEmpty() && files.size() == selectedPaths().size() && !m_model->isTrash())
                 menu->addAction(tr("Send by Email…"), this, [this, files] { sendByEmail(files); });
             static const QMimeDatabase mimeDb;
@@ -3843,10 +3826,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
             menu->addAction(m_compressAct);
         }
         menu->addSeparator();
-        bool allStarred = true;
-        for (const QString &p : selectedPaths())
-            allStarred = allStarred && Starred::instance().isStarred(p);
-        m_starAct->setText(allStarred ? tr("Unstar") : tr("Star"));
+        m_starAct->setText(selectionIsStarred() ? tr("Unstar") : tr("Star"));
         menu->addAction(m_starAct);
         if (m_model->place() == DirectoryModel::Place::Recent)
             menu->addAction(m_removeRecentAct);
@@ -3895,14 +3875,31 @@ void MainWindow::showContextMenu(const QPoint &pos)
     menu->popup(m_view->viewport()->mapToGlobal(pos));
 }
 
+// The selected items that aren't folders.
+QStringList MainWindow::selectedFiles() const
+{
+    QStringList files;
+    for (const QString &path : selectedPaths()) {
+        if (!QFileInfo(path).isDir())
+            files << path;
+    }
+    return files;
+}
+
+// True when something is selected and all of it is starred.
+bool MainWindow::selectionIsStarred() const
+{
+    const QStringList paths = selectedPaths();
+    return !paths.isEmpty() && std::all_of(paths.cbegin(), paths.cend(), [](const QString &path) {
+        return Starred::instance().isStarred(path);
+    });
+}
+
 QStringList MainWindow::selectedArchives() const
 {
     QStringList archives;
     for (const QModelIndex &index : selectedViewIndexes()) {
-        ContentType::Result r;
-        r.nameMime = index.data(DirectoryModel::NameMimeRole).toString();
-        r.contentMime = index.data(DirectoryModel::ContentMimeRole).toString();
-        r.verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
+        const ContentType::Result r = DirectoryModel::contentResult(index);
         // The real type: a ".zip" that is really 7z still extracts; a
         // program named ".zip" doesn't.
         if (r.verdict == ContentType::Verdict::Dangerous || m_model->isDir(toSource(index))
@@ -5153,11 +5150,7 @@ void MainWindow::typeAheadFind()
 
 QString MainWindow::effectiveMimeAt(const QModelIndex &sourceIndex) const
 {
-    ContentType::Result r;
-    r.nameMime = sourceIndex.data(DirectoryModel::NameMimeRole).toString();
-    r.contentMime = sourceIndex.data(DirectoryModel::ContentMimeRole).toString();
-    r.verdict = ContentType::Verdict(sourceIndex.data(DirectoryModel::VerdictRole).toInt());
-    return ContentType::effectiveMime(r);
+    return ContentType::effectiveMime(DirectoryModel::contentResult(sourceIndex));
 }
 
 bool MainWindow::quickLookVisible() const
@@ -5244,12 +5237,7 @@ QMenu *MainWindow::openWithMenu(const QStringList &files)
         QAction *act = menu->addAction(appIcon(app), app.id == defaultId
                                                          ? tr("%1 (default)").arg(app.name)
                                                          : app.name);
-        connect(act, &QAction::triggered, this, [this, app, files] {
-            if (OpenWith::launch(app, files) && (rememberOpened(files), true))
-                showMessage(tr("Opening with %1").arg(app.name));
-            else
-                showMessage(tr("Couldn't start %1").arg(app.name));
-        });
+        connect(act, &QAction::triggered, this, [this, app, files] { launchWith(app, files); });
     }
     if (!apps.isEmpty())
         menu->addSeparator();
@@ -5270,10 +5258,18 @@ void MainWindow::openWithOther(const QStringList &files)
         return;
     if (dialog.makeDefault())
         OpenWith::setDefault(mime, app);
-    if (OpenWith::launch(app, files) && (rememberOpened(files), true))
-        showMessage(tr("Opening with %1").arg(app.name));
-    else
+    launchWith(app, files);
+}
+
+// Starts `app` with the files, says so, and adds them to Recent.
+void MainWindow::launchWith(const OpenWith::App &app, const QStringList &files)
+{
+    if (!OpenWith::launch(app, files)) {
         showMessage(tr("Couldn't start %1").arg(app.name));
+        return;
+    }
+    rememberOpened(files);
+    showMessage(tr("Opening with %1").arg(app.name));
 }
 
 // ------------------------------------------------------ real file types ---

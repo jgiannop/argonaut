@@ -5,6 +5,7 @@
 
 #include "FileOperations.h"
 #include "Trash.h"
+#include "TestSupport.h"
 
 #include <QApplication>
 #include <QDir>
@@ -24,16 +25,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace {
+using TestSupport::Outcome;
 
-struct Outcome
-{
-    FileJob::Kind kind = FileJob::Kind::Copy;
-    QList<TransferResult> results;
-    QStringList errors;
-    bool canceled = false;
-    bool userAction = true;
-};
+namespace {
 
 void writeFile(const QString &path, qint64 size, bool random = true)
 {
@@ -142,26 +136,9 @@ void TestFileOperations::cleanup()
     QDir(m_dir).removeRecursively();
 }
 
-// Runs the event loop until the next job finishes.
 Outcome TestFileOperations::waitForJob()
 {
-    Outcome outcome;
-    bool done = false;
-    QEventLoop loop;
-    connect(m_ops, &FileOperations::jobFinished, &loop, [&](FileJob *job) {
-        outcome.kind = job->kind();
-        outcome.results = job->results();
-        outcome.errors = job->errors();
-        outcome.canceled = job->isCanceled();
-        outcome.userAction = job->property(FileOperations::UserActionProperty).toBool();
-        done = true;
-        loop.quit();
-    });
-    QTimer::singleShot(120000, &loop, &QEventLoop::quit);
-    loop.exec();
-    if (!done)
-        qWarning("timed out waiting for a file job");
-    return outcome;
+    return TestSupport::waitForJob(m_ops);
 }
 
 void TestFileOperations::answerConflicts(QList<FileJob::Resolution> answers)
@@ -882,20 +859,9 @@ void TestFileOperations::replaceWithItemFromInside()
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir sandbox;
+    TestSupport::Sandbox sandbox; // before QApplication
     if (!sandbox.isValid())
         return 1;
-    // Must happen before QApplication / QStandardPaths are used.
-    qputenv("HOME", QFile::encodeName(sandbox.path() + "/home"));
-    qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
-    qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
-    // Never look at (or empty) the trash folders of real mounted drives.
-    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
-    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-    QDir().mkpath(sandbox.path() + "/home");
-    QDir().mkpath(sandbox.path() + "/data");
-
     QApplication app(argc, argv);
     TestFileOperations test(sandbox.path());
     return QTest::qExec(&test, argc, argv);

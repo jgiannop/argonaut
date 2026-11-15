@@ -18,6 +18,9 @@ class QVBoxLayout;
 class QWindow;
 #endif
 
+namespace OpenWith {
+struct App;
+}
 class DirectoryModel;
 class DiskUsageModel;
 class QuickLook;
@@ -114,6 +117,7 @@ private:
     void openFile(const QString &path);
     void fixExtension(const QString &path);
     void openWithOther(const QStringList &files);
+    void launchWith(const OpenWith::App &app, const QStringList &files);
     void typeAheadFind();
 
     // Tabs: one shared view/model; each tab keeps its folder, history,
@@ -173,6 +177,8 @@ private:
 
     // File operations
     QStringList selectedPaths() const;
+    QStringList selectedFiles() const; // without folders
+    bool selectionIsStarred() const;   // something is selected, all of it starred
     void rememberOpened(const QStringList &files); // add to the shared Recent list
     // Quick Look: Space shows the current item; it follows the current item
     // while open.

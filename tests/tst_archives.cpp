@@ -2,6 +2,7 @@
 // temporary sandbox, including the trash used by undo.
 
 #include "FileOperations.h"
+#include "TestSupport.h"
 
 #include <QApplication>
 #include <QDir>
@@ -20,15 +21,9 @@
 using Format = FileJob::ArchiveFormat;
 Q_DECLARE_METATYPE(FileJob::ArchiveFormat)
 
-namespace {
+using TestSupport::Outcome;
 
-struct Outcome
-{
-    FileJob::Kind kind = FileJob::Kind::Copy;
-    QList<TransferResult> results;
-    QStringList errors;
-    bool canceled = false;
-};
+namespace {
 
 void writeFile(const QString &path, const QByteArray &data)
 {
@@ -151,22 +146,7 @@ void TestArchives::cleanup()
 
 Outcome TestArchives::waitForJob()
 {
-    Outcome outcome;
-    bool done = false;
-    QEventLoop loop;
-    connect(m_ops, &FileOperations::jobFinished, &loop, [&](FileJob *job) {
-        outcome.kind = job->kind();
-        outcome.results = job->results();
-        outcome.errors = job->errors();
-        outcome.canceled = job->isCanceled();
-        done = true;
-        loop.quit();
-    });
-    QTimer::singleShot(120000, &loop, &QEventLoop::quit);
-    loop.exec();
-    if (!done)
-        qWarning("timed out waiting for a file job");
-    return outcome;
+    return TestSupport::waitForJob(m_ops);
 }
 
 void TestArchives::makeSample(const QString &root)
@@ -424,19 +404,9 @@ void TestArchives::removableDrivesAreSynced()
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir sandbox;
+    TestSupport::Sandbox sandbox; // before QApplication
     if (!sandbox.isValid())
         return 1;
-    qputenv("HOME", QFile::encodeName(sandbox.path() + "/home"));
-    qputenv("XDG_DATA_HOME", QFile::encodeName(sandbox.path() + "/data"));
-    qputenv("XDG_CONFIG_HOME", QFile::encodeName(sandbox.path() + "/config"));
-    qputenv("XDG_CACHE_HOME", QFile::encodeName(sandbox.path() + "/cache"));
-    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1"); // never touch real drives' trash
-    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-    QDir().mkpath(sandbox.path() + "/home");
-    QDir().mkpath(sandbox.path() + "/data");
-
     QApplication app(argc, argv);
     TestArchives test(sandbox.path());
     return QTest::qExec(&test, argc, argv);

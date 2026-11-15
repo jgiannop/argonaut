@@ -10,6 +10,7 @@
 #include "DirectoryModel.h"
 #include "FileOperations.h"
 #include "MainWindow.h"
+#include "TestSupport.h"
 #include "Trash.h"
 
 #if defined(ARGONAUT_DBUS)
@@ -557,20 +558,11 @@ void TestMainWindow::chooserCancelAnswersOnce()
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir sandbox;
+    TestSupport::Sandbox sandbox; // before QApplication
     if (!sandbox.isValid())
         return 1;
-    // Must happen before QApplication / QStandardPaths / QSettings are used.
     const QString root = sandbox.path();
-    qputenv("HOME", QFile::encodeName(root + "/home"));
-    qputenv("XDG_DATA_HOME", QFile::encodeName(root + "/data"));
-    qputenv("XDG_CONFIG_HOME", QFile::encodeName(root + "/config"));
-    qputenv("XDG_CACHE_HOME", QFile::encodeName(root + "/cache"));
-    // Never look at (or empty) the trash folders of real mounted drives.
-    qputenv("ARGONAUT_TRASH_HOME_ONLY", "1");
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-    for (const char *name : {"/home", "/data", "/config", "/cache"})
-        QDir().mkpath(root + name);
+    qputenv("QT_QPA_PLATFORM", "offscreen"); // always: these tests show windows
     // Never eject a real drive, launch a real app or change default apps.
     const QString fake = root + "/fake-program";
     {
@@ -583,7 +575,6 @@ int main(int argc, char **argv)
     for (const char *name : {"ARGONAUT_EJECT_PROGRAM", "ARGONAUT_GIO_PROGRAM", "ARGONAUT_EMAIL_PROGRAM",
                              "ARGONAUT_GSETTINGS_PROGRAM", "ARGONAUT_TRACKER_PROGRAM", "ARGONAUT_SYSTEMCTL_PROGRAM"})
         qputenv(name, QFile::encodeName(fake));
-    qputenv("ARGONAUT_KEYSTORE", "file"); // never the real keyring
     qputenv("ARGONAUT_NATIVE_DECORATIONS", "1");
 
     QApplication app(argc, argv);

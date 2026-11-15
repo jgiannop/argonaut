@@ -1,134 +1,68 @@
-qt_add_executable(tst_fileoperations tst_fileoperations.cpp)
-target_link_libraries(tst_fileoperations PRIVATE argonaut_core Qt6::Test)
-
-add_test(NAME fileoperations COMMAND tst_fileoperations)
-# Runs headless; the test sandboxes HOME and the trash itself.
-set_tests_properties(fileoperations PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-    TIMEOUT 300
-)
-
-qt_add_executable(tst_directorymodel tst_directorymodel.cpp)
-target_link_libraries(tst_directorymodel PRIVATE argonaut_core Qt6::Test)
-add_test(NAME directorymodel COMMAND tst_directorymodel)
-set_tests_properties(directorymodel PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-    TIMEOUT 300
-)
-
-qt_add_executable(tst_bookmarks tst_bookmarks.cpp)
-target_link_libraries(tst_bookmarks PRIVATE argonaut_core Qt6::Test)
-add_test(NAME bookmarks COMMAND tst_bookmarks)
-set_tests_properties(bookmarks PROPERTIES TIMEOUT 60)
-
-qt_add_executable(tst_openwith tst_openwith.cpp)
-target_link_libraries(tst_openwith PRIVATE argonaut_core Qt6::Test)
-add_test(NAME openwith COMMAND tst_openwith)
-set_tests_properties(openwith PROPERTIES TIMEOUT 60)
-
-qt_add_executable(tst_contenttype tst_contenttype.cpp)
-target_link_libraries(tst_contenttype PRIVATE argonaut_core Qt6::Test)
-add_test(NAME contenttype COMMAND tst_contenttype)
-set_tests_properties(contenttype PROPERTIES TIMEOUT 60)
-
-if(LIBARCHIVE_FOUND)
-    qt_add_executable(tst_archives tst_archives.cpp)
-    target_link_libraries(tst_archives PRIVATE argonaut_core Qt6::Test)
-    add_test(NAME archives COMMAND tst_archives)
-    set_tests_properties(archives PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-        TIMEOUT 300
+# argonaut_test(<name> [LIBRARY <lib>] [TIMEOUT <seconds>] [PRIVATE_BUS]
+#               [ENV <VAR=value>...] [SOURCES <file>...])
+#
+# Builds tests/tst_<name>.cpp and registers it with CTest as <name>. Every
+# test gets the safe environment below, whether or not it sets it itself:
+# no display, never the trash folders of real drives, never the real keyring.
+#   LIBRARY      what to link (default argonaut_core; argonaut_app for windows)
+#   PRIVATE_BUS  run under dbus-run-session: tests that own a D-Bus name must
+#                never do it on the desktop's bus
+function(argonaut_test name)
+    cmake_parse_arguments(ARG "PRIVATE_BUS" "LIBRARY;TIMEOUT" "ENV;SOURCES" ${ARGN})
+    if(NOT ARG_LIBRARY)
+        set(ARG_LIBRARY argonaut_core)
+    endif()
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 120)
+    endif()
+    qt_add_executable(tst_${name} tst_${name}.cpp TestSupport.h ${ARG_SOURCES})
+    target_link_libraries(tst_${name} PRIVATE ${ARG_LIBRARY} Qt6::Test)
+    if(ARG_PRIVATE_BUS)
+        add_test(NAME ${name} COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_${name}>)
+        list(APPEND ARG_ENV "ARGONAUT_PRIVATE_BUS=1")
+    else()
+        add_test(NAME ${name} COMMAND tst_${name})
+    endif()
+    set_tests_properties(${name} PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;ARGONAUT_KEYSTORE=file;${ARG_ENV}"
+        TIMEOUT ${ARG_TIMEOUT}
     )
+endfunction()
+
+# The file engine.
+argonaut_test(fileoperations TIMEOUT 300)
+argonaut_test(naming)
+if(LIBARCHIVE_FOUND)
+    argonaut_test(archives TIMEOUT 300)
 endif()
 
-qt_add_executable(tst_diskusage tst_diskusage.cpp)
-target_link_libraries(tst_diskusage PRIVATE argonaut_core Qt6::Test)
-add_test(NAME diskusage COMMAND tst_diskusage)
-set_tests_properties(diskusage PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+# Models and what they read.
+argonaut_test(directorymodel TIMEOUT 300)
+argonaut_test(diskusage)
+argonaut_test(contenttype)
+argonaut_test(contentsearch)
+argonaut_test(thumbnailer)
+argonaut_test(preview)
+argonaut_test(mediainfo)
+argonaut_test(git ENV GIT_CONFIG_NOSYSTEM=1)
 
-qt_add_executable(tst_thumbnailer tst_thumbnailer.cpp)
-target_link_libraries(tst_thumbnailer PRIVATE argonaut_core Qt6::Test)
-add_test(NAME thumbnailer COMMAND tst_thumbnailer)
-set_tests_properties(thumbnailer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+# Places, bookmarks, other programs.
+argonaut_test(places)
+argonaut_test(bookmarks)
+argonaut_test(openwith)
+argonaut_test(remote)
+argonaut_test(defaultfm)
 
-qt_add_executable(tst_places tst_places.cpp)
-target_link_libraries(tst_places PRIVATE argonaut_core Qt6::Test)
-add_test(NAME places COMMAND tst_places)
-set_tests_properties(places PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-
-qt_add_executable(tst_defaultfm tst_defaultfm.cpp)
-target_link_libraries(tst_defaultfm PRIVATE argonaut_core Qt6::Test)
-add_test(NAME defaultfm COMMAND tst_defaultfm)
-set_tests_properties(defaultfm PROPERTIES TIMEOUT 60)
+# Claude.
+argonaut_test(claude)
+argonaut_test(organizer SOURCES FakeApi.h)
 
 # D-Bus: only ever on a private bus.
 find_program(DBUS_RUN_SESSION dbus-run-session)
 if(TARGET Qt6::DBus AND DBUS_RUN_SESSION)
-    qt_add_executable(tst_fmservice tst_fmservice.cpp)
-    target_link_libraries(tst_fmservice PRIVATE argonaut_core Qt6::Test)
-    add_test(NAME fmservice COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_fmservice>)
-    set_tests_properties(fmservice PROPERTIES ENVIRONMENT "ARGONAUT_PRIVATE_BUS=1" TIMEOUT 60)
-
-    qt_add_executable(tst_filechooser tst_filechooser.cpp)
-    target_link_libraries(tst_filechooser PRIVATE argonaut_core Qt6::Test)
-    add_test(NAME filechooser COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_filechooser>)
-    set_tests_properties(filechooser PROPERTIES ENVIRONMENT "ARGONAUT_PRIVATE_BUS=1" TIMEOUT 60)
+    argonaut_test(fmservice PRIVATE_BUS)
+    argonaut_test(filechooser PRIVATE_BUS)
 endif()
 
-qt_add_executable(tst_preview tst_preview.cpp)
-target_link_libraries(tst_preview PRIVATE argonaut_core Qt6::Test)
-add_test(NAME preview COMMAND tst_preview)
-set_tests_properties(preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-
-qt_add_executable(tst_naming tst_naming.cpp)
-target_link_libraries(tst_naming PRIVATE argonaut_core Qt6::Test)
-add_test(NAME naming COMMAND tst_naming)
-set_tests_properties(naming PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-    TIMEOUT 60
-)
-
-qt_add_executable(tst_git tst_git.cpp)
-target_link_libraries(tst_git PRIVATE argonaut_core Qt6::Test)
-add_test(NAME git COMMAND tst_git)
-set_tests_properties(git PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;GIT_CONFIG_NOSYSTEM=1"
-    TIMEOUT 120
-)
-
-qt_add_executable(tst_contentsearch tst_contentsearch.cpp)
-target_link_libraries(tst_contentsearch PRIVATE argonaut_core Qt6::Test)
-add_test(NAME contentsearch COMMAND tst_contentsearch)
-set_tests_properties(contentsearch PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-    TIMEOUT 120
-)
-
-qt_add_executable(tst_remote tst_remote.cpp)
-target_link_libraries(tst_remote PRIVATE argonaut_core Qt6::Test)
-add_test(NAME remote COMMAND tst_remote)
-set_tests_properties(remote PROPERTIES TIMEOUT 60)
-
-qt_add_executable(tst_claude tst_claude.cpp)
-target_link_libraries(tst_claude PRIVATE argonaut_core Qt6::Test)
-add_test(NAME claude COMMAND tst_claude)
-set_tests_properties(claude PROPERTIES ENVIRONMENT "ARGONAUT_KEYSTORE=file" TIMEOUT 60)
-
-qt_add_executable(tst_organizer tst_organizer.cpp FakeApi.h)
-target_link_libraries(tst_organizer PRIVATE argonaut_core Qt6::Test)
-add_test(NAME organizer COMMAND tst_organizer)
-set_tests_properties(organizer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_KEYSTORE=file" TIMEOUT 120)
-
-qt_add_executable(tst_mediainfo tst_mediainfo.cpp)
-target_link_libraries(tst_mediainfo PRIVATE argonaut_core Qt6::Test)
-add_test(NAME mediainfo COMMAND tst_mediainfo)
-set_tests_properties(mediainfo PROPERTIES TIMEOUT 60)
-
 # The real window, headless: what gets trashed, deleted, dropped or returned.
-qt_add_executable(tst_mainwindow tst_mainwindow.cpp)
-target_link_libraries(tst_mainwindow PRIVATE argonaut_app Qt6::Test)
-add_test(NAME mainwindow COMMAND tst_mainwindow)
-set_tests_properties(mainwindow PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1"
-    TIMEOUT 300
-)
+argonaut_test(mainwindow LIBRARY argonaut_app TIMEOUT 300)
