@@ -12,6 +12,7 @@
 #include "Bookmarks.h"
 #include "InlineRename.h"
 #include "MainWindow.h"
+#include "MountActions.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
 #include "TestSupport.h"
@@ -68,6 +69,7 @@ private slots:
     void tabsOfPlacesHaveTheirNames();
     void tabsRememberFolderSelectionAndHistory();
     void inlineRenameRenamesAndRefusesTakenNames();
+    void ejectLeavesTheDriveAndRunsTheTool();
     void sidebarListsPlacesAndFollowsBookmarks();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
@@ -574,6 +576,29 @@ void TestMainWindow::inlineRenameRenamesAndRefusesTakenNames()
     QTest::keyClick(edit, Qt::Key_Escape);
     QVERIFY(!w->m_rename->isActive());
     QVERIFY(exists(a) && !exists(m_dir + "/never.txt"));
+}
+
+// Eject: the window first leaves the drive (or it would keep it busy
+// itself), then the system's tool is asked to eject it. Here the tool is the
+// fake program, which writes down how it was called.
+void TestMainWindow::ejectLeavesTheDriveAndRunsTheTool()
+{
+    const QString drive = m_dir + "/stick";
+    make("stick/photos/a.jpg");
+    const QString log = m_sandbox + "/fake-program.log";
+    QFile::remove(log);
+    open(drive + "/photos");
+
+    QSignalSpy messages(w->m_mounts, &MountActions::message);
+    QSignalSpy changed(w->m_mounts, &MountActions::mountsChanged);
+    w->ejectDrive(drive, "Stick");
+    QTRY_COMPARE(w->m_current, QDir::homePath());
+    QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 5000); // the tool finished: the sidebar is rebuilt
+    QFile f(log);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QVERIFY(f.readAll().contains(("mount --eject " + drive).toUtf8()));
+    QVERIFY(messages.last().first().toString().contains("safely removed"));
+    QVERIFY(exists(drive + "/photos/a.jpg")); // ejecting never deletes
 }
 
 // The sidebar builds its own rows, follows the bookmarks file, and shows

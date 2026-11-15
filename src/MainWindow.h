@@ -25,6 +25,7 @@ struct App;
 }
 class DirectoryModel;
 class InlineRename;
+class MountActions;
 class Sidebar;
 class DiskUsageModel;
 class QuickLook;
@@ -302,8 +303,6 @@ private:
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
     // Remote locations: mounts with GVfs (asking for logins), then opens the
     // folder. navigateTo() sends addresses (sftp://…) here.
-    void connectToServer(const QString &address);
-    void chooseShare(const QString &serverAddress);
     QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
     QToolButton *m_filterButton = nullptr;  // search filters: type and date
     QActionGroup *m_typeFilters = nullptr;
@@ -405,6 +404,7 @@ private:
     int m_dragScrollStep = 0;
     mutable QHash<QString, QByteArray> m_deviceCache; // folder -> storage device
 
+    MountActions *m_mounts = nullptr; // servers and drives: connect, disconnect, eject
     InlineRename *m_rename = nullptr; // F2: the field over an item's name
     QString m_pendingRename; // start renaming this once it appears
 

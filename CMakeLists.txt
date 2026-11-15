@@ -118,6 +118,8 @@ qt_add_library(argonaut_app STATIC
     src/TabStrip.cpp
     src/InlineRename.h
     src/InlineRename.cpp
+    src/MountActions.h
+    src/MountActions.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
     src/FileFilterProxy.h

@@ -15,6 +15,7 @@
 #include "Remote.h"
 #include "HelpDialog.h"
 #include "InlineRename.h"
+#include "MountActions.h"
 #include "Naming.h"
 
 #include "Format.h"
@@ -137,6 +138,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
             &MainWindow::updateEditActions);
+
+    m_mounts = new MountActions(this);
+    connect(m_mounts, &MountActions::message, this, [this](const QString &text) { showMessage(text); });
+    connect(m_mounts, &MountActions::connected, this, [this](const QString &folder) { navigateTo(folder); });
+    connect(m_mounts, &MountActions::mountsChanged, this, [this] { m_sidebar->refreshSoon(); });
 
     InlineRename::Host rename;
     rename.nameRect = [this](const QString &path) { return nameRectOf(path); };
@@ -535,7 +541,7 @@ void MainWindow::setupActions()
     connect(m_connectAct, &QAction::triggered, this, [this] {
         ConnectDialog dialog(this);
         if (dialog.exec() == QDialog::Accepted)
-            connectToServer(dialog.address());
+            m_mounts->connectToServer(dialog.address());
     });
 
     m_organizeAct = new QAction(tr("Organize with Claude…"), this);
@@ -1986,96 +1992,6 @@ void MainWindow::applyOrganizePlan(const QString &folder, const QList<QPair<QStr
 
 // ------------------------------------------------------------- servers ---
 
-void MainWindow::connectToServer(const QString &address)
-{
-#if !defined(Q_OS_LINUX)
-    showMessage(tr("Connecting to servers needs GVfs (Linux)"));
-    Q_UNUSED(address);
-    return;
-#else
-    QString clean = address.trimmed();
-    if (clean.startsWith(QLatin1String("ssh://")))
-        clean.replace(0, 3, QStringLiteral("sftp")); // GVfs knows it as sftp
-    auto *mounter = new Remote::Mounter(clean, this);
-    showMessage(tr("Connecting to %1…").arg(QUrl(clean).host().isEmpty() ? clean : QUrl(clean).host()));
-    connect(mounter, &Remote::Mounter::needLogin, this,
-            [this, mounter](const QString &message, bool askUser, const QString &defaultUser, bool askDomain,
-                            const QString &defaultDomain, bool retry) {
-                LoginDialog dialog(mounter->address(), message, askUser, defaultUser, askDomain, defaultDomain, retry, this);
-                if (dialog.exec() != QDialog::Accepted) {
-                    mounter->cancel();
-                    return;
-                }
-                if (dialog.anonymous()) {
-                    mounter->start(true);
-                    return;
-                }
-                mounter->answer({dialog.user(), dialog.domain(), dialog.password()});
-            });
-    connect(mounter, &Remote::Mounter::question, this,
-            [this, mounter](const QString &message, const QStringList &choices, const QList<int> &numbers) {
-                // E.g. an unknown SSH host key: "Log In Anyway" / "Cancel Login".
-                QMessageBox box(QMessageBox::Question, tr("Connect to Server"), message, QMessageBox::NoButton, this);
-                QList<QAbstractButton *> buttons;
-                for (const QString &choice : choices)
-                    buttons << box.addButton(choice, QMessageBox::AcceptRole);
-                box.exec();
-                const int at = int(buttons.indexOf(box.clickedButton()));
-                if (at < 0) {
-                    mounter->cancel();
-                    return;
-                }
-                mounter->choose(numbers.value(at, at));
-            });
-    connect(mounter, &Remote::Mounter::finished, this, [this, mounter, clean](bool ok, const QString &local, const QString &error) {
-        mounter->deleteLater();
-        m_sidebar->refreshSoon();
-        if (!ok) {
-            if (!error.isEmpty())
-                showMessage(error);
-            return;
-        }
-        ConnectDialog::rememberServer(clean);
-        if (local.isEmpty()) {
-            chooseShare(clean); // smb://server/: a list of shares, no folder
-            return;
-        }
-        navigateTo(local);
-    });
-    mounter->start();
-#endif
-}
-
-// smb://server/ has no folder of its own: pick one of its shares.
-void MainWindow::chooseShare(const QString &serverAddress)
-{
-    auto *list = new QProcess(this);
-    connect(list, &QProcess::finished, this, [this, list, serverAddress] {
-        QStringList shares;
-        for (const QString &line : QString::fromUtf8(list->readAllStandardOutput()).split(QLatin1Char('\n'))) {
-            const QString name = line.trimmed();
-            if (!name.isEmpty() && !name.endsWith(QLatin1Char('$'))) // hidden admin shares (C$, IPC$)
-                shares << name;
-        }
-        list->deleteLater();
-        if (shares.isEmpty()) {
-            showMessage(tr("%1 has no shared folders").arg(QUrl(serverAddress).host()));
-            return;
-        }
-        bool ok = false;
-        const QString share = QInputDialog::getItem(this, tr("Shared Folders"),
-                                                    tr("Shared folders on %1:").arg(QUrl(serverAddress).host()), shares,
-                                                    0, false, &ok);
-        if (!ok)
-            return;
-        QString base = serverAddress;
-        if (!base.endsWith(QLatin1Char('/')))
-            base += QLatin1Char('/');
-        connectToServer(base + QString::fromUtf8(QUrl::toPercentEncoding(share)));
-    });
-    list->start(Tools::gio(), {QStringLiteral("list"), serverAddress});
-}
-
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
 void MainWindow::ejectDrive(const QString &root, const QString &name)
 {
@@ -2091,39 +2007,7 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
     if (m_current == root || m_current.startsWith(root + QLatin1Char('/')))
         navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
 
-    if (const Remote::Mount server = Remote::mountOf(root); !server.localPath.isEmpty()) {
-        showMessage(tr("Disconnecting from “%1”…").arg(name));
-        Remote::unmount(server.address, this, [this, name](bool ok, const QString &error) {
-            showMessage(ok ? tr("Disconnected from “%1”").arg(name)
-                           : tr("Couldn't disconnect from “%1”: %2").arg(name, error));
-            m_sidebar->refreshSoon();
-        });
-        return;
-    }
-    const QString program = Tools::program("ARGONAUT_EJECT_PROGRAM", QStringLiteral("gio"));
-    auto *process = new QProcess(this);
-    connect(process, &QProcess::finished, this, [this, process, name](int code, QProcess::ExitStatus status) {
-        if (status == QProcess::NormalExit && code == 0) {
-            showMessage(tr("“%1” can be safely removed").arg(name));
-        } else {
-            QString why = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
-            why = why.section(QLatin1Char('\n'), 0, 0);
-            if (why.contains(QLatin1String("busy"), Qt::CaseInsensitive))
-                why = tr("it's in use by another program or the terminal");
-            showMessage(why.isEmpty() ? tr("Couldn't eject “%1”").arg(name)
-                                      : tr("Couldn't eject “%1”: %2").arg(name, why));
-        }
-        m_sidebar->refreshSoon();
-        process->deleteLater();
-    });
-    connect(process, &QProcess::errorOccurred, this, [this, process, name](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart) {
-            showMessage(tr("Couldn't eject “%1”: the gio tool isn't installed").arg(name));
-            process->deleteLater();
-        }
-    });
-    showMessage(tr("Ejecting “%1”…").arg(name));
-    process->start(program, {QStringLiteral("mount"), QStringLiteral("--eject"), root});
+    m_mounts->eject(root, name);
 }
 
 // ------------------------------------------------------------ settings ---
@@ -2245,7 +2129,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         return false;
     }
     if (Remote::isRemoteAddress(path)) {
-        connectToServer(path);
+        m_mounts->connectToServer(path);
         return false; // opens when connected
     }
     // Recent and Starred aren't folders: lists of items from anywhere.
