@@ -14,6 +14,7 @@
 #include "OrganizerDialog.h"
 #include "Remote.h"
 #include "HelpDialog.h"
+#include "InlineRename.h"
 #include "Naming.h"
 
 #include "Format.h"
@@ -136,6 +137,17 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
             &MainWindow::updateEditActions);
+
+    InlineRename::Host rename;
+    rename.nameRect = [this](const QString &path) { return nameRectOf(path); };
+    rename.showMessage = [this](const QString &text) { showMessage(text); };
+    m_rename = new InlineRename(rename, this);
+    connect(m_rename, &InlineRename::closed, this, [this] { m_view->setFocus(); });
+    connect(m_rename, &InlineRename::renamed, this, [this](const QString &from, const QString &to) {
+        Starred::instance().renamed(from, to); // a star follows its item
+        m_ops->recordUndo(FileJob::Kind::Move, {{from, to}}, tr("Rename"));
+        selectPaths({to});
+    });
 
     setupActions();
     setupUi();
@@ -1095,7 +1107,7 @@ void MainWindow::activatePane(int index)
 {
     if (index == m_activePane || index < 0 || index >= m_paneCount || m_background)
         return;
-    cancelRename();
+    m_rename->cancel();
     if (m_quickLook)
         m_quickLook->hide();
     setSearchActive(false); // the search field belongs to the active pane
@@ -1684,7 +1696,7 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
         updateFloatingBar();
         updateEditActions();
     });
-    connect(m_proxy, &QAbstractItemModel::layoutChanged, this, &MainWindow::updateRenameGeometry);
+    connect(m_proxy, &QAbstractItemModel::layoutChanged, m_rename, &InlineRename::reposition);
 
     m_floatingBar = new QLabel(m_viewStack);
     m_floatingBar->setObjectName("floatingBar");
@@ -2259,7 +2271,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         if (m_searchTimer)
             m_searchTimer->stop();
         setSearchActive(false);
-        cancelRename();
+        m_rename->cancel();
     }
     m_pendingSelection.clear();
     m_pendingRename.clear();
@@ -2370,7 +2382,7 @@ void MainWindow::updateActions()
 
 void MainWindow::setGridMode(bool grid)
 {
-    cancelRename();
+    m_rename->cancel();
     const bool wasAnalyzing = m_analyzing;
     m_analyzing = false;
     if (m_analyzeButton)
@@ -2397,7 +2409,7 @@ void MainWindow::setGridMode(bool grid)
         updateEditActions();
         updateFloatingBar();
     }
-    updateRenameGeometry();
+    m_rename->reposition();
     updateViewChrome();
 }
 
@@ -2425,7 +2437,7 @@ void MainWindow::setAnalyzeMode(bool on)
     }
     if (m_activePane != 0)
         activatePane(0); // Analyze lives in the first pane
-    cancelRename();
+    m_rename->cancel();
     setSearchActive(false); // search is about files; Analyze shows folders
     if (m_quickLook)
         m_quickLook->hide();
@@ -2532,7 +2544,7 @@ void MainWindow::applyZoom()
     const QModelIndex current = m_view->currentIndex();
     if (current.isValid())
         m_view->scrollTo(current);
-    updateRenameGeometry();
+    m_rename->reposition();
     updateViewChrome();
 }
 
@@ -2771,29 +2783,6 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
 
-    // Inline rename: Enter commits, Esc cancels, clicking elsewhere commits
-    // (or cancels if the name isn't valid). Enter must be consumed here:
-    // QLineEdit passes it on, and the view would then open the item.
-    if (m_renameEdit && watched == m_renameEdit) {
-        if (event->type() == QEvent::KeyPress) {
-            const int key = static_cast<QKeyEvent *>(event)->key();
-            if (key == Qt::Key_Escape) {
-                cancelRename();
-                return true;
-            }
-            if (key == Qt::Key_Return || key == Qt::Key_Enter) {
-                commitRename();
-                return true;
-            }
-        }
-        if (event->type() == QEvent::FocusOut
-            && static_cast<QFocusEvent *>(event)->reason() != Qt::PopupFocusReason) {
-            if (!commitRename())
-                cancelRename();
-        }
-        return QMainWindow::eventFilter(watched, event);
-    }
-
     // Ctrl+wheel zooms. Touchpads send many small steps: act on whole notches.
     if (event->type() == QEvent::Wheel && isFileViewport(watched)) {
         auto *wheel = static_cast<QWheelEvent *>(event);
@@ -2982,8 +2971,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 return true;
         }
     }
-    if (m_renameEdit && isFileViewport(watched) && event->type() == QEvent::Paint)
-        updateRenameGeometry(); // item positions are final when the view paints
+    if (m_rename->isActive() && isFileViewport(watched) && event->type() == QEvent::Paint)
+        m_rename->reposition(); // item positions are final when the view paints
     if (m_viewStack && watched == m_viewStack && event->type() == QEvent::Resize) {
         fitListColumns();
         if (m_floatingBar->isVisible())
@@ -2994,7 +2983,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
         if (m_toast->isVisible())
             m_toast->reposition();
-        updateRenameGeometry();
+        m_rename->reposition();
     } else if (watched == m_searchEdit && event->type() == QEvent::KeyPress) {
         if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
             setSearchActive(false);
@@ -3715,7 +3704,7 @@ void MainWindow::renameSelection()
 
 void MainWindow::batchRename(const QStringList &paths)
 {
-    cancelRename();
+    m_rename->cancel();
     BatchRenameDialog dialog(paths, this);
     if (dialog.exec() != QDialog::Accepted)
         return;
@@ -3853,116 +3842,28 @@ void MainWindow::createFromTemplate(const QString &templatePath)
     selectPaths({path});
 }
 
+// F2: the text field over the item's name is InlineRename's; the window
+// says where the name is and what follows a rename.
 void MainWindow::startRename(const QModelIndex &viewIndex)
 {
-    cancelRename();
     const QModelIndex source = toSource(viewIndex);
-    if (!source.isValid())
+    if (!source.isValid()) {
+        m_rename->cancel();
         return;
-    m_renamePath = m_model->filePath(source);
+    }
     m_view->scrollTo(viewIndex);
-
-    m_renameEdit = new QLineEdit(m_view->viewport());
-    m_renameEdit->setObjectName("renameEdit");
-    m_renameEdit->setText(m_model->fileName(source));
-    m_renameEdit->setAlignment(m_grid ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
-    m_renameEdit->installEventFilter(this); // Enter / Esc / focus-out
-    updateRenameGeometry();
-    m_renameEdit->show();
-    m_renameEdit->setFocus(Qt::OtherFocusReason);
-
-    // Select the name without its extension, like Nautilus.
-    const QString name = m_renameEdit->text();
-    int end = int(name.size());
-    if (!m_model->isDir(source)) {
-        const int dot = int(name.lastIndexOf('.'));
-        if (dot > 0) {
-            end = dot;
-            if (name.left(dot).endsWith(QLatin1String(".tar")))
-                end -= 4;
-        }
-    }
-    m_renameEdit->setSelection(0, end);
+    m_rename->start(m_view->viewport(), m_model->filePath(source), m_model->isDir(source),
+                    m_grid ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
 }
 
-void MainWindow::updateRenameGeometry()
+// Where `path`'s name is drawn in the visible view; null if it isn't listed.
+QRect MainWindow::nameRectOf(const QString &path) const
 {
-    if (!m_renameEdit)
-        return;
-    const QModelIndex index = toView(m_model->indexForPath(m_renamePath));
-    if (!index.isValid()) {
-        cancelRename();
-        return;
-    }
+    const QModelIndex index = toView(m_model->indexForPath(path));
+    if (!index.isValid())
+        return {};
     const FileItemDelegate *delegate = m_grid ? m_gridDelegate : m_listDelegate;
-    QRect rect = delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics(), index);
-    const int width = m_view->viewport()->width();
-    if (rect.right() > width - 3)
-        rect.moveRight(width - 3);
-    if (rect.left() < 3)
-        rect.moveLeft(3);
-    m_renameEdit->setGeometry(rect);
-}
-
-void MainWindow::cancelRename()
-{
-    if (!m_renameEdit)
-        return;
-    QLineEdit *edit = m_renameEdit;
-    m_renameEdit = nullptr;
-    m_renamePath.clear();
-    edit->removeEventFilter(this);
-    edit->hide();
-    edit->deleteLater();
-    m_view->setFocus();
-}
-
-// Returns false (and keeps the field open) if the name can't be used.
-bool MainWindow::commitRename()
-{
-    if (!m_renameEdit || m_committingRename)
-        return true;
-    const QString newName = m_renameEdit->text().trimmed();
-    const QFileInfo old(m_renamePath);
-    if (newName.isEmpty() || newName == old.fileName()) {
-        cancelRename();
-        return true;
-    }
-
-    QString problem;
-    if (newName == QLatin1String(".") || newName == QLatin1String(".."))
-        problem = tr("“%1” isn't a valid name").arg(newName);
-    else if (newName.contains('/'))
-        problem = tr("Names can't contain “/”");
-#if defined(Q_OS_WIN)
-    else if (newName.contains(QRegularExpression(QStringLiteral(R"([<>:"\\|?*])"))))
-        problem = tr("Names can't contain any of: < > : \" \\ | ? *");
-#endif
-    const QString target = old.absolutePath() + '/' + newName;
-    const QFileInfo targetInfo(target);
-    if (problem.isEmpty() && (targetInfo.exists() || targetInfo.isSymLink()) && targetInfo != old)
-        problem = tr("“%1” already exists").arg(newName);
-
-    bool renamed = false;
-    if (problem.isEmpty()) {
-        m_committingRename = true;
-        renamed = QDir().rename(m_renamePath, target);
-        m_committingRename = false;
-        if (!renamed)
-            problem = tr("Couldn't rename “%1”").arg(old.fileName());
-    }
-    if (!renamed) {
-        showMessage(problem);
-        if (m_renameEdit)
-            m_renameEdit->setFocus();
-        return false;
-    }
-
-    Starred::instance().renamed(m_renamePath, target);
-    m_ops->recordUndo(FileJob::Kind::Move, {{m_renamePath, target}}, tr("Rename"));
-    cancelRename();
-    selectPaths({target});
-    return true;
+    return delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics(), index);
 }
 
 // ---------------------------------------------------------- file views ---
@@ -3995,8 +3896,8 @@ void MainWindow::setupFileView(QAbstractItemView *view)
     connect(m_thumbnailer, &Thumbnailer::thumbnailReady, view->viewport(),
             qOverload<>(&QWidget::update));
     // Keep an open rename field on its item while scrolling.
-    connect(view->verticalScrollBar(), &QScrollBar::valueChanged, this,
-            &MainWindow::updateRenameGeometry);
+    connect(view->verticalScrollBar(), &QScrollBar::valueChanged, m_rename,
+            &InlineRename::reposition);
 }
 
 QModelIndexList MainWindow::selectedViewIndexes() const

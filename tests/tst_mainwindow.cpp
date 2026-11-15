@@ -10,6 +10,7 @@
 #include "DirectoryModel.h"
 #include "FileOperations.h"
 #include "Bookmarks.h"
+#include "InlineRename.h"
 #include "MainWindow.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
@@ -29,6 +30,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSignalSpy>
@@ -65,6 +67,7 @@ private slots:
     void showHiddenAppliesToBothPanes();
     void tabsOfPlacesHaveTheirNames();
     void tabsRememberFolderSelectionAndHistory();
+    void inlineRenameRenamesAndRefusesTakenNames();
     void sidebarListsPlacesAndFollowsBookmarks();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
@@ -523,6 +526,54 @@ void TestMainWindow::tabsRememberFolderSelectionAndHistory()
     tabs->closeActive();
     QTRY_COMPARE(w->m_current, m_dir + "/one");
     QVERIFY(exists(a) && exists(b));
+}
+
+// F2: Enter renames (undoable), a taken or forbidden name keeps the field
+// open and changes nothing, Esc gives up.
+void TestMainWindow::inlineRenameRenamesAndRefusesTakenNames()
+{
+    const QString a = make("report.tar.gz"), b = make("taken.txt");
+    open(m_dir);
+    select({a});
+    QVERIFY(w->m_renameAct->isEnabled());
+    w->m_renameAct->trigger();
+    QTRY_VERIFY(w->m_rename->isActive());
+    auto *edit = w->m_view->viewport()->findChild<QLineEdit *>("renameEdit");
+    QVERIFY(edit);
+    QCOMPARE(edit->text(), QStringLiteral("report.tar.gz"));
+    QCOMPARE(edit->selectedText(), QStringLiteral("report")); // the name, not ".tar.gz"
+
+    // A name another item has: refused, the field stays.
+    edit->setText("taken.txt");
+    QVERIFY(!w->m_rename->commit());
+    QVERIFY(w->m_rename->isActive());
+    QVERIFY(exists(a) && exists(b));
+    // A name with a slash: refused too.
+    edit->setText("sub/name");
+    QVERIFY(!w->m_rename->commit());
+    QVERIFY(exists(a));
+
+    // Enter renames, selects the item under its new name, and can be undone.
+    edit->setText("final.tar.gz");
+    QTest::keyClick(edit, Qt::Key_Return);
+    QVERIFY(!w->m_rename->isActive());
+    QVERIFY(!exists(a));
+    QVERIFY(exists(m_dir + "/final.tar.gz"));
+    QTRY_COMPARE(w->selectedPaths(), QStringList{m_dir + "/final.tar.gz"});
+    runJob([&] { w->m_undoAct->trigger(); });
+    QVERIFY(exists(a));
+
+    // Esc changes nothing.
+    QTRY_VERIFY(w->m_model->indexForPath(a).isValid());
+    select({a});
+    w->m_renameAct->trigger();
+    QTRY_VERIFY(w->m_rename->isActive());
+    edit = w->m_view->viewport()->findChild<QLineEdit *>("renameEdit");
+    QVERIFY(edit);
+    edit->setText("never.txt");
+    QTest::keyClick(edit, Qt::Key_Escape);
+    QVERIFY(!w->m_rename->isActive());
+    QVERIFY(exists(a) && !exists(m_dir + "/never.txt"));
 }
 
 // The sidebar builds its own rows, follows the bookmarks file, and shows

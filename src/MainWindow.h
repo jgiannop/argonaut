@@ -24,6 +24,7 @@ namespace OpenWith {
 struct App;
 }
 class DirectoryModel;
+class InlineRename;
 class Sidebar;
 class DiskUsageModel;
 class QuickLook;
@@ -209,9 +210,7 @@ private:
     // Inline rename (F2, and right after New Folder / New File).
     void renameSelection();
     void startRename(const QModelIndex &viewIndex);
-    bool commitRename();
-    void cancelRename();
-    void updateRenameGeometry();
+    QRect nameRectOf(const QString &path) const;
     void onJobFinished(FileJob *job);
     // Name clashes: one "Replace?" question at a time (jobs wait meanwhile).
     void askConflict(FileJob *job, const QString &source, const QString &existing);
@@ -406,10 +405,8 @@ private:
     int m_dragScrollStep = 0;
     mutable QHash<QString, QByteArray> m_deviceCache; // folder -> storage device
 
-    QLineEdit *m_renameEdit = nullptr;
-    QString m_renamePath;
+    InlineRename *m_rename = nullptr; // F2: the field over an item's name
     QString m_pendingRename; // start renaming this once it appears
-    bool m_committingRename = false;
 
     QStack<QString> m_backHistory;
     QStack<QString> m_forwardHistory;

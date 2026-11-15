@@ -116,6 +116,8 @@ qt_add_library(argonaut_app STATIC
     src/Sidebar.cpp
     src/TabStrip.h
     src/TabStrip.cpp
+    src/InlineRename.h
+    src/InlineRename.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
     src/FileFilterProxy.h
