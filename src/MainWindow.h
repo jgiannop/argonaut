@@ -22,6 +22,7 @@ namespace OpenWith {
 struct App;
 }
 class DirectoryModel;
+class Sidebar;
 class DiskUsageModel;
 class QuickLook;
 class FileFilterProxy;
@@ -100,8 +101,6 @@ private:
     QWidget *buildMenuBar();
 
     void applyTheme(bool force = false);
-    void populateSidebar();
-    void scheduleSidebarRefresh(); // drives or bookmarks changed
     void showSidebarMenu(const QPoint &pos);
     void ejectDrive(const QString &root, const QString &name);
     void toggleBookmark();
@@ -266,7 +265,7 @@ private:
     QToolButton *m_analyzeButton = nullptr;
     bool m_analyzing = false;
     QStackedWidget *m_viewStack = nullptr;
-    QListWidget *m_sidebar = nullptr;
+    Sidebar *m_sidebar = nullptr;
     QWidget *m_root = nullptr;
     QSplitter *m_splitter = nullptr;
     QStackedWidget *m_locationStack = nullptr;
@@ -393,9 +392,6 @@ private:
     QAction *m_extractHereAct = nullptr;
     QAction *m_extractToAct = nullptr;
     QAction *m_bookmarkAct = nullptr;   // Ctrl+D: bookmark / unbookmark this folder
-    QTimer *m_sidebarRefresh = nullptr; // debounces drive/bookmark changes
-    int m_mountsFd = -1;                // /proc/self/mounts (Linux): POLLPRI on change
-    QStringList m_lastMounts;           // other platforms: polled
     int m_terminalHeight = 0;           // remembered between sessions
 
     QAction *m_deleteAct = nullptr;     // Delete Permanently…

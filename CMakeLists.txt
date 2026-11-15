@@ -112,6 +112,8 @@ qt_add_library(argonaut_app STATIC
     src/HeaderBar.cpp
     src/PathBar.h
     src/PathBar.cpp
+    src/Sidebar.h
+    src/Sidebar.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
     src/FileFilterProxy.h

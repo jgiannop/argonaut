@@ -9,7 +9,9 @@
 
 #include "DirectoryModel.h"
 #include "FileOperations.h"
+#include "Bookmarks.h"
 #include "MainWindow.h"
+#include "Sidebar.h"
 #include "TestSupport.h"
 #include "Trash.h"
 
@@ -61,6 +63,7 @@ private slots:
     void splitViewActsOnThePaneYouAreIn();
     void showHiddenAppliesToBothPanes();
     void tabsOfPlacesHaveTheirNames();
+    void sidebarListsPlacesAndFollowsBookmarks();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -462,6 +465,55 @@ void TestMainWindow::tabsOfPlacesHaveTheirNames()
     QDir().mkpath(Trash::homeFilesDir());
     QCOMPARE(w->tabTitle(Trash::homeFilesDir()), QStringLiteral("Trash"));
     QCOMPARE(w->tabTitle(m_dir), QFileInfo(m_dir).fileName());
+}
+
+// The sidebar builds its own rows, follows the bookmarks file, and shows
+// which row is the open folder.
+void TestMainWindow::sidebarListsPlacesAndFollowsBookmarks()
+{
+    Sidebar *sidebar = w->m_sidebar;
+    auto rowOf = [sidebar](const QString &path) -> QListWidgetItem * {
+        for (int i = 0; i < sidebar->count(); ++i)
+            if (Sidebar::pathOf(sidebar->item(i)) == path)
+                return sidebar->item(i);
+        return nullptr;
+    };
+    QVERIFY(rowOf(DirectoryModel::recentPath()));
+    QVERIFY(rowOf(DirectoryModel::starredPath()));
+    QVERIFY(rowOf(QDir::homePath()));
+    QVERIFY(rowOf(Trash::homeFilesDir()));
+    QCOMPARE(Sidebar::kindOf(rowOf(QDir::homePath())), Sidebar::PlaceItem);
+    QVERIFY(!Sidebar::canEject(rowOf(QDir::homePath())));
+    // Separators have no path and can't be chosen.
+    int separators = 0;
+    for (int i = 0; i < sidebar->count(); ++i) {
+        if (Sidebar::isSeparator(sidebar->item(i))) {
+            ++separators;
+            QVERIFY(Sidebar::pathOf(sidebar->item(i)).isEmpty());
+            QVERIFY(!(sidebar->item(i)->flags() & Qt::ItemIsSelectable));
+        }
+    }
+    QVERIFY(separators >= 1);
+
+    // A bookmark added by anyone (here: straight into the shared file)
+    // appears by itself, as a bookmark row.
+    const QString folder = m_dir + "/project";
+    QDir().mkpath(folder);
+    QVERIFY(!rowOf(folder));
+    QSignalSpy refreshed(sidebar, &Sidebar::refreshed);
+    QVERIFY(Bookmarks::add(folder));
+    QTRY_VERIFY_WITH_TIMEOUT(rowOf(folder), 5000);
+    QVERIFY(!refreshed.isEmpty());
+    QCOMPARE(Sidebar::kindOf(rowOf(folder)), Sidebar::BookmarkItem);
+
+    // The open folder's row is the selected one; a folder without a row selects none.
+    open(folder);
+    QTRY_COMPARE(sidebar->currentItem(), rowOf(folder));
+    open(m_dir);
+    QTRY_VERIFY(!sidebar->currentItem() || !sidebar->currentItem()->isSelected());
+
+    Bookmarks::remove(folder);
+    QTRY_VERIFY_WITH_TIMEOUT(!rowOf(folder), 5000);
 }
 
 #if defined(ARGONAUT_DBUS)
