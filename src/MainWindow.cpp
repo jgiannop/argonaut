@@ -30,6 +30,7 @@
 #include "FileFilterProxy.h"
 #include "FileItemDelegate.h"
 #include "FileOperations.h"
+#include "FileRules.h"
 #include "HeaderBar.h"
 #include "OpenWith.h"
 #include "OpenWithDialog.h"
@@ -1342,18 +1343,12 @@ void MainWindow::showListHeaderMenu(QHeaderView *header, const QPoint &pos)
 
 bool MainWindow::canChangeSelection() const
 {
-    if (m_pane->model->isTrash())
-        return true; // the Trash's own folders
-    QHash<QString, Access::FolderAccess> folders;
+    QList<FileRules::Item> items;
     for (const QModelIndex &viewIndex : selectedViewIndexes()) {
         const QModelIndex source = toSource(viewIndex);
-        const QString path = m_pane->model->filePath(source);
-        const int slash = int(path.lastIndexOf(QLatin1Char('/')));
-        const QString dir = slash <= 0 ? QStringLiteral("/") : path.left(slash);
-        if (!Access::canChangeItemsIn(dir, source.data(DirectoryModel::OwnerIdRole).toUInt(), &folders))
-            return false;
+        items.append({m_pane->model->filePath(source), source.data(DirectoryModel::OwnerIdRole).toUInt()});
     }
-    return true;
+    return FileRules::canChange(items, m_pane->model->isTrash());
 }
 
 void MainWindow::fitListColumns()
@@ -1441,10 +1436,7 @@ QString MainWindow::otherPaneFolder() const
     if (!m_split || m_paneCount < 2)
         return {};
     const QString other = m_panes[1 - paneIndex()].current;
-    if (other.isEmpty() || DirectoryModel::isVirtualPath(other) || Trash::isFilesDir(other)
-        || !QFileInfo(other).isDir() || !QFileInfo(other).isWritable())
-        return {};
-    return other;
+    return FileRules::isTransferTarget(other) ? other : QString();
 }
 
 // F5 / F6: the selection to the other pane's folder, through the normal
@@ -1455,8 +1447,8 @@ void MainWindow::transferToOtherPane(bool move)
     const QStringList paths = selectedPaths();
     if (target.isEmpty() || paths.isEmpty())
         return;
-    if (move && QFileInfo(paths.first()).absolutePath() == target) {
-        showMessage(tr("They're already in that folder"));
+    if (const QString problem = FileRules::transferProblem(paths, target, move); !problem.isEmpty()) {
+        showMessage(problem);
         return;
     }
     move ? m_ops->move(paths, target) : m_ops->copy(paths, target);
@@ -2843,52 +2835,39 @@ void MainWindow::paste()
 
 void MainWindow::trashSelection()
 {
-    if (m_pane->model->isTrash()) {
-        deleteSelection(); // already in the Trash: the only step left is forever
-        return;
-    }
     const QStringList paths = selectedPaths();
-    if (paths.isEmpty())
+    if (paths.isEmpty() && !m_pane->model->isTrash())
         return;
-    // Servers have no Trash (GVfs folders): offer to delete instead.
-    for (const QString &p : paths) {
-        if (!Remote::mountOf(p).localPath.isEmpty()) {
-            QMessageBox box(QMessageBox::Warning, tr("No Trash on This Server"),
-                            paths.size() == 1 ? tr("“%1” can't be moved to the Trash.").arg(QFileInfo(paths.first()).fileName())
-                                              : tr("These %1 items can't be moved to the Trash.").arg(paths.size()),
-                            QMessageBox::NoButton, this);
-            box.setInformativeText(tr("Files on a server can only be deleted forever."));
-            QPushButton *cancel = box.addButton(QMessageBox::Cancel);
-            QPushButton *remove = box.addButton(tr("Delete Permanently"), QMessageBox::DestructiveRole);
-            box.setDefaultButton(cancel);
-            box.exec();
-            if (box.clickedButton() == remove)
-                m_ops->deletePermanently(paths);
-            return;
-        }
+    switch (FileRules::removalFor(paths, m_pane->model->isTrash())) {
+    case FileRules::Removal::DeleteFromTrash:
+        deleteSelection();
+        break;
+    case FileRules::Removal::DeleteNoTrash:
+        if (ask(FileRules::noTrashOnServer(paths)))
+            m_ops->deletePermanently(paths);
+        break;
+    case FileRules::Removal::Trash:
+        m_ops->trash(paths);
+        break;
     }
-    m_ops->trash(paths);
+}
+
+// Shows one of FileRules' questions; true only for its own button (Cancel
+// is the default, so Enter and Esc change nothing).
+bool MainWindow::ask(const FileRules::Question &question)
+{
+    QMessageBox box(QMessageBox::Warning, question.title, question.text, QMessageBox::NoButton, this);
+    box.setInformativeText(question.detail);
+    QPushButton *cancel = box.addButton(QMessageBox::Cancel);
+    QPushButton *go = box.addButton(question.confirm, QMessageBox::DestructiveRole);
+    box.setDefaultButton(cancel);
+    box.exec();
+    return box.clickedButton() == go;
 }
 
 bool MainWindow::confirmPermanentDelete(const QStringList &paths, bool wholeTrash)
 {
-    QString question;
-    if (wholeTrash)
-        question = tr("Empty all items from the Trash?");
-    else if (paths.size() == 1)
-        question = tr("Permanently delete “%1”?").arg(QFileInfo(paths.first()).fileName());
-    else
-        question = tr("Permanently delete %1 selected items?").arg(paths.size());
-    QMessageBox box(QMessageBox::Warning, wholeTrash ? tr("Empty Trash") : tr("Delete Permanently"),
-                    question, QMessageBox::NoButton, this);
-    box.setInformativeText(wholeTrash ? tr("All items in the Trash will be deleted forever.")
-                                      : tr("If you delete an item, it will be gone forever."));
-    QPushButton *cancel = box.addButton(QMessageBox::Cancel);
-    QPushButton *remove =
-        box.addButton(wholeTrash ? tr("Empty Trash") : tr("Delete"), QMessageBox::DestructiveRole);
-    box.setDefaultButton(cancel);
-    box.exec();
-    return box.clickedButton() == remove;
+    return ask(FileRules::permanentDelete(paths, wholeTrash));
 }
 
 void MainWindow::deleteSelection()

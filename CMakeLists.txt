@@ -64,6 +64,8 @@ qt_add_library(argonaut_core STATIC
     src/Organizer.cpp
     src/Sandbox.h
     src/StatTime.h
+    src/FileRules.h
+    src/FileRules.cpp
     src/Tools.h
     src/Tools.cpp
     src/DesktopActions.h
@@ -214,6 +216,44 @@ set_target_properties(argonaut PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
 )
+
+# ------------------------------------------------- terminal interface ---
+# Argonaut in the terminal (src/tui): two panes, the same engine. The
+# interface itself (argonaut_tui) only draws into a grid of cells, so tests
+# run it without a terminal; ncurses is needed only for the real thing.
+qt_add_library(argonaut_tui STATIC
+    src/tui/Screen.h
+    src/tui/Screen.cpp
+    src/tui/App.h
+    src/tui/App.cpp
+)
+target_include_directories(argonaut_tui PUBLIC src/tui)
+target_link_libraries(argonaut_tui PUBLIC argonaut_core)
+
+set(CURSES_NEED_NCURSES TRUE)
+set(CURSES_NEED_WIDE TRUE)
+find_package(Curses QUIET)
+if(CURSES_FOUND AND UNIX)
+    message(STATUS "Terminal interface: enabled (ncurses)")
+    qt_add_library(argonaut_tui_terminal STATIC
+        src/tui/Terminal.h
+        src/tui/Terminal.cpp
+        src/tui/Run.h
+        src/tui/Run.cpp
+    )
+    target_include_directories(argonaut_tui_terminal PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_compile_definitions(argonaut_tui_terminal PRIVATE ARGONAUT_VERSION="${PROJECT_VERSION}")
+    target_link_libraries(argonaut_tui_terminal PUBLIC argonaut_tui ${CURSES_LIBRARIES})
+    qt_add_executable(argonaut-tui src/tui/main.cpp)
+    target_link_libraries(argonaut-tui PRIVATE argonaut_tui_terminal)
+    # `argonaut --tui` is the same thing, from the main program.
+    target_link_libraries(argonaut PRIVATE argonaut_tui_terminal)
+    target_compile_definitions(argonaut PRIVATE ARGONAUT_TUI=1)
+    include(GNUInstallDirs)
+    install(TARGETS argonaut-tui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+    message(STATUS "Terminal interface: disabled (libncurses-dev not found)")
+endif()
 
 # ---------------------------------------------------------- extensions ---
 # Extensions are separate programs (src/Extensions.h, docs/extensions.md).

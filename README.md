@@ -122,7 +122,7 @@ What is sent to Anthropic's API when you organize a folder: the names, sizes, da
 ### Linux (Ubuntu / Debian)
 
 ```bash
-sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev libarchive-dev
+sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev libarchive-dev libncurses-dev
 ```
 
 ### Windows and macOS
@@ -184,6 +184,35 @@ To go back: **Preferences → Use Nautilus Again**, or `argonaut --restore-nauti
 Notes:
 - If Nautilus is already running in the background, "Show in folder" keeps going to it until it stops (`nautilus -q`, or log out and in once).
 - The dock's **Files** icon still starts Nautilus: right-click it → *Unpin*, then right-click Argonaut → *Pin to Dash*.
+
+### In a terminal
+
+`argonaut --tui` (or `argonaut-tui`) is Argonaut without a window: two panes of files in the terminal, for a server reached over SSH or for working from the keyboard. It uses the same engine as the window, so copying and moving have progress and undo, deleting goes to the Trash, anything permanent is asked about first, and Git repositories show their marks and branch.
+
+```bash
+argonaut --tui                 # this folder on the left, home on the right
+argonaut --tui ~/src /mnt/usb  # two folders of your choice
+```
+
+| Keys | |
+|---|---|
+| Arrows, PgUp/PgDn, Home/End | move |
+| Enter / Backspace | into a folder / up (Enter on `..` goes up too) |
+| Tab | the other pane |
+| Space or Insert | select |
+| F5 / F6 | copy / move to the other pane |
+| F7 / F2 | new folder / rename |
+| F8 or Delete | move to the Trash |
+| D or Shift+Delete | delete forever (asks) |
+| Ctrl+Z / Ctrl+Y | undo / redo |
+| g | go to a folder (`trash` for the Trash) |
+| . | hidden files |
+| F1 | all keys |
+| F10 or q | quit |
+
+The mouse works too: click a row to go to it, double-click a folder to open it (`..` or the folder's name at the top of the pane: up), right-click to select, scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
+
+It is a first version: no menus, search, tabs or previews yet, and files can't be opened from it. It needs no display, but the Qt libraries must be installed (they come with the package).
 
 ### Open and Save windows for other apps
 

@@ -73,4 +73,14 @@ endif()
 
 # The real window, headless: what gets trashed, deleted, dropped or returned.
 argonaut_test(mainwindow LIBRARY argonaut_app TIMEOUT 300)
+# The terminal interface, drawn into a grid of cells (no terminal needed).
+argonaut_test(tui LIBRARY argonaut_tui TIMEOUT 300)
+if(TARGET argonaut-tui)
+    # The real program in a pseudo-terminal: the ncurses layer draws and lets go.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME tui_smoke COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tui_smoke.py $<TARGET_FILE:argonaut-tui>)
+        set_tests_properties(tui_smoke PROPERTIES TIMEOUT 60)
+    endif()
+endif()
 target_compile_definitions(tst_mainwindow PRIVATE FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")

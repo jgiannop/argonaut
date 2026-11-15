@@ -3,6 +3,10 @@
 #include "PropertiesDialog.h"
 #include "Theme.h"
 
+#if defined(ARGONAUT_TUI)
+#include "tui/Run.h"
+#endif
+
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -200,6 +204,14 @@ int main(int argc, char *argv[])
             return switchDefault(arg == "--make-default");
         }
     }
+
+#if defined(ARGONAUT_TUI)
+    // `argonaut --tui [folders]`: the terminal interface, no window at all.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--tui") == 0)
+            return Tui::run(argc, argv);
+    }
+#endif
 
     QApplication app(argc, argv);
     setIdentity();

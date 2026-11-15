@@ -32,6 +32,9 @@ class QuickLook;
 namespace Extensions {
 struct PreviewReply;
 }
+namespace FileRules {
+struct Question;
+}
 class FileFilterProxy;
 class FileItemDelegate;
 class FileJob;
@@ -188,6 +191,7 @@ private:
     void deleteSelection(); // permanently, after confirming
     void restoreSelection();
     void emptyTrash();
+    bool ask(const FileRules::Question &question); // one of FileRules' questions, as a dialog
     bool confirmPermanentDelete(const QStringList &paths, bool wholeTrash);
     void performDrop(const QStringList &sources, const QString &targetDir, Qt::DropAction action);
     void updateEditActions();
