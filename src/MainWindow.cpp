@@ -6,6 +6,7 @@
 #endif
 
 #include "AboutDialog.h"
+#include "AnalyzeView.h"
 #include "Access.h"
 #include "BatchRenameDialog.h"
 #include "CommandPalette.h"
@@ -48,7 +49,6 @@
 #endif
 #include "Toast.h"
 #include "Tools.h"
-#include "UsageDelegate.h"
 #include "Trash.h"
 
 #include <QAction>
@@ -230,7 +230,7 @@ void MainWindow::setupActions()
     viewGroup->addAction(m_analyzeAct);
     m_analyzeFilesAct = new QAction(tr("Show Files When Analyzing"), this);
     m_analyzeFilesAct->setCheckable(true);
-    connect(m_analyzeFilesAct, &QAction::toggled, this, &MainWindow::setAnalyzeShowFiles);
+    connect(m_analyzeFilesAct, &QAction::toggled, this, [this](bool show) { m_analyzeView->setShowFiles(show); });
 
     m_sidebarAct = new QAction(tr("Sidebar"), this);
     m_sidebarAct->setShortcut(QKeySequence(Qt::Key_F9));
@@ -874,64 +874,21 @@ QWidget *MainWindow::buildContentPane()
     });
 
 
-    // Analyze: its own model and selection; never m_view.
-    m_usageModel = new DiskUsageModel(this);
-    m_analyzeView = new QTreeView(m_viewStack);
-    m_analyzeView->setObjectName("analyzeView");
-    m_analyzeView->setModel(m_usageModel);
-    m_analyzeView->setItemDelegate(new UsageDelegate(m_analyzeView));
-    m_analyzeView->setUniformRowHeights(true);
-    m_analyzeView->setAllColumnsShowFocus(true);
-    m_analyzeView->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_analyzeView->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_analyzeView->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_analyzeView->setFrameShape(QFrame::NoFrame);
-    m_analyzeView->setSortingEnabled(true);
-    m_analyzeView->sortByColumn(DiskUsageModel::SizeColumn, Qt::DescendingOrder);
-    QHeaderView *usageColumns = m_analyzeView->header();
-    usageColumns->setStretchLastSection(false);
-    usageColumns->setHighlightSections(false);
-    usageColumns->setSectionsMovable(false);
-    usageColumns->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    usageColumns->setSectionResizeMode(DiskUsageModel::NameColumn, QHeaderView::Stretch);
-    usageColumns->resizeSection(DiskUsageModel::UsageColumn, 200);
-    usageColumns->resizeSection(DiskUsageModel::SizeColumn, 110);
-    usageColumns->resizeSection(DiskUsageModel::ItemsColumn, 130);
+    // Analyze: its own view, model and selection; never m_view.
+    m_analyzeView = new AnalyzeView(m_viewStack);
     connect(m_analyzeView, &QTreeView::customContextMenuRequested, this, &MainWindow::showAnalyzeMenu);
-    connect(m_analyzeView->selectionModel(), &QItemSelectionModel::currentChanged, this,
-            &MainWindow::updateFloatingBar);
-    connect(m_usageModel, &DiskUsageModel::progress, this, &MainWindow::updateFloatingBar);
-    connect(m_usageModel, &DiskUsageModel::finished, this, &MainWindow::updateFloatingBar);
-    // The analysed folder is the top row: keep it open.
-    connect(m_usageModel, &QAbstractItemModel::modelReset, this, [this] {
-        m_analyzeView->expand(m_usageModel->index(0, 0));
-    });
-    connect(m_usageModel, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex &parent) {
-        if (!parent.parent().isValid())
-            m_analyzeView->expand(m_usageModel->index(0, 0));
-    });
-    // Enter / double-click: a folder opens in the Analyze view, a file opens
-    // in its app (with the usual real-type checks).
-    connect(m_analyzeView, &QTreeView::activated, this, [this](const QModelIndex &index) {
-        const QString path = m_usageModel->filePath(index);
-        const int kind = index.data(DiskUsageModel::KindRole).toInt();
-        if (path.isEmpty())
-            return;
-        if (kind == DiskUsageModel::Node::File)
-            openFile(path);
-        else if (path != m_current)
+    connect(m_analyzeView, &AnalyzeView::statusChanged, this, &MainWindow::updateFloatingBar);
+    // A folder opens in the Analyze view, a file opens in its app (with the
+    // usual real-type checks).
+    connect(m_analyzeView, &AnalyzeView::fileActivated, this, &MainWindow::openFile);
+    connect(m_analyzeView, &AnalyzeView::folderActivated, this, [this](const QString &path) {
+        if (path != m_current)
             navigateTo(path);
     });
-    auto *analyzeTrash = new QAction(tr("Move to Trash"), m_analyzeView);
-    analyzeTrash->setShortcut(QKeySequence::Delete);
-    analyzeTrash->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    connect(analyzeTrash, &QAction::triggered, this, [this] {
-        const QString path = selectedAnalyzePath();
-        if (!path.isEmpty() && path != m_current)
+    connect(m_analyzeView, &AnalyzeView::trashRequested, this, [this](const QString &path) {
+        if (path != m_current) // not the folder being analysed itself
             m_ops->trash({path});
     });
-    m_analyzeView->addAction(analyzeTrash);
-
     m_viewStack->addWidget(m_analyzeView); // in the first pane only
 
     // Shown only in the Trash: what it is, plus Restore / Empty Trash.
@@ -2184,7 +2141,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         if (place)
             setGridMode(m_grid); // Analyze measures folders
         else
-            m_usageModel->setRoot(clean); // instant if it's inside what was measured
+            m_analyzeView->setFolder(clean); // instant if it's inside what was measured
     }
     m_view->scrollToTop();
 
@@ -2329,58 +2286,26 @@ void MainWindow::setAnalyzeMode(bool on)
     m_analyzeAct->setChecked(true);
     m_analyzeButton->setChecked(true);
     m_viewStack->setCurrentWidget(m_analyzeView);
-    m_usageModel->setRoot(m_current);
-    m_analyzeView->expand(m_usageModel->index(0, 0));
+    m_analyzeView->setFolder(m_current);
     m_analyzeView->setFocus();
     updateEditActions();
     updateFloatingBar();
 }
 
-// Toggling files rebuilds the tree's rows: keep the open folders open.
-void MainWindow::setAnalyzeShowFiles(bool show)
-{
-    QStringList expanded;
-    std::function<void(const QModelIndex &)> collect = [&](const QModelIndex &parent) {
-        for (int r = 0; r < m_usageModel->rowCount(parent); ++r) {
-            const QModelIndex child = m_usageModel->index(r, 0, parent);
-            if (m_analyzeView->isExpanded(child)) {
-                expanded << m_usageModel->filePath(child);
-                collect(child);
-            }
-        }
-    };
-    collect(QModelIndex());
-    const QString current = selectedAnalyzePath();
-    m_usageModel->setShowFiles(show);
-    for (const QString &path : std::as_const(expanded))
-        m_analyzeView->expand(m_usageModel->indexForPath(path));
-    if (!current.isEmpty())
-        m_analyzeView->setCurrentIndex(m_usageModel->indexForPath(current));
-}
-
-QString MainWindow::selectedAnalyzePath() const
-{
-    const QModelIndex current = m_analyzeView->currentIndex();
-    return current.isValid() ? m_usageModel->filePath(current) : QString();
-}
-
 void MainWindow::showAnalyzeMenu(const QPoint &pos)
 {
-    const QModelIndex index = m_analyzeView->indexAt(pos);
-    if (index.isValid())
-        m_analyzeView->setCurrentIndex(index);
-    const QString path = index.isValid() ? m_usageModel->filePath(index) : m_current;
+    const AnalyzeView::Row row = m_analyzeView->rowAt(pos);
+    const QString path = row.path;
     QMenu *menu = makeMenu();
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    const int kind = index.data(DiskUsageModel::KindRole).toInt();
-    if (index.isValid() && kind == DiskUsageModel::Node::File) {
+    if (row.isFile) {
         menu->addAction(tr("Open"), this, [this, path] { openFile(path); });
         menu->addAction(tr("Show in Folder"), this, [this, path] {
             navigateTo(QFileInfo(path).absolutePath());
             setGridMode(m_grid);
             selectPaths({path});
         });
-    } else if (index.isValid() && !path.isEmpty()) {
+    } else if (!path.isEmpty()) {
         menu->addAction(tr("Open Folder"), this, [this, path] {
             navigateTo(path);
             setGridMode(m_grid);
@@ -2389,7 +2314,7 @@ void MainWindow::showAnalyzeMenu(const QPoint &pos)
             ->setEnabled(path != m_current);
         menu->addAction(tr("Open in New Tab"), this, [this, path] { openTab(path, false); });
     }
-    if (index.isValid() && !path.isEmpty()) {
+    if (!path.isEmpty()) {
         menu->addAction(tr("Copy Location"), this, [path] {
             QApplication::clipboard()->setText(QDir::toNativeSeparators(path));
         });
@@ -2400,7 +2325,7 @@ void MainWindow::showAnalyzeMenu(const QPoint &pos)
         menu->addSeparator();
     }
     menu->addAction(m_analyzeFilesAct);
-    menu->addAction(tr("Scan Again"), this, [this] { m_usageModel->rescan(); });
+    menu->addAction(tr("Scan Again"), m_analyzeView, &AnalyzeView::rescan);
     menu->popup(m_analyzeView->viewport()->mapToGlobal(pos));
 }
 
@@ -2506,28 +2431,8 @@ void MainWindow::showMessage(const QString &text)
 void MainWindow::updateFloatingBar()
 {
     QString text = m_message;
-    if (text.isEmpty() && m_analyzing) {
-        if (m_usageModel->isScanning()) {
-            text = tr("Measuring… %1 in %2 items")
-                       .arg(formatSize(m_usageModel->scannedBytes()),
-                            QLocale().toString(m_usageModel->scannedItems()));
-        } else {
-            const QModelIndex current = m_analyzeView->currentIndex();
-            if (current.isValid() && current.parent().isValid()) {
-                text = tr("“%1”: %2, %3% of “%4”")
-                           .arg(current.data().toString(),
-                                formatSize(current.data(DiskUsageModel::BytesRole).toLongLong()))
-                           .arg(qRound(current.data(DiskUsageModel::FractionRole).toDouble() * 100))
-                           .arg(current.parent().data().toString());
-            } else if (m_usageModel->rowCount() > 0) {
-                text = tr("%1 on disk in %2 items")
-                           .arg(formatSize(m_usageModel->rootBytes()),
-                                QLocale().toString(m_usageModel->rootItems()));
-                if (m_usageModel->rootIncomplete())
-                    text += tr(" (some folders couldn't be read)");
-            }
-        }
-    }
+    if (text.isEmpty() && m_analyzing)
+        text = m_analyzeView->statusText();
     if (text.isEmpty() && !m_analyzing) {
         const QModelIndexList selected = selectedViewIndexes();
         if (selected.size() == 1) {
@@ -3255,33 +3160,14 @@ void MainWindow::onJobFinished(FileJob *job)
         if (m_model->isSearch())
             m_model->refresh();
     }
-    // Keep the Analyze tree right without measuring everything again: what
-    // went away leaves it (its size leaves every folder above), and what
-    // arrived (copies, moves, extracted files, a trash undone) is measured
-    // and added. Changes made by other programs: "Scan Again".
-    for (const TransferResult &r : results) {
-        switch (job->kind()) {
-        case FileJob::Kind::Trash: // it still exists (in the Trash): measure it there
-            m_usageModel->removePath(r.source, DiskUsageModel::sizeOnDisk(r.target));
-            break;
-        case FileJob::Kind::Delete:
-            m_usageModel->removePath(r.source);
-            break;
-        case FileJob::Kind::Move: // also moves its star (and those of what's inside)
-            m_usageModel->removePath(r.source, DiskUsageModel::sizeOnDisk(r.target));
-            m_usageModel->addPath(r.target);
+    // A moved item takes its star (and those of what's inside) with it.
+    if (job->kind() == FileJob::Kind::Move) {
+        for (const TransferResult &r : results)
             Starred::instance().renamed(r.source, r.target);
-            break;
-        case FileJob::Kind::Copy:
-        case FileJob::Kind::Restore:
-        case FileJob::Kind::Extract:
-        case FileJob::Kind::Compress:
-            m_usageModel->addPath(r.target);
-            break;
-        }
     }
-    if (m_analyzing && m_usageModel->rowCount() == 0)
-        m_usageModel->setRoot(m_current); // the shown folder itself went: measure again
+    m_analyzeView->applyJob(job->kind(), results);
+    if (m_analyzing && m_analyzeView->isEmpty())
+        m_analyzeView->setFolder(m_current); // the shown folder itself went: measure again
 
     if (job->isCanceled()) {
         showMessage(tr("Canceled"));

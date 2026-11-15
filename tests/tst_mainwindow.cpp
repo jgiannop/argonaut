@@ -9,7 +9,9 @@
 
 #include "DirectoryModel.h"
 #include "FileOperations.h"
+#include "AnalyzeView.h"
 #include "Bookmarks.h"
+#include "DiskUsageModel.h"
 #include "InlineRename.h"
 #include "MainWindow.h"
 #include "MountActions.h"
@@ -60,6 +62,7 @@ private slots:
     void deleteInsideTheTrashIsConfirmed();
     void emptyTrashAsksAndTouchesOnlyTheTrash();
     void analyzeViewTurnsFileCommandsOff();
+    void analyzeViewMeasuresAndTrashesOnlyItsRow();
     void readOnlyFolderOnlyAllowsCopy();
     void cutIsPastedOnce();
     void dropRules();
@@ -306,6 +309,57 @@ void TestMainWindow::analyzeViewTurnsFileCommandsOff()
     QTest::qWait(200);
     QVERIFY(exists(a));
     QCOMPARE(m_asked, 0);
+}
+
+// The Analyze page has its own selection: Delete there trashes the row
+// chosen there (never the folder being analysed itself), and the tree stays
+// right afterwards without measuring again.
+void TestMainWindow::analyzeViewMeasuresAndTrashesOnlyItsRow()
+{
+    make("big/data.bin", QByteArray(400 * 1000, 'x'));
+    make("small/note.txt");
+    const QString keep = make("keep.txt");
+    open(m_dir);
+    select({keep}); // selected in the file view: must not matter below
+
+    w->m_analyzeAct->trigger();
+    AnalyzeView *view = w->m_analyzeView;
+    QTRY_VERIFY_WITH_TIMEOUT(view->statusText().contains("on disk"), 10000);
+    auto *usage = qobject_cast<DiskUsageModel *>(view->model());
+    QVERIFY(usage);
+    const QModelIndex big = usage->indexForPath(m_dir + "/big");
+    QVERIFY(big.isValid());
+    view->setCurrentIndex(big);
+    QCOMPARE(view->selectedRow().path, m_dir + "/big");
+    QVERIFY(!view->selectedRow().isFile);
+    QVERIFY(view->statusText().contains("big")); // the row's share
+
+    QAction *trash = view->actions().value(0);
+    QVERIFY(trash);
+    runJob([&] { trash->trigger(); });
+    QVERIFY(!exists(m_dir + "/big"));
+    QVERIFY(exists(inTrash("big")));
+    QVERIFY(exists(keep) && exists(m_dir + "/small/note.txt"));
+    QTRY_VERIFY(!usage->indexForPath(m_dir + "/big").isValid()); // gone from the tree too
+    QVERIFY(!view->isEmpty());
+
+    // The top row is the folder being analysed: Delete does nothing to it.
+    view->setCurrentIndex(usage->index(0, 0));
+    QCOMPARE(view->selectedRow().path, m_dir);
+    trash->trigger();
+    QTest::qWait(200);
+    QVERIFY(exists(m_dir) && exists(keep));
+
+    // Biggest files as rows of their own, with the open folders kept open.
+    runJob([&] { w->m_undoAct->trigger(); });
+    QTRY_VERIFY(usage->indexForPath(m_dir + "/big").isValid());
+    view->expand(usage->indexForPath(m_dir + "/big"));
+    view->setShowFiles(true);
+    QVERIFY(view->isExpanded(usage->indexForPath(m_dir + "/big")));
+    const QModelIndex file = usage->indexForPath(m_dir + "/big/data.bin");
+    QVERIFY(file.isValid());
+    view->setCurrentIndex(file);
+    QVERIFY(view->selectedRow().isFile);
 }
 
 // Items in a folder you can't change: Copy works, nothing that would move or

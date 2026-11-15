@@ -27,7 +27,7 @@ class DirectoryModel;
 class InlineRename;
 class MountActions;
 class Sidebar;
-class DiskUsageModel;
+class AnalyzeView;
 class QuickLook;
 class FileFilterProxy;
 class FileItemDelegate;
@@ -140,8 +140,6 @@ private:
     // tree (DiskUsageModel). File actions are off while it shows.
     void setAnalyzeMode(bool on);
     void showAnalyzeMenu(const QPoint &pos);
-    QString selectedAnalyzePath() const;
-    void setAnalyzeShowFiles(bool show);
     void setShowHidden(bool show);
     void setSearchActive(bool active);
     void updateFilter();
@@ -248,8 +246,7 @@ private:
     QAbstractItemView *m_view = nullptr; // the visible one of the two below
     QListView *m_iconView = nullptr;      // grid
     QTreeView *m_detailView = nullptr;    // list with columns
-    QTreeView *m_analyzeView = nullptr;   // Analyze: folder sizes as a tree
-    DiskUsageModel *m_usageModel = nullptr;
+    AnalyzeView *m_analyzeView = nullptr;   // Analyze: folder sizes as a tree
     QAction *m_analyzeAct = nullptr;      // Ctrl+3
     QAction *m_analyzeFilesAct = nullptr; // Analyze: also list the biggest files
     QToolButton *m_analyzeButton = nullptr;

@@ -140,6 +140,8 @@ qt_add_library(argonaut_app STATIC
     src/QuickLook.h
     src/UsageDelegate.cpp
     src/UsageDelegate.h
+    src/AnalyzeView.h
+    src/AnalyzeView.cpp
     src/CompressDialog.h
     src/PropertiesDialog.cpp
     src/BatchRenameDialog.h
