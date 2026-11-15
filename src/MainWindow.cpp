@@ -5422,6 +5422,9 @@ void MainWindow::startChooser(const ChooserRequest &request)
 
     // Only the size is remembered. It opens in the middle of the screen with
     // the mouse, i.e. where the app that asked was just clicked.
+    // The constructor restored the file manager's own window state: if that
+    // window was last closed maximised, this one would open maximised too.
+    setWindowState(windowState() & ~(Qt::WindowMaximized | Qt::WindowFullScreen));
     const QSize size = QSettings().value("chooser/size").toSize();
     resize(size.isValid() ? size : QSize(960, 620));
     if (QScreen *screen = QGuiApplication::screenAt(QCursor::pos())) {
