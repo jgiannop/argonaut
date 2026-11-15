@@ -1,6 +1,8 @@
 #include "QuickLook.h"
 
 #include "Format.h"
+#include "RichTextStyle.h"
+#include "Theme.h"
 #include "Thumbnailer.h"
 
 #include <QApplication>
@@ -252,6 +254,7 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
             m_rich->setMarkdown(reply.text);
         else
             m_rich->setHtml(reply.text);
+        RichTextStyle::apply(m_rich->document(), currentTheme());
         m_pages->setCurrentWidget(m_rich);
         m_kind = Preview::Kind::Text;
         break;

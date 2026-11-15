@@ -19,6 +19,8 @@
 #include "MountActions.h"
 #include "PathBar.h"
 #include "QuickLook.h"
+#include "RichTextStyle.h"
+#include "Theme.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
 #include "TestSupport.h"
@@ -46,6 +48,9 @@
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextTable>
 #include <QTimer>
 #include <QUrl>
 #include <QtTest>
@@ -90,6 +95,7 @@ private slots:
     void extensionsWindowListsAndSwitches();
     void fadeNeverGetsInTheWay();
     void previewFromAnExtension();
+    void richTextGetsAPageLook();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1156,6 +1162,65 @@ void TestMainWindow::previewFromAnExtension()
     QTRY_COMPARE_WITH_TIMEOUT(preview->kind(), Preview::Kind::Blocked, 10000);
     QVERIFY(!preview->fromExtension());
     host->setEnabled("fake", false);
+}
+
+// Markdown in the preview pane: Qt formats it, RichTextStyle gives it the
+// look of a page, and never touches the text itself.
+void TestMainWindow::richTextGetsAPageLook()
+{
+    QTextDocument doc;
+    doc.setMarkdown("# Title\n\nText with `code` and a [link](https://example.org).\n\n"
+                    "> quoted\n\n```\nline one\nline two\n```\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+    const QString before = doc.toPlainText();
+    const Theme theme = currentTheme();
+    RichTextStyle::apply(&doc, theme);
+    QCOMPARE(doc.toPlainText(), before);
+
+    auto blockWith = [&](const QString &text) {
+        for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+            if (b.text().contains(text))
+                return b;
+        }
+        return QTextBlock();
+    };
+    auto formatOf = [&](const QString &text) {
+        const QTextBlock b = blockWith(text);
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            if (it.fragment().text().contains(text))
+                return it.fragment().charFormat();
+        }
+        return QTextCharFormat();
+    };
+    const qreal body = doc.defaultFont().pointSizeF() > 0 ? doc.defaultFont().pointSizeF() : 10;
+    // A heading is clearly bigger than the text, and bold.
+    QVERIFY(formatOf("Title").fontPointSize() > body * 1.5);
+    QCOMPARE(formatOf("Title").fontWeight(), int(QFont::Bold));
+    QVERIFY(!formatOf("Title").hasProperty(QTextFormat::FontSizeAdjustment));
+    // A link has the theme's colour; code in a line is tinted and fixed-width.
+    QCOMPARE(formatOf("link").foreground().color(), theme.accent);
+    QVERIFY(formatOf("code").fontFixedPitch());
+    QVERIFY(formatOf("code").background().style() != Qt::NoBrush);
+    // A code block is one tinted box that wraps.
+    const QTextBlock one = blockWith("line one"), two = blockWith("line two");
+    QVERIFY(one.blockFormat().background().style() != Qt::NoBrush);
+    QVERIFY(!one.blockFormat().nonBreakableLines());
+    QCOMPARE(one.blockFormat().bottomMargin(), 0.0);
+    QCOMPARE(two.blockFormat().topMargin(), 0.0);
+    // A quote is set in and lighter; ordinary text has room between lines.
+    QVERIFY(blockWith("quoted").blockFormat().leftMargin() > 0);
+    QVERIFY(formatOf("quoted").foreground().color() != theme.fg);
+    QCOMPARE(blockWith("Text with").blockFormat().lineHeight(), 130.0);
+    // A table has lines and a bold header row.
+    QTextTable *table = nullptr;
+    for (auto it = doc.rootFrame()->begin(); !it.atEnd(); ++it) {
+        if (auto *t = qobject_cast<QTextTable *>(it.currentFrame()))
+            table = t;
+    }
+    QVERIFY(table);
+    QCOMPARE(table->format().border(), 1.0);
+    QVERIFY(table->format().borderCollapse());
+    QCOMPARE(table->cellAt(0, 0).firstCursorPosition().block().begin().fragment().charFormat().fontWeight(), int(QFont::Bold));
+    QVERIFY(table->cellAt(1, 0).firstCursorPosition().block().begin().fragment().charFormat().fontWeight() != int(QFont::Bold));
 }
 
 #include "tst_mainwindow.moc"
