@@ -941,7 +941,14 @@ QWidget *MainWindow::buildContentPane()
     m_contentSplitter->addWidget(buildTerminalPanel());
 #endif
     m_contentSplitter->setStretchFactor(0, 1);
-    layout->addWidget(m_contentSplitter, 1);
+    // The preview pane (Space) is added at the right on first use.
+    m_previewSplitter = new QSplitter(Qt::Horizontal, pane);
+    m_previewSplitter->setObjectName("previewSplitter");
+    m_previewSplitter->setChildrenCollapsible(false);
+    m_previewSplitter->setHandleWidth(1);
+    m_previewSplitter->addWidget(m_contentSplitter);
+    m_previewSplitter->setStretchFactor(0, 1);
+    layout->addWidget(m_previewSplitter, 1);
 
 
     m_opsPanel = new OperationsPanel(m_ops, m_pane->viewStack);
@@ -1011,14 +1018,14 @@ void MainWindow::activatePane(int index)
     if (index == m_activePane || index < 0 || index >= m_paneCount || inBackground())
         return;
     m_rename->cancel();
-    if (m_quickLook)
-        m_quickLook->hide();
     setSearchActive(false); // the search field belongs to the active pane
     if (m_analyzing)
         setGridMode(m_pane->grid); // Analyze is the first pane's
     m_activePane = index;
     m_pane = &m_panes[index];
     refreshChrome();
+    if (quickLookVisible())
+        updateQuickLook(); // the preview shows the pane you are in
     if (!m_pane->view->hasFocus())
         m_pane->view->setFocus();
 }
@@ -1897,6 +1904,7 @@ void MainWindow::loadSettings()
     if (settings.contains("window/sidebarSplitter"))
         m_splitter->restoreState(settings.value("window/sidebarSplitter").toByteArray());
     m_terminalHeight = settings.value("window/terminalHeight", 0).toInt();
+    m_previewWidth = settings.value("window/previewWidth", 0).toInt();
     if (settings.contains("view/listHeader"))
         m_pane->detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
     m_listColumns = settings.value("view/listColumns").toStringList();
@@ -1946,6 +1954,9 @@ void MainWindow::saveSettings()
     if (m_terminalPanel && m_terminalPanel->isVisible())
         m_terminalHeight = m_terminalPanel->height();
     settings.setValue("window/terminalHeight", m_terminalHeight);
+    if (quickLookVisible())
+        m_previewWidth = m_quickLook->width();
+    settings.setValue("window/previewWidth", m_previewWidth);
     settings.setValue("view/listHeader", m_pane->detailView->header()->saveState());
     settings.setValue("view/listColumns", m_listColumns);
     settings.setValue("view/sortColumn", m_pane->recentSort ? m_pane->sortColumnBefore : m_pane->model->sortColumn());
@@ -2044,7 +2055,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 
     m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
     if (m_quickLook && !inBackground())
-        m_quickLook->hide();
+        m_quickLook->clear(); // stays open; the next selected file fills it
     m_pane->model->setPath(clean);
     // Recent: newest first. The folder sort comes back when leaving it.
     const bool recent = DirectoryModel::placeOf(clean) == DirectoryModel::Place::Recent;
@@ -2200,8 +2211,7 @@ void MainWindow::setAnalyzeMode(bool on)
         activatePane(0); // Analyze lives in the first pane
     m_rename->cancel();
     setSearchActive(false); // search is about files; Analyze shows folders
-    if (m_quickLook)
-        m_quickLook->hide();
+    hideQuickLook();
     m_analyzing = true;
     m_analyzeAct->setChecked(true);
     m_analyzeButton->setChecked(true);
@@ -2678,7 +2688,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 return true;
             }
             if (key->key() == Qt::Key_Escape && quickLookVisible()) {
-                m_quickLook->hide();
+                hideQuickLook();
                 return true;
             }
             if (watched == m_pane->detailView && handleTreeKey(key))
@@ -4103,42 +4113,54 @@ bool MainWindow::quickLookVisible() const
     return m_quickLook && m_quickLook->isVisible();
 }
 
+void MainWindow::hideQuickLook()
+{
+    if (!quickLookVisible())
+        return;
+    m_previewWidth = m_quickLook->width();
+    m_quickLook->hide();
+}
+
 void MainWindow::toggleQuickLook()
 {
     if (quickLookVisible()) {
-        m_quickLook->hide();
+        hideQuickLook();
         return;
     }
-    if (m_analyzing || !m_pane->view->currentIndex().isValid())
+    if (m_analyzing)
         return;
     if (!m_quickLook) {
-        m_quickLook = new QuickLook(m_thumbnailer, this);
-        connect(m_quickLook, &QuickLook::navigate, this, [this](QKeyEvent *key) {
-            QKeyEvent copy(QEvent::KeyPress, key->key(), key->modifiers(), key->text());
-            QApplication::sendEvent(m_pane->view, &copy);
-        });
+        m_quickLook = new QuickLook(m_thumbnailer, m_previewSplitter);
+        m_previewSplitter->addWidget(m_quickLook);
+        m_previewSplitter->setStretchFactor(1, 0);
+        connect(m_quickLook, &QuickLook::closeRequested, this, &MainWindow::hideQuickLook);
         connect(m_quickLook, &QuickLook::openRequested, this, [this](const QString &path) {
-            m_quickLook->hide();
             if (QFileInfo(path).isDir())
                 navigateTo(path);
             else
                 openFile(path);
         });
     }
-    // Over the middle of the window, a little smaller than it.
-    const QSize size(qBound(480, width() * 3 / 4, 1100), qBound(380, height() * 4 / 5, 900));
-    m_quickLook->resize(size);
-    m_quickLook->move(mapToGlobal(QPoint((width() - size.width()) / 2, (height() - size.height()) / 2)));
-    updateQuickLook();
+    // The width it had last time, else two fifths of the room; the files
+    // always keep a usable part.
+    const int total = m_previewSplitter->width();
+    int width = m_previewWidth > 0 ? m_previewWidth : total * 2 / 5;
+    width = qBound(m_quickLook->minimumWidth(), width, qMax(m_quickLook->minimumWidth(), total - 320));
     m_quickLook->show();
+    m_previewSplitter->setSizes({total - width, width});
+    updateQuickLook();
     m_pane->view->setFocus(); // keys keep going to the file view
 }
 
 void MainWindow::updateQuickLook()
 {
-    const QModelIndex view = m_pane->view->currentIndex();
-    if (!view.isValid() || !m_quickLook)
+    if (!m_quickLook)
         return;
+    const QModelIndex view = m_pane->view->currentIndex();
+    if (!view.isValid()) {
+        m_quickLook->clear();
+        return;
+    }
     const QModelIndex source = toSource(view.siblingAtColumn(0));
     QuickLook::Item item;
     item.path = m_pane->model->filePath(source);

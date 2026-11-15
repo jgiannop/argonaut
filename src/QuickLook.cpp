@@ -7,7 +7,6 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QKeyEvent>
 #include <QLabel>
 #include <QMovie>
 #include <QPainter>
@@ -16,6 +15,7 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QThreadPool>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -54,12 +54,12 @@ private:
 };
 
 QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
-    : QWidget(parent, Qt::Tool), m_thumbnailer(thumbnailer)
+    : QWidget(parent), m_thumbnailer(thumbnailer)
 {
     setObjectName("quickLook");
     setAttribute(Qt::WA_StyledBackground);
-    setAttribute(Qt::WA_ShowWithoutActivating); // the file view keeps the keyboard
-    setWindowTitle(tr("Preview"));
+    setFocusPolicy(Qt::NoFocus); // the file view keeps the keyboard
+    setMinimumWidth(240);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(18, 14, 18, 14);
@@ -69,7 +69,21 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_title->setTextInteractionFlags(Qt::NoTextInteraction);
     m_details = new QLabel(this);
     m_details->setObjectName("qlDetails");
-    layout->addWidget(m_title);
+    // A long name is cut off; it must not make the pane wider.
+    m_title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_details->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_details->setWordWrap(true);
+    auto *close = new QToolButton(this);
+    close->setObjectName("qlClose");
+    close->setText(QStringLiteral("✕"));
+    close->setToolTip(tr("Close Preview (Space)"));
+    close->setFocusPolicy(Qt::NoFocus);
+    close->setAutoRaise(true);
+    connect(close, &QToolButton::clicked, this, &QuickLook::closeRequested);
+    auto *top = new QHBoxLayout;
+    top->addWidget(m_title, 1);
+    top->addWidget(close);
+    layout->addLayout(top);
     layout->addWidget(m_details);
 
     m_pages = new QStackedWidget(this);
@@ -111,6 +125,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     auto *bottom = new QHBoxLayout;
     m_note = new QLabel(this);
     m_note->setObjectName("qlDetails");
+    m_note->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     bottom->addWidget(m_note, 1);
     m_open = new QPushButton(tr("Open"), this);
     m_open->setObjectName("prefButton");
@@ -118,8 +133,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     connect(m_open, &QPushButton::clicked, this, [this] { emit openRequested(m_item.path); });
     bottom->addWidget(m_open);
     layout->addLayout(bottom);
-
-    resize(760, 560);
+    clear();
 }
 
 QSize QuickLook::pictureBox() const
@@ -138,7 +152,6 @@ void QuickLook::showItem(const Item &item)
     m_details->setText(item.details);
     m_note->clear();
     m_open->setEnabled(item.verdict != ContentType::Verdict::Dangerous);
-    setWindowTitle(item.name);
     if (m_movie) {
         m_movie->stop();
         m_movie->deleteLater();
@@ -158,6 +171,25 @@ void QuickLook::showItem(const Item &item)
                 self->apply(generation, result);
         }, Qt::QueuedConnection);
     });
+}
+
+void QuickLook::clear()
+{
+    ++m_generation; // drop what's still loading
+    m_item = Item();
+    m_kind = Preview::Kind::Generic;
+    if (m_movie) {
+        m_movie->stop();
+        m_movie->deleteLater();
+        m_movie = nullptr;
+    }
+    m_title->setText(tr("Preview"));
+    m_details->clear();
+    m_note->clear();
+    m_infoIcon->clear();
+    m_infoText->setStyleSheet(QString());
+    m_open->setEnabled(false);
+    showInfo(tr("Select a file to preview it"));
 }
 
 void QuickLook::showInfo(const QString &message)
@@ -232,33 +264,6 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
         break;
     }
     m_infoText->setStyleSheet(QString());
-}
-
-void QuickLook::keyPressEvent(QKeyEvent *event)
-{
-    switch (event->key()) {
-    case Qt::Key_Space:
-    case Qt::Key_Escape:
-        hide();
-        return;
-    case Qt::Key_Return:
-    case Qt::Key_Enter:
-        if (m_open->isEnabled())
-            emit openRequested(m_item.path);
-        return;
-    case Qt::Key_Left:
-    case Qt::Key_Right:
-    case Qt::Key_Up:
-    case Qt::Key_Down:
-    case Qt::Key_Home:
-    case Qt::Key_End:
-    case Qt::Key_PageUp:
-    case Qt::Key_PageDown:
-        emit navigate(event); // move in the file view; the preview follows
-        return;
-    default:
-        QWidget::keyPressEvent(event);
-    }
 }
 
 void QuickLook::hideEvent(QHideEvent *event)

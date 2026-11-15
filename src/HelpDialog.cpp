@@ -339,8 +339,9 @@ Search, the Trash, Recent and Starred always show a plain list.</p>
 <p>[[Ctrl+H]] shows or hides dot-files and backups (names ending in ~).</p>
 <h2>Quick Look</h2>
 <p>Select a file and press [[Space]] for a preview without opening an app: photos, PDFs, videos, fonts,
-text and code, what's inside archives, and folders. The arrow keys move to the next file, [[Enter]]
-opens it, and [[Space]] or [[Esc]] closes the preview.</p>
+text and code, what's inside archives, and folders. The preview is a pane at the right of the files;
+drag its edge to make it wider. It follows the file you select, so the arrow keys go through a folder.
+[[Space]] or [[Esc]] closes it, and it remembers its width.</p>
 <h2>Split view</h2>
 <p>[[F3]] shows two folders side by side. [[F5]] copies the selection to the other side and [[F6]]
 moves it; you can also drag between them. Every shortcut acts on the side you're working in.</p>

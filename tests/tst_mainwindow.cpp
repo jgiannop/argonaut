@@ -16,6 +16,7 @@
 #include "MainWindow.h"
 #include "MountActions.h"
 #include "PathBar.h"
+#include "QuickLook.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
 #include "TestSupport.h"
@@ -38,6 +39,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QSplitter>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
@@ -78,6 +80,7 @@ private slots:
     void inlineRenameRenamesAndRefusesTakenNames();
     void ejectLeavesTheDriveAndRunsTheTool();
     void sidebarListsPlacesAndFollowsBookmarks();
+    void previewIsAPaneThatFollowsTheSelection();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -943,6 +946,40 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName("ArgonautTest");
     TestMainWindow test(root);
     return QTest::qExec(&test, argc, argv);
+}
+
+// Space: the preview is a pane inside the window, at the right of the files.
+// It follows the selected file, stays through a folder change (empty until
+// something is selected), and Space again closes it.
+void TestMainWindow::previewIsAPaneThatFollowsTheSelection()
+{
+    const QString a = make("notes.txt"), b = make("other.txt");
+    QDir(m_dir).mkdir("sub");
+    open(m_dir);
+    auto current = [&](const QString &path) {
+        w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(path)));
+    };
+    current(a);
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *preview = w->m_quickLook;
+    QVERIFY(!preview->isWindow()); // inside the main window,
+    QCOMPARE(preview->parentWidget(), w->m_previewSplitter);
+    QVERIFY(preview->mapTo(w.get(), QPoint(0, 0)).x() // at the right of the files
+            > w->m_pane->view->mapTo(w.get(), QPoint(0, 0)).x());
+    QCOMPARE(preview->path(), a);
+    QTRY_COMPARE(preview->kind(), Preview::Kind::Text);
+
+    current(b); // it follows the selection
+    QCOMPARE(preview->path(), b);
+
+    open(m_dir + "/sub"); // and stays, empty, in another folder
+    QVERIFY(w->quickLookVisible());
+    QVERIFY(preview->path().isEmpty());
+
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(!w->quickLookVisible());
+    QVERIFY(exists(a) && exists(b)); // looking changes nothing
 }
 
 #include "tst_mainwindow.moc"

@@ -13,11 +13,11 @@ class QStackedWidget;
 class QTreeWidget;
 class Thumbnailer;
 
-// Quick Look (Space): a preview of the current file in a window over the
-// main one. The content is loaded on a worker (Preview::load), so a slow
-// file never blocks; a newer request replaces an older one. Keys: Space and
-// Esc close, Enter opens, arrows (and Home/End/Page keys) go to the next
-// file in the view (navigate()).
+// Quick Look (Space): a preview of the current file, as a pane at the right
+// of the window. The content is loaded on a worker (Preview::load), so a
+// slow file never blocks; a newer request replaces an older one. It never
+// takes the keyboard: the file view keeps it, and the window sends the pane
+// each newly selected file.
 class QuickLook : public QWidget
 {
     Q_OBJECT
@@ -36,15 +36,15 @@ public:
     QuickLook(Thumbnailer *thumbnailer, QWidget *parent);
 
     void showItem(const Item &item);
+    void clear(); // nothing is selected
     QString path() const { return m_item.path; }
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
 
 signals:
-    void navigate(QKeyEvent *event); // a key for the file view
     void openRequested(const QString &path);
+    void closeRequested();
 
 protected:
-    void keyPressEvent(QKeyEvent *event) override;
     void hideEvent(QHideEvent *event) override;
 
 private:

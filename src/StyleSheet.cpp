@@ -163,6 +163,9 @@ QCheckBox#prefCheck::indicator { width: 14px; height: 14px; border: 1px solid @d
     border-radius: 4px; background: @pathBg; }
 QCheckBox#prefCheck::indicator:checked { background: @accent; border-color: @accent; }
 QWidget#quickLook { background: @window; }
+QSplitter#previewSplitter::handle { background: @border; }
+QToolButton#qlClose { color: @dim; border: none; padding: 2px 6px; border-radius: 6px; }
+QToolButton#qlClose:hover { color: @fg; background: @hover; }
 QLabel#paneCaption { background: @window; color: @dim; padding: 5px 14px; border-bottom: 1px solid @border; }
 QLabel#paneCaption[active="true"] { color: @accent; font-weight: bold; }
 QSplitter#paneSplitter::handle { background: @border; }

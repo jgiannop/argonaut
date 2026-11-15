@@ -303,7 +303,10 @@ private:
     QAction *m_redoAct = nullptr;         // Ctrl+Shift+Z / Ctrl+Y
     QAction *m_starAct = nullptr;         // Star / Unstar the selection
     QAction *m_previewAct = nullptr;      // Quick Look (Space, handled in eventFilter)
-    QuickLook *m_quickLook = nullptr;     // made on first use
+    QuickLook *m_quickLook = nullptr;     // the preview pane at the right; made on first use
+    QSplitter *m_previewSplitter = nullptr; // files (and terminal) | preview
+    int m_previewWidth = 0;               // the pane's last width (view/previewWidth)
+    void hideQuickLook();
     QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
     QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
     QAction *m_zoomOutAct = nullptr;      // Ctrl+-
