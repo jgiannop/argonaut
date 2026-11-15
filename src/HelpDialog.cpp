@@ -549,9 +549,12 @@ This is the Git extension: switch it off in <b>Preferences → Extensions</b> if
 )"));
 
     add("extensions", tr("Extensions"), tr(R"(
-<p>Extensions are small programs that add to what the file views show: a mark on some files (a letter or a
-dot, like Git's <b>M</b>) and a short text at the right end of the path bar. Git support is an extension that
-comes with Argonaut.</p>
+<p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
+<b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. Three come
+with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
+<b>Send by Email</b> and <b>Set as Background</b>.</p>
+<p>A command from an extension is carried out by the extension, not by Argonaut, so [[Ctrl+Z]] doesn't undo
+it.</p>
 <h2>Switching them on and off</h2>
 <p><b>Preferences → Extensions</b> lists every extension found, with a switch for each. Those that come with
 Argonaut are on; any other is <b>off until you switch it on</b>.</p>

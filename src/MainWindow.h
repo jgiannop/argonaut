@@ -278,9 +278,8 @@ private:
     QString m_springPath;
     int m_springPane = 0;
     void springOver(const QString &folder, int pane);
-    // Right-click extras: Send by Email…, Set as Background, Scripts ▸.
-    void sendByEmail(const QStringList &paths);
-    void setAsBackground(const QString &image);
+    // Right-click extras: extensions' commands, Scripts ▸.
+    void addExtensionCommands(QMenu *menu, const QStringList &selection);
     QMenu *scriptsMenu(const QStringList &selection);
     void organizeWithClaude();
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);

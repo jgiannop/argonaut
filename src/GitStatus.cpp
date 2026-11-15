@@ -68,6 +68,41 @@ GitStatus::~GitStatus()
     }
 }
 
+bool GitStatus::run(const QStringList &arguments, const QStringList &paths, QString *error)
+{
+    auto fail = [&](const QString &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    if (m_root.isEmpty() || m_blocked || m_tooSlow || !m_ready)
+        return fail(QStringLiteral("This repository isn't checked, so nothing was done."));
+    const QString prefix = m_root + QLatin1Char('/');
+    for (const QString &path : paths) {
+        if (!path.startsWith(prefix))
+            return fail(QStringLiteral("Not in this repository: %1").arg(path));
+    }
+    QProcess process;
+    prepare(&process, m_root);
+    QProcessEnvironment env = process.processEnvironment();
+    env.remove(QStringLiteral("GIT_OPTIONAL_LOCKS")); // this one changes the index
+    process.setProcessEnvironment(env);
+    process.start(gitProgram(), QStringList{QStringLiteral("-c"), QStringLiteral("core.hooksPath=/dev/null"),
+                                            QStringLiteral("-c"), QStringLiteral("core.fsmonitor=false")}
+                                    + arguments + QStringList{QStringLiteral("--")} + paths);
+    if (!process.waitForFinished(15000)) {
+        process.kill();
+        process.waitForFinished(500);
+        return fail(QStringLiteral("git took too long."));
+    }
+    refresh();
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString said = QString::fromUtf8(process.readAllStandardError()).trimmed();
+        return fail(said.isEmpty() ? QStringLiteral("git failed.") : said.section(QLatin1Char('\n'), 0, 0));
+    }
+    return true;
+}
+
 QList<GitStatus::Mark> GitStatus::marks(const QString &folder) const
 {
     QList<Mark> out;

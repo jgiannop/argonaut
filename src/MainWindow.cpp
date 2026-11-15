@@ -134,6 +134,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_ops = new FileOperations(this);
     m_ops->setAskOnConflict(true);
     connect(m_ops, &FileOperations::jobFinished, this, &MainWindow::onJobFinished);
+    // What an extension has to say ("Staged", "Background changed"): in the window in front.
+    connect(Extensions::Host::instance(), &Extensions::Host::message, this, [this](const QString &, const QString &text) {
+        if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
+            showMessage(text);
+    });
     connect(m_ops, &FileOperations::conflictRaised, this, &MainWindow::askConflict);
     connect(m_ops, &FileOperations::undoChanged, this, &MainWindow::updateEditActions);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this,
@@ -1745,17 +1750,41 @@ void MainWindow::springOver(const QString &folder, int pane)
     navigateTo(folder);
 }
 
-// Opens the email app with the files attached; it sends nothing.
-void MainWindow::sendByEmail(const QStringList &paths)
+// The commands extensions offer for these items (none: for the open folder's
+// empty space). The extension does the work itself, with the paths; nothing
+// goes through our file operations, so Undo doesn't know about it.
+void MainWindow::addExtensionCommands(QMenu *menu, const QStringList &selection)
 {
-    if (!DesktopActions::sendByEmail(paths))
-        showMessage(tr("Couldn't open the email app (xdg-email is missing)"));
-}
-
-void MainWindow::setAsBackground(const QString &image)
-{
-    QString error;
-    showMessage(DesktopActions::setAsBackground(image, &error) ? tr("Background changed") : error);
+    if (m_chooser || m_pane->model->isTrash())
+        return;
+    QList<Extensions::Item> items;
+    for (const QString &path : selection) {
+        const QModelIndex source = m_pane->model->indexForPath(path);
+        if (!source.isValid())
+            return;
+        const bool dir = m_pane->model->isDir(source);
+        items.append({path, dir ? QStringLiteral("inode/directory") : effectiveMimeAt(source), dir});
+    }
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString folder = m_pane->model->extensionsFolder();
+    const QList<Extensions::Command> commands = host->commands(folder, items);
+    for (const Extensions::Command &command : commands) {
+        menu->addAction(command.label, this, [this, command, folder, selection] {
+            Extensions::Host *host = Extensions::Host::instance();
+            if (!command.confirm.isEmpty()) {
+                QMessageBox box(QMessageBox::Question, host->nameOf(command.extension), command.confirm,
+                                QMessageBox::NoButton, this);
+                box.setTextFormat(Qt::PlainText);
+                QPushButton *go = box.addButton(QString(command.label).remove(QStringLiteral("…")), QMessageBox::AcceptRole);
+                box.addButton(QMessageBox::Cancel);
+                box.setDefaultButton(QMessageBox::Cancel);
+                box.exec();
+                if (box.clickedButton() != go)
+                    return;
+            }
+            host->invoke(command, folder, selection);
+        });
+    }
 }
 
 // Scripts ▸: the user's Nautilus scripts, run on `selection`. Sub-folders
@@ -2932,18 +2961,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         const QStringList files = selectedFiles();
         if (!m_pane->model->isDir(toSource(index)) && OpenWith::isSupported() && !files.isEmpty())
             menu->addMenu(openWithMenu(files));
-#if defined(Q_OS_LINUX)
-        {
-            // Send by Email… (files only) and Set as Background (one image).
-            if (!files.isEmpty() && files.size() == selectedPaths().size() && !m_pane->model->isTrash())
-                menu->addAction(tr("Send by Email…"), this, [this, files] { sendByEmail(files); });
-            static const QMimeDatabase mimeDb;
-            if (files.size() == 1 && selectedPaths().size() == 1 && !m_pane->model->isTrash()
-                && mimeDb.mimeTypeForFile(files.first()).name().startsWith(QLatin1String("image/"))
-                && !qEnvironmentVariable("XDG_CURRENT_DESKTOP").isEmpty())
-                menu->addAction(tr("Set as Background"), this, [this, image = files.first()] { setAsBackground(image); });
-        }
-#endif
+        addExtensionCommands(menu, selectedPaths());
         if ((m_pane->model->isSearch() || m_pane->model->isVirtual()) && selectedViewIndexes().size() == 1)
             menu->addAction(m_openLocationAct);
         if (m_pane->model->isDir(toSource(index)))
@@ -2998,6 +3016,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
         menu->addSeparator();
         menu->addAction(m_organizeAct);
+        addExtensionCommands(menu, {});
         if (QMenu *scripts = scriptsMenu({})) {
             menu->addSeparator();
             menu->addMenu(scripts);

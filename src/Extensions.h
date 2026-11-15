@@ -4,9 +4,12 @@
 #include <QList>
 #include <QMetaType>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
+class QJsonObject;
+class QJsonValue;
 class QProcess;
 
 // Extensions: separate programs that add to what the file views show (core
@@ -16,7 +19,10 @@ class QProcess;
 // starts the program once and talks to it in JSON, one message per line, on
 // its standard input and output. It tells the extension which folders are
 // shown; the extension answers with marks for the items in them (a letter or
-// a dot, in one of a few colours) and a short text for the path bar.
+// a dot, in one of a few colours) and a short text for the path bar. It can
+// also offer commands for the right-click menu: Argonaut tells it which one
+// was chosen and for which items, and the extension does the work itself.
+// Extensions never get to use Argonaut's own copying, moving or undo.
 //
 // An extension is a program with the user's rights: one from the user's own
 // folder runs only after it is switched on in Preferences. What it sends is
@@ -42,6 +48,29 @@ struct Info
     QString text;    // empty: nothing shown
     QString tooltip;
     QString icon;    // "branch" or empty
+};
+
+// A command an extension offers in the right-click menu.
+struct Command
+{
+    QString extension;  // its extension's id
+    QString id;
+    QString label;
+    QString confirm;    // asked before it runs ("Discard the changes?"); empty: not asked
+    bool onFolder = false;      // for the open folder (a right-click on empty space), not for items
+    enum Kind { Any, Files, Folders } kind = Any;
+    bool multiple = true;       // false: exactly one item
+    QStringList types;          // each item's type must match one ("image/*", "text/plain"); empty: any
+    bool limited = false;       // only for the items in `items`
+    QSet<QString> items;        // paths relative to the folder
+};
+
+// A selected item, as far as commands care.
+struct Item
+{
+    QString path;
+    QString mimeType; // what it really is
+    bool isDir = false;
 };
 
 struct Manifest
@@ -97,12 +126,23 @@ public:
     // Stops every program, for good (the application is quitting).
     void shutdown();
 
+    // The commands for a right-click on `selection` in `folder` (empty
+    // selection: on the folder's empty space), in the extensions' order.
+    // `folder` may be empty (Recent, Starred): commands that aren't about a
+    // folder still apply.
+    QList<Command> commands(const QString &folder, const QList<Item> &selection) const;
+    // Tells the extension to do it. Not for a command that asks first until
+    // the user said yes.
+    void invoke(const Command &command, const QString &folder, const QStringList &selection);
+    QString nameOf(const QString &id) const;
+
     // True while an extension's program is running (tests).
     bool isRunning(const QString &id) const;
 
 signals:
     void folderChanged(const QString &folder); // its badges or info changed
     void extensionsChanged();                  // the list, or what is switched on
+    void message(const QString &extension, const QString &text); // something to tell the user
 
 private:
     struct FolderData
@@ -110,6 +150,7 @@ private:
         Info info;
         QHash<QString, Badge> badges; // by path relative to the folder ("" = the folder)
         bool anyDeep = false;
+        QList<Command> commands; // for this folder only
     };
     struct Running
     {
@@ -119,6 +160,7 @@ private:
         int failures = 0;
         bool stopping = false;
         QHash<QString, FolderData> folders;
+        QList<Command> commands; // everywhere
     };
 
     void startAsNeeded();
@@ -127,6 +169,7 @@ private:
     void send(Running *ext, const QJsonObject &message);
     void readFrom(Running *ext);
     void handle(Running *ext, const QByteArray &line);
+    QList<Command> readCommands(const Running *ext, const QJsonValue &value) const;
     void exited(Running *ext);
     void forget(Running *ext); // drops what it said and tells the views
 

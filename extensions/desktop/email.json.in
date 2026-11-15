@@ -1,0 +1,9 @@
+{
+    "id": "send-by-email",
+    "name": "Send by Email",
+    "description": "Adds \"Send by Email…\" to the right-click menu of files: opens your email app with them attached. It sends nothing itself.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "exec": ["@ARGONAUT_DESKTOP_EXTENSION_EXE@", "email"]
+}

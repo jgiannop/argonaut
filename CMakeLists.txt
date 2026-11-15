@@ -223,6 +223,22 @@ if(UNIX)
     install(TARGETS argonaut-git-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/git/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/git)
+
+    # Send by Email and Set as Background: one program, two extensions.
+    qt_add_executable(argonaut-desktop-extension extensions/desktop/main.cpp)
+    target_link_libraries(argonaut-desktop-extension PRIVATE argonaut_core)
+    foreach(ext email:send-by-email background:set-as-background)
+        string(REPLACE ":" ";" parts ${ext})
+        list(GET parts 0 file)
+        list(GET parts 1 id)
+        set(ARGONAUT_DESKTOP_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-desktop-extension")
+        configure_file(extensions/desktop/${file}.json.in ${CMAKE_CURRENT_BINARY_DIR}/extensions/${id}/extension.json @ONLY)
+        set(ARGONAUT_DESKTOP_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-desktop-extension")
+        configure_file(extensions/desktop/${file}.json.in ${CMAKE_CURRENT_BINARY_DIR}/install/${id}/extension.json @ONLY)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/${id}/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/${id})
+    endforeach()
+    install(TARGETS argonaut-desktop-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
 endif()
 
 # ------------------------------------------------------------- install ---

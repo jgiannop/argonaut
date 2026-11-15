@@ -9,9 +9,17 @@ Version 1 of the protocol lets an extension:
 
 - put a **mark** on items in a folder: one or two characters, or a dot, in one
   of five colours, with a tooltip;
-- show a **short text** for the folder at the right end of the path bar.
+- show a **short text** for the folder at the right end of the path bar;
+- add **commands** to the right-click menu, and say a line to the user when
+  one is done.
 
-Commands in the right-click menu and extra list columns are planned next.
+Three extensions come with Argonaut and are good to read: Git
+([`extensions/git`](../extensions/git): marks, the path bar text and commands
+that depend on the folder) and Send by Email and Set as Background
+([`extensions/desktop`](../extensions/desktop): a command and nothing else, in
+about 80 lines).
+
+Extra list columns are planned.
 
 ## Safety, for you and for the people who use your extension
 
@@ -26,6 +34,11 @@ sandbox it. So:
 - An extension that crashes is started again twice, then left off until it is
   switched off and on again or Argonaut restarts. A crash or hang never stops
   Argonaut.
+- A command is carried out **by your program**, with the paths Argonaut hands
+  it. Extensions can't use Argonaut's own copying, moving, Trash or Undo, so
+  what a command does can't be undone with Ctrl+Z. If it changes or removes
+  anything, give it a `confirm` question, and prefer moving things to the
+  Trash (`gio trash`) over deleting them.
 - Don't run tools on a folder's files that could execute what is in them.
   The Git extension, for example, refuses repositories whose settings would
   make `git status` start other programs.
@@ -86,6 +99,8 @@ Ignore message types and keys you don't know; newer versions may add some.
 {"type": "watch", "folder": "/home/me/Documents"}
 {"type": "refresh", "folder": "/home/me/Documents"}
 {"type": "unwatch", "folder": "/home/me/Documents"}
+{"type": "invoke", "command": "mark-done", "folder": "/home/me/Documents",
+ "selection": ["/home/me/Documents/report.txt"]}
 ```
 
 - `watch`: a view now shows this folder. Answer with a `folder` message, now
@@ -94,6 +109,10 @@ Ignore message types and keys you don't know; newer versions may add some.
   finished, the window came back to the front). Look again; answer if
   anything is different.
 - `unwatch`: no view shows it any more. Forget it.
+- `invoke`: the user chose one of your commands (and said yes to its
+  question, if it has one). `selection` holds the full paths of the selected
+  items; it is empty for a command on the folder itself. `folder` is the open
+  folder, or `""` in Recent and Starred.
 
 Folders are absolute paths. The Trash, Recent and Starred are never sent. While searching, the folder is the one being
 searched and its results are items deeper inside it.
@@ -127,6 +146,45 @@ Messages about folders you were not asked to watch are ignored.
 
 If several extensions mark the same item, the first one in Preferences' list
 is shown.
+
+### Commands
+
+Commands that make sense everywhere are announced once, after `hello`:
+
+```json
+{"type": "commands", "commands": [
+    {"id": "resize", "label": "Make Smaller…", "kind": "files", "types": ["image/*"],
+     "confirm": "Replace these pictures with smaller ones?"},
+    {"id": "serve", "label": "Share This Folder", "target": "folder"}
+]}
+```
+
+Commands that depend on the folder go in its `folder` message, under the
+same `"commands"` key, and are replaced with it. Git does this: Stage and
+Unstage exist only inside a repository, and only for changed items.
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Comes back in `invoke`. |
+| `label` | Required. Up to 60 characters. |
+| `target` | `"selection"` (default): shown when items are right-clicked. `"folder"`: shown on the folder's empty space. |
+| `kind` | `"files"`, `"folders"` or `"any"` (default): what every selected item must be. |
+| `multiple` | `false`: only when exactly one item is selected. Default `true`. |
+| `types` | Every selected item's type must match one of these: `"image/*"`, or a type such as `"text/plain"` (types derived from it match too). The type is what the file really is, by its content, not only its name. |
+| `items` | Only in a `folder` message: the command is offered only when every selected item is in this list of relative paths. |
+| `confirm` | A question Argonaut asks first, with Cancel as the default. Without a yes you get no `invoke`. |
+
+At most 20 commands everywhere and 20 per folder. Commands aren't offered in
+the Trash or in other programs' Open and Save windows.
+
+To tell the user how it went, at any time:
+
+```json
+{"type": "message", "text": "3 pictures made smaller"}
+```
+
+It is shown for a few seconds at the bottom of the window (up to 200
+characters, one line). Use it for results and errors, not for progress.
 
 ## A complete example
 

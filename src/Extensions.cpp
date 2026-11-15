@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMimeDatabase>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
@@ -23,6 +24,9 @@ constexpr int MaxLineBytes = 8 * 1024 * 1024;
 constexpr int MaxBadgesPerFolder = 50000;
 constexpr int MaxTooltipChars = 300;
 constexpr int MaxInfoChars = 60;
+constexpr int MaxCommands = 20;   // per extension, everywhere and per folder
+constexpr int MaxLabelChars = 60;
+constexpr int MaxMessageChars = 200;
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
 const QStringList &colors()
@@ -41,6 +45,30 @@ QString tidy(const QString &text, int maxChars)
             c = QLatin1Char(' ');
     }
     return out.trimmed();
+}
+
+// A path inside a folder: relative, no "..", no leading or trailing '/'.
+bool isInsidePath(const QString &key)
+{
+    return !(key.startsWith(QLatin1Char('/')) || key.endsWith(QLatin1Char('/')) || key == QLatin1String("..")
+             || key.startsWith(QLatin1String("../")) || key.contains(QLatin1String("/../"))
+             || key.endsWith(QLatin1String("/..")));
+}
+
+bool typeMatches(const QString &mimeType, const QStringList &patterns)
+{
+    if (patterns.isEmpty())
+        return true;
+    static const QMimeDatabase db;
+    for (const QString &pattern : patterns) {
+        if (pattern == mimeType || pattern == QLatin1String("*/*"))
+            return true;
+        if (pattern.endsWith(QLatin1String("/*")) && mimeType.startsWith(QStringView(pattern).left(pattern.size() - 1)))
+            return true;
+        if (!pattern.contains(QLatin1Char('*')) && db.mimeTypeForName(mimeType).inherits(pattern))
+            return true;
+    }
+    return false;
 }
 
 QString enabledKey(const QString &id)
@@ -347,6 +375,106 @@ Info Host::info(const QString &folder) const
     return {};
 }
 
+QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value) const
+{
+    QList<Command> out;
+    const QJsonArray list = value.toArray();
+    for (const QJsonValue &entry : list) {
+        if (out.size() >= MaxCommands)
+            break;
+        const QJsonObject o = entry.toObject();
+        Command c;
+        c.extension = ext->manifest.id;
+        c.id = o.value(QLatin1String("id")).toString().left(64);
+        c.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (c.id.isEmpty() || c.label.isEmpty())
+            continue;
+        c.confirm = tidy(o.value(QLatin1String("confirm")).toString(), MaxTooltipChars);
+        c.onFolder = o.value(QLatin1String("target")).toString() == QLatin1String("folder");
+        const QString kind = o.value(QLatin1String("kind")).toString();
+        c.kind = kind == QLatin1String("files") ? Command::Files
+                 : kind == QLatin1String("folders") ? Command::Folders : Command::Any;
+        c.multiple = o.value(QLatin1String("multiple")).toBool(true);
+        const QJsonArray types = o.value(QLatin1String("types")).toArray();
+        for (const QJsonValue &t : types) {
+            if (c.types.size() < 50 && !t.toString().isEmpty())
+                c.types << t.toString().left(100);
+        }
+        if (o.contains(QLatin1String("items"))) {
+            c.limited = true;
+            const QJsonArray items = o.value(QLatin1String("items")).toArray();
+            for (const QJsonValue &item : items) {
+                if (c.items.size() >= MaxBadgesPerFolder)
+                    break;
+                if (isInsidePath(item.toString()))
+                    c.items.insert(item.toString());
+            }
+        }
+        out.append(c);
+    }
+    return out;
+}
+
+QList<Command> Host::commands(const QString &folder, const QList<Item> &selection) const
+{
+    QList<Command> out;
+    const QString prefix = folder.endsWith(QLatin1Char('/')) ? folder : folder + QLatin1Char('/');
+    auto fits = [&](const Command &c) {
+        if (c.onFolder)
+            return selection.isEmpty() && !folder.isEmpty();
+        if (selection.isEmpty() || (!c.multiple && selection.size() != 1))
+            return false;
+        for (const Item &item : selection) {
+            if ((c.kind == Command::Files && item.isDir) || (c.kind == Command::Folders && !item.isDir))
+                return false;
+            if (!typeMatches(item.isDir ? QStringLiteral("inode/directory") : item.mimeType, c.types))
+                return false;
+            if (c.limited && (folder.isEmpty() || !item.path.startsWith(prefix) || !c.items.contains(item.path.mid(prefix.size()))))
+                return false;
+        }
+        return true;
+    };
+    for (const Running *ext : m_running) {
+        if (!ext->process)
+            continue;
+        for (const Command &c : ext->commands) {
+            if (fits(c))
+                out.append(c);
+        }
+        if (folder.isEmpty())
+            continue;
+        const auto data = ext->folders.constFind(folder);
+        if (data == ext->folders.constEnd())
+            continue;
+        for (const Command &c : data->commands) {
+            if (fits(c))
+                out.append(c);
+        }
+    }
+    return out;
+}
+
+void Host::invoke(const Command &command, const QString &folder, const QStringList &selection)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != command.extension || !ext->process)
+            continue;
+        send(ext, {{QStringLiteral("type"), QStringLiteral("invoke")},
+                   {QStringLiteral("command"), command.id},
+                   {QStringLiteral("folder"), folder},
+                   {QStringLiteral("selection"), QJsonArray::fromStringList(selection)}});
+    }
+}
+
+QString Host::nameOf(const QString &id) const
+{
+    for (const Manifest &m : m_manifests) {
+        if (m.id == id)
+            return m.name;
+    }
+    return id;
+}
+
 bool Host::isRunning(const QString &id) const
 {
     for (const Running *ext : m_running) {
@@ -453,7 +581,19 @@ void Host::handle(Running *ext, const QByteArray &line)
     if (!doc.isObject())
         return; // not ours to understand: skipped
     const QJsonObject message = doc.object();
-    if (message.value(QLatin1String("type")).toString() != QLatin1String("folder"))
+    const QString type = message.value(QLatin1String("type")).toString();
+    if (type == QLatin1String("commands")) { // what it offers everywhere
+        ext->commands = readCommands(ext, message.value(QLatin1String("commands")));
+        return;
+    }
+    if (type == QLatin1String("message")) { // something for the user to read
+        const QString text = tidy(message.value(QLatin1String("text")).toString(), MaxMessageChars)
+                                 .replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (!text.isEmpty())
+            emit this->message(ext->manifest.name, text);
+        return;
+    }
+    if (type != QLatin1String("folder"))
         return;
     const QString folder = message.value(QLatin1String("folder")).toString();
     if (!m_watched.contains(folder))
@@ -468,11 +608,8 @@ void Host::handle(Running *ext, const QByteArray &line)
     const QJsonObject badges = message.value(QLatin1String("badges")).toObject();
     int count = 0;
     for (auto it = badges.constBegin(); it != badges.constEnd() && count < MaxBadgesPerFolder; ++it) {
-        // A path inside the folder: relative, no "..", no leading or trailing '/'.
         const QString key = it.key();
-        if (key.startsWith(QLatin1Char('/')) || key.endsWith(QLatin1Char('/')) || key == QLatin1String("..")
-            || key.startsWith(QLatin1String("../")) || key.contains(QLatin1String("/../"))
-            || key.endsWith(QLatin1String("/..")))
+        if (!isInsidePath(key))
             continue;
         const QJsonObject o = it.value().toObject();
         Badge badge;
@@ -487,6 +624,7 @@ void Host::handle(Running *ext, const QByteArray &line)
         data.badges.insert(key, badge);
         ++count;
     }
+    data.commands = readCommands(ext, message.value(QLatin1String("commands")));
     ext->folders.insert(folder, data);
     emit folderChanged(folder);
 }
@@ -497,6 +635,7 @@ void Host::exited(Running *ext)
     // goes, and it gets a few more tries.
     ext->process = nullptr;
     ext->buffer.clear();
+    ext->commands.clear();
     forget(ext);
     if (ext->stopping)
         return;

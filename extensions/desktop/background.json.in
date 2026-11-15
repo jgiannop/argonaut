@@ -1,0 +1,9 @@
+{
+    "id": "set-as-background",
+    "name": "Set as Background",
+    "description": "Adds \"Set as Background\" to the right-click menu of a picture (GNOME).",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "exec": ["@ARGONAUT_DESKTOP_EXTENSION_EXE@", "background"]
+}

@@ -69,6 +69,13 @@ public:
     };
     QList<Mark> marks(const QString &folder) const;
 
+    // Runs `git <arguments> -- <paths>` in the repository and waits for it
+    // (the Git extension's Stage and Unstage). Only when a status has
+    // arrived and the repository isn't blocked: `git add` runs the same
+    // filters `git status` does. Hooks are switched off. False with `error`
+    // on failure; the status is read again afterwards.
+    bool run(const QStringList &arguments, const QStringList &paths, QString *error = nullptr);
+
     // The repository that contains `folder` (its top folder), or empty.
     static QString findRoot(const QString &folder);
     // Parses `git status --porcelain=v2 --branch -z` output (exposed for tests).

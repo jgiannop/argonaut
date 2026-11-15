@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSocketNotifier>
@@ -83,10 +84,61 @@ void report(const QString &folder, const GitStatus *git)
         for (const GitStatus::Mark &mark : marks)
             badges.insert(mark.relativePath, badgeFor(mark));
         message.insert(QStringLiteral("badges"), badges);
+        // Stage and Unstage, for the marked items only.
+        if (git->ready() && !git->blocked() && !git->tooSlow() && !marks.isEmpty()) {
+            QJsonArray items;
+            for (const GitStatus::Mark &mark : marks) {
+                if (!mark.relativePath.isEmpty())
+                    items.append(mark.relativePath);
+            }
+            message.insert(QStringLiteral("commands"),
+                           QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("stage")},
+                                                  {QStringLiteral("label"), QStringLiteral("Git: Stage")},
+                                                  {QStringLiteral("items"), items}},
+                                      QJsonObject{{QStringLiteral("id"), QStringLiteral("unstage")},
+                                                  {QStringLiteral("label"), QStringLiteral("Git: Unstage")},
+                                                  {QStringLiteral("items"), items}}});
+        }
     }
     const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
     std::fflush(stdout);
+}
+
+void say(const QString &text)
+{
+    const QByteArray line = QJsonDocument(QJsonObject{{QStringLiteral("type"), QStringLiteral("message")},
+                                                      {QStringLiteral("text"), text}})
+                                .toJson(QJsonDocument::Compact)
+                            + '\n';
+    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
+    std::fflush(stdout);
+}
+
+void invoke(const QJsonObject &message)
+{
+    GitStatus *git = g_folders.value(message.value(QLatin1String("folder")).toString());
+    if (!git)
+        return;
+    QStringList paths;
+    const QJsonArray selection = message.value(QLatin1String("selection")).toArray();
+    for (const QJsonValue &path : selection)
+        paths << path.toString();
+    if (paths.isEmpty())
+        return;
+    const QString command = message.value(QLatin1String("command")).toString();
+    QStringList arguments;
+    if (command == QLatin1String("stage"))
+        arguments = {QStringLiteral("add")};
+    else if (command == QLatin1String("unstage"))
+        arguments = {QStringLiteral("restore"), QStringLiteral("--staged")};
+    else
+        return;
+    QString error;
+    if (git->run(arguments, paths, &error))
+        say(command == QLatin1String("stage") ? QStringLiteral("Staged") : QStringLiteral("Unstaged"));
+    else
+        say(error);
 }
 
 void handle(const QByteArray &line)
@@ -108,6 +160,8 @@ void handle(const QByteArray &line)
             git->refresh();
     } else if (type == QLatin1String("unwatch")) {
         delete g_folders.take(folder);
+    } else if (type == QLatin1String("invoke")) {
+        invoke(message);
     }
     // "hello" and anything newer than this program: nothing to do.
 }

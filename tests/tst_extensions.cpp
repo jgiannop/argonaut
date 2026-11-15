@@ -66,7 +66,11 @@ private slots:
     void switchingOffTakesTheMarksAway();
     void nonsenseIsSkipped();
     void aCrashingExtensionIsGivenUp();
+    void commandsFitTheSelection();
+    void invokeTellsTheExtension();
     void gitThroughTheModel();
+    void gitStageAndUnstage();
+    void sendByEmailIsAnExtension();
 
 private:
     int starts() const;
@@ -244,6 +248,61 @@ void TestExtensions::aCrashingExtensionIsGivenUp()
     QVERIFY(!host.badge(folder, folder + "/a.txt").valid);
 }
 
+// Which commands a right-click offers: by what is selected (files, folders,
+// one or many, their types), by folder, and only well-formed ones.
+void TestExtensions::commandsFitTheSelection()
+{
+    Host host;
+    host.setEnabled("fake", true);
+    QSignalSpy changed(&host, &Host::folderChanged);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 10000);
+    auto ids = [&](const QString &folder, const QList<Extensions::Item> &selection) {
+        QStringList out;
+        for (const Extensions::Command &c : host.commands(folder, selection))
+            out << c.id;
+        return out;
+    };
+    const Extensions::Item text{m_dir + "/a.txt", "text/plain", false};
+    const Extensions::Item photo{m_dir + "/p.jpg", "image/jpeg", false};
+    const Extensions::Item dir{m_dir + "/sub", "inode/directory", true};
+    QCOMPARE(ids(m_dir, {text}), (QStringList{"hello", "ask", "only-a"}));
+    QCOMPARE(ids(m_dir, {photo}), (QStringList{"hello", "one-image", "ask"}));
+    QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
+    QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
+    QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here"}));                    // the folder's empty space
+    QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
+    QVERIFY(ids(QString(), {}).isEmpty());
+    // A command limited to items can't reach outside its folder.
+    const Extensions::Item outside{QFileInfo(m_dir).path() + "/outside.txt", "text/plain", false};
+    QVERIFY(!ids(m_dir, {outside}).contains("only-a"));
+    // The question a command wants asked comes along.
+    for (const Extensions::Command &c : host.commands(m_dir, {text})) {
+        if (c.id == "ask")
+            QCOMPARE(c.confirm, QStringLiteral("Really do the risky thing?"));
+    }
+    // Switched off: nothing is offered.
+    host.setEnabled("fake", false);
+    QVERIFY(ids(m_dir, {text}).isEmpty());
+}
+
+void TestExtensions::invokeTellsTheExtension()
+{
+    Host host;
+    host.setEnabled("fake", true);
+    QSignalSpy changed(&host, &Host::folderChanged);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 10000);
+    QSignalSpy said(&host, &Host::message);
+    const QList<Extensions::Command> commands = host.commands(m_dir, {{m_dir + "/a.txt", "text/plain", false}});
+    QVERIFY(!commands.isEmpty());
+    host.invoke(commands.first(), m_dir, {m_dir + "/a.txt", m_dir + "/b.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.first().at(0).toString(), QStringLiteral("Fake")); // who says it
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked hello on 2: a.txt,b.txt"));
+}
+
 // The Git extension, as the app uses it: the model asks the shared host, the
 // extension's program runs git and its marks arrive as the model's BadgeRole.
 void TestExtensions::gitThroughTheModel()
@@ -295,6 +354,84 @@ void TestExtensions::gitThroughTheModel()
         QVERIFY(!model.indexForPath(repo + "/tracked.txt").data(DirectoryModel::BadgeRole).isValid());
         QVERIFY(host->info(model.extensionsFolder()).text.isEmpty());
     }
+}
+
+// Stage and Unstage: offered for marked items only, and they really run git.
+void TestExtensions::gitStageAndUnstage()
+{
+    if (QStandardPaths::findExecutable("git").isEmpty())
+        QSKIP("git isn't installed");
+    const QString repo = m_dir + "/repo";
+    QDir().mkpath(repo);
+    QVERIFY(git(repo, {"init", "-q"}));
+    writeFile(repo + "/tracked.txt", "one\n");
+    writeFile(repo + "/same.txt", "same\n");
+    QVERIFY(git(repo, {"add", "."}));
+    QVERIFY(git(repo, {"commit", "-q", "-m", "first"}));
+    writeFile(repo + "/tracked.txt", "two\n");
+    auto staged = [&] {
+        QProcess p;
+        p.setWorkingDirectory(repo);
+        p.start("git", {"diff", "--cached", "--name-only"});
+        p.waitForFinished(20000);
+        return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    };
+
+    Host host;
+    host.setEnabled("git", true);
+    host.watch(repo);
+    const Extensions::Item changed{repo + "/tracked.txt", "text/plain", false};
+    const Extensions::Item same{repo + "/same.txt", "text/plain", false};
+    auto command = [&](const Extensions::Item &item, const QString &id) {
+        for (const Extensions::Command &c : host.commands(repo, {item})) {
+            if (c.extension == "git" && c.id == id)
+                return c;
+        }
+        return Extensions::Command();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(!command(changed, "stage").id.isEmpty(), 10000);
+    QVERIFY(command(same, "stage").id.isEmpty()); // nothing to stage in an unchanged file
+
+    QSignalSpy said(&host, &Host::message);
+    QVERIFY(staged().isEmpty());
+    host.invoke(command(changed, "stage"), repo, {changed.path});
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 20000);
+    QCOMPARE(said.last().at(1).toString(), QStringLiteral("Staged"));
+    QCOMPARE(staged(), QStringLiteral("tracked.txt"));
+
+    said.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(!command(changed, "unstage").id.isEmpty(), 10000);
+    host.invoke(command(changed, "unstage"), repo, {changed.path});
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 20000);
+    QCOMPARE(said.last().at(1).toString(), QStringLiteral("Unstaged"));
+    QVERIFY(staged().isEmpty());
+    host.setEnabled("git", false);
+}
+
+// Send by Email moved out of the window into an extension: offered for
+// files, not folders, and it starts the email program with them attached.
+void TestExtensions::sendByEmailIsAnExtension()
+{
+    const QString log = m_dir + "/email.log";
+    writeFile(m_dir + "/xdg-email", "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + log.toUtf8() + "'\n", true);
+    qputenv("ARGONAUT_EMAIL_PROGRAM", QFile::encodeName(m_dir + "/xdg-email"));
+    Host host;
+    host.setEnabled("send-by-email", true);
+    host.watch(m_dir);
+    const Extensions::Item file{m_dir + "/report.pdf", "application/pdf", false};
+    const Extensions::Item dir{m_dir + "/sub", "inode/directory", true};
+    QTRY_VERIFY_WITH_TIMEOUT(!host.commands(m_dir, {file}).isEmpty(), 10000);
+    const Extensions::Command send = host.commands(m_dir, {file}).first();
+    QCOMPARE(send.label, QStringLiteral("Send by Email…"));
+    QVERIFY(host.commands(m_dir, {dir}).isEmpty());
+    QVERIFY(host.commands(m_dir, {file, dir}).isEmpty());
+    host.invoke(send, m_dir, {file.path});
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(log), 10000);
+    QFile f(log);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(QString::fromUtf8(f.readAll()), QStringLiteral("--attach\n%1\n").arg(file.path));
+    qunsetenv("ARGONAUT_EMAIL_PROGRAM");
+    host.setEnabled("send-by-email", false);
 }
 
 int main(int argc, char **argv)

@@ -10,6 +10,19 @@ for line in sys.stdin:
     except ValueError:
         continue
     folder = m.get("folder", "")
+    if m.get("type") == "hello":
+        say({"type": "commands", "commands": [
+            {"id": "hello", "label": "Fake: Say Hello"},
+            {"id": "one-image", "label": "One Image", "kind": "files", "multiple": False, "types": ["image/*"]},
+            {"id": "folders", "label": "Folders Only", "kind": "folders"},
+            {"id": "here", "label": "Here", "target": "folder"},
+            {"id": "ask", "label": "Risky…", "confirm": "Really do the risky thing?"},
+            {"id": "", "label": "No id"},
+            {"id": "nolabel"}]})
+    if m.get("type") == "invoke":
+        sel = m.get("selection", [])
+        say({"type": "message", "text": "invoked %s on %d: %s" % (
+            m.get("command"), len(sel), ",".join(os.path.basename(p) for p in sel))})
     if m.get("type") in ("watch", "refresh"):
         if folder.endswith("crash"):
             os._exit(3)
@@ -23,5 +36,6 @@ for line in sys.stdin:
                  "sub": {"text": "", "color": "purple", "deep": True},
                  "../outside.txt": {"text": "!"},
                  "/etc/passwd": {"text": "!"},
-                 "x/../../y": {"text": "!"}}})
+                 "x/../../y": {"text": "!"}},
+             "commands": [{"id": "only-a", "label": "Only A", "items": ["a.txt", "../outside.txt"]}]})
         say({"type": "folder", "folder": "/not/watched", "badges": {"z": {"text": "Z"}}})

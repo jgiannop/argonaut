@@ -49,7 +49,7 @@ if(TARGET argonaut-git-extension)
     argonaut_test(extensions ENV GIT_CONFIG_NOSYSTEM=1)
     target_compile_definitions(tst_extensions PRIVATE GIT_EXTENSION_FOLDER="${CMAKE_BINARY_DIR}/extensions"
         FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
-    add_dependencies(tst_extensions argonaut-git-extension)
+    add_dependencies(tst_extensions argonaut-git-extension argonaut-desktop-extension)
 endif()
 
 # Places, bookmarks, other programs.
@@ -73,3 +73,4 @@ endif()
 
 # The real window, headless: what gets trashed, deleted, dropped or returned.
 argonaut_test(mainwindow LIBRARY argonaut_app TIMEOUT 300)
+target_compile_definitions(tst_mainwindow PRIVATE FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")

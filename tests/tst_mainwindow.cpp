@@ -35,7 +35,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSignalSpy>
@@ -81,6 +83,7 @@ private slots:
     void ejectLeavesTheDriveAndRunsTheTool();
     void sidebarListsPlacesAndFollowsBookmarks();
     void previewIsAPaneThatFollowsTheSelection();
+    void extensionCommandsAskFirst();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -940,6 +943,17 @@ int main(int argc, char **argv)
                              "ARGONAUT_GSETTINGS_PROGRAM", "ARGONAUT_TRACKER_PROGRAM", "ARGONAUT_SYSTEMCTL_PROGRAM"})
         qputenv(name, QFile::encodeName(fake));
     qputenv("ARGONAUT_NATIVE_DECORATIONS", "1");
+    // Only the test's own extension (switched off until a test wants it).
+    QDir().mkpath(root + "/extensions/fake");
+    {
+        QFile manifest(root + "/extensions/fake/extension.json");
+        if (!manifest.open(QIODevice::WriteOnly))
+            return 1;
+        manifest.write(R"({"id": "fake", "name": "Fake", "protocol": 1, "exec": ["fake.py"]})");
+    }
+    QFile::copy(QStringLiteral(FAKE_EXTENSION), root + "/extensions/fake/fake.py");
+    QFile::setPermissions(root + "/extensions/fake/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    qputenv("ARGONAUT_EXTENSIONS_PATH", QFile::encodeName(root + "/extensions"));
 
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("ArgonautTest");
@@ -980,6 +994,50 @@ void TestMainWindow::previewIsAPaneThatFollowsTheSelection()
     QTest::keyClick(w->m_pane->view, Qt::Key_Space);
     QVERIFY(!w->quickLookVisible());
     QVERIFY(exists(a) && exists(b)); // looking changes nothing
+}
+
+// A command from an extension in the right-click menu: one that wants a
+// question asked first isn't sent to the extension when the answer is Cancel.
+void TestMainWindow::extensionCommandsAskFirst()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt");
+    open(m_dir);
+    select({a});
+    auto risky = [&](QMenu &menu) -> QAction * {
+        w->addExtensionCommands(&menu, {a});
+        for (QAction *action : menu.actions()) {
+            if (action->text() == QStringLiteral("Risky…"))
+                return action;
+        }
+        return nullptr;
+    };
+    QMenu menu;
+    QTRY_VERIFY_WITH_TIMEOUT([&] { menu.clear(); return risky(menu) != nullptr; }(), 10000);
+    QSignalSpy said(host, &Extensions::Host::message);
+
+    answerNext("Cancel");
+    risky(menu)->trigger();
+    QCOMPARE(m_asked, 1);
+    QVERIFY(m_question.contains("Really do the risky thing?"));
+    QTest::qWait(500);
+    QVERIFY(said.isEmpty()); // the extension never heard of it
+
+    answerNext("Risky");
+    menu.clear();
+    risky(menu)->trigger();
+    QCOMPARE(m_asked, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked ask on 1: a.txt"));
+    // What it says is shown in the window.
+    QTRY_COMPARE(w->m_pane->floatingBar->text(), QStringLiteral("invoked ask on 1: a.txt"));
+
+    host->setEnabled("fake", false);
+    QMenu after;
+    QVERIFY(!risky(after));
 }
 
 #include "tst_mainwindow.moc"
