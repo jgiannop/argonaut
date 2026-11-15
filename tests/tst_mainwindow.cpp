@@ -8,6 +8,7 @@
 // that only write down how they were called.
 
 #include "DirectoryModel.h"
+#include "ExtensionsDialog.h"
 #include "FileOperations.h"
 #include "AnalyzeView.h"
 #include "Bookmarks.h"
@@ -31,6 +32,7 @@
 
 #include <QAbstractButton>
 #include <QAction>
+#include <QCheckBox>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -84,6 +86,7 @@ private slots:
     void sidebarListsPlacesAndFollowsBookmarks();
     void previewIsAPaneThatFollowsTheSelection();
     void extensionCommandsAskFirst();
+    void extensionsWindowListsAndSwitches();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1038,6 +1041,38 @@ void TestMainWindow::extensionCommandsAskFirst()
     host->setEnabled("fake", false);
     QMenu after;
     QVERIFY(!risky(after));
+}
+
+// Edit → Extensions: a window of its own that lists what was found, with a
+// switch that really switches (an added extension starts off).
+void TestMainWindow::extensionsWindowListsAndSwitches()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", false);
+    open(m_dir);
+    w->m_extensionsAct->trigger();
+    auto *dialog = w->findChild<ExtensionsDialog *>();
+    QVERIFY(dialog);
+    QVERIFY(dialog->isVisible());
+    QVERIFY(dialog->isWindow());
+    QLabel *state = nullptr;
+    QTRY_VERIFY((state = dialog->findChild<QLabel *>("extState")) != nullptr);
+    QCOMPARE(state->property("extensionId").toString(), QStringLiteral("fake"));
+    QCOMPARE(state->text(), QStringLiteral("Off"));
+    auto *toggle = dialog->findChild<QCheckBox *>("prefCheck");
+    QVERIFY(toggle && !toggle->isChecked());
+
+    toggle->click();
+    QVERIFY(host->isEnabled("fake"));
+    QTRY_VERIFY_WITH_TIMEOUT(host->isRunning("fake"), 10000);
+    // The list was rebuilt; its new label says so.
+    QTRY_COMPARE_WITH_TIMEOUT(dialog->findChild<QLabel *>("extState")->text(), QStringLiteral("Running"), 5000);
+    dialog->findChild<QCheckBox *>("prefCheck")->click();
+    QVERIFY(!host->isEnabled("fake"));
+    QVERIFY(!host->isRunning("fake"));
+    dialog->close();
 }
 
 #include "tst_mainwindow.moc"

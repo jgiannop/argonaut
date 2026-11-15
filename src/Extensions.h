@@ -136,6 +136,16 @@ public:
     void invoke(const Command &command, const QString &folder, const QStringList &selection);
     QString nameOf(const QString &id) const;
 
+    // How an extension is doing, for the Extensions window.
+    enum class State {
+        Unusable, // its folder is wrong (Manifest::problem)
+        Off,
+        Waiting,  // on; its program starts with the first folder shown
+        Running,
+        Stopped,  // on, but its program kept failing and was given up
+    };
+    State state(const QString &id) const;
+
     // True while an extension's program is running (tests).
     bool isRunning(const QString &id) const;
 

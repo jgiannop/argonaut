@@ -35,6 +35,7 @@
 #include "OpenWithDialog.h"
 #include "OperationsPanel.h"
 #include "PathBar.h"
+#include "ExtensionsDialog.h"
 #include "PreferencesDialog.h"
 #include "RecentFiles.h"
 #include "Starred.h"
@@ -393,6 +394,26 @@ void MainWindow::setupActions()
         dialog->raise();
         dialog->activateWindow();
     });
+    m_extensionsAct = new QAction(tr("Extensions"), this);
+    m_extensionsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X));
+    connect(m_extensionsAct, &QAction::triggered, this, [this] {
+        static QPointer<ExtensionsDialog> dialog;
+        if (!dialog) {
+            dialog = new ExtensionsDialog(this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            // Its folder opens in the window it was opened from.
+            connect(dialog, &ExtensionsDialog::openFolderRequested, this, [this](const QString &folder) {
+                QDir().mkpath(folder);
+                navigateTo(folder);
+                raise();
+                activateWindow();
+            });
+            connect(dialog, &ExtensionsDialog::guideRequested, this, [this] { showGuide(QStringLiteral("extensions")); });
+        }
+        dialog->show();
+        dialog->raise();
+        dialog->activateWindow();
+    });
 
     m_openAct = new QAction(tr("Open"), this);
     connect(m_openAct, &QAction::triggered, this, &MainWindow::openSelection);
@@ -566,7 +587,7 @@ void MainWindow::setupActions()
     connect(m_shortcutsAct, &QAction::triggered, this, [this] { showGuide(QStringLiteral("shortcuts")); });
 
     addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
-                m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_cutAct, m_copyAct,
+                m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_extensionsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_redoAct, m_zoomInAct, m_zoomOutAct,
                 m_zoomResetAct, m_newFolderAct, m_newFileAct, m_renameAct,
                 m_selectAllAct, m_selectMatchingAct, m_invertSelectionAct, m_closeAct, m_quitAct, m_deleteAct, m_bookmarkAct,
@@ -691,6 +712,7 @@ QWidget *MainWindow::buildSidebarPane()
     mainMenu->addSeparator();
     mainMenu->addAction(m_hiddenAct);
     mainMenu->addSeparator();
+    mainMenu->addAction(m_extensionsAct);
     mainMenu->addAction(m_prefsAct);
     mainMenu->addAction(m_guideAct);
     mainMenu->addAction(m_aboutAct);
@@ -1180,7 +1202,7 @@ void MainWindow::showGuide(const QString &topic)
         if (m_terminalAct)
             windows.prepend(row(m_terminalAct, tr("Terminal")));
         groups.append({tr("Tabs and Windows"), windows});
-        groups.append({tr("Help"), {row(m_guideAct), row(m_shortcutsAct), row(m_prefsAct)}});
+        groups.append({tr("Help"), {row(m_guideAct), row(m_shortcutsAct), row(m_prefsAct), row(m_extensionsAct)}});
 
         dialog = new HelpDialog(groups, this);
     }
@@ -3305,6 +3327,7 @@ QWidget *MainWindow::buildMenuBar()
     edit->addSeparator();
     edit->addAction(m_copyLocationAct);
     edit->addSeparator();
+    edit->addAction(m_extensionsAct);
     edit->addAction(m_prefsAct);
 
     QMenu *view = addMenu(tr("&View"));
@@ -4346,7 +4369,7 @@ void MainWindow::startChooser(const ChooserRequest &request)
         if (button)
             button->hide();
     m_chooser->setUnavailableActions({m_splitAct, m_terminalAct, m_openTerminalHereAct, m_analyzeAct, m_newTabAct,
-                                      m_reopenTabAct, m_openInNewTabAct, m_quitAct, m_prefsAct, m_paletteAct,
+                                      m_reopenTabAct, m_openInNewTabAct, m_quitAct, m_prefsAct, m_extensionsAct, m_paletteAct,
                                       m_organizeAct, m_copyToOtherAct, m_moveToOtherAct, m_aboutAct, m_guideAct,
                                       m_shortcutsAct});
 

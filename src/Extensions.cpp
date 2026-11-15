@@ -488,6 +488,22 @@ QString Host::nameOf(const QString &id) const
     return id;
 }
 
+Host::State Host::state(const QString &id) const
+{
+    for (const Manifest &m : m_manifests) {
+        if (m.id == id && !m.isUsable())
+            return State::Unusable;
+    }
+    for (const Running *ext : m_running) {
+        if (ext->manifest.id != id)
+            continue;
+        if (ext->process && ext->process->state() == QProcess::Running)
+            return State::Running;
+        return ext->failures >= MaxFailures ? State::Stopped : State::Waiting;
+    }
+    return State::Off;
+}
+
 bool Host::isRunning(const QString &id) const
 {
     for (const Running *ext : m_running) {

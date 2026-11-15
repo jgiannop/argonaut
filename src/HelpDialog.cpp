@@ -544,7 +544,7 @@ default (names only, ask, or read when needed) and the model, and shows what you
 </ul>
 <p>For safety, a repository whose own settings would make Git run programs (for example one you downloaded)
 is not checked; the path bar then says “git: off”. Very big repositories that take too long are skipped too.
-This is the Git extension: switch it off in <b>Preferences → Extensions</b> if you don't want it
+This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+Shift+X]]) if you don't want it
 (see <a href="topic:extensions">Extensions</a>).</p>
 )"));
 
@@ -556,12 +556,12 @@ with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Un
 <p>A command from an extension is carried out by the extension, not by Argonaut, so [[Ctrl+Z]] doesn't undo
 it.</p>
 <h2>Switching them on and off</h2>
-<p><b>Preferences → Extensions</b> lists every extension found, with a switch for each. Those that come with
+<p><b>Edit → Extensions</b> ([[Ctrl+Shift+X]]) opens the Extensions window. It lists every extension found, where it came from and whether it is running, with a switch for each. Those that come with
 Argonaut are on; any other is <b>off until you switch it on</b>.</p>
 <p>An extension is an ordinary program: it can do anything you can do, including reading and changing your
 files. Switch on only extensions from people you trust.</p>
 <h2>Adding one</h2>
-<p>Put the extension's folder in <code>~/.local/share/argonaut/extensions</code>, then open Preferences and
+<p>Put the extension's folder in <code>~/.local/share/argonaut/extensions</code>, then open the Extensions window and
 switch it on. To remove it, switch it off and delete its folder.</p>
 <p>If an extension stops working, Argonaut carries on without it: its marks disappear and everything else
 works as before.</p>

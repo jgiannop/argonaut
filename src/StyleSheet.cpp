@@ -150,7 +150,13 @@ QListWidget#appList::item { padding: 6px; border-radius: 6px; }
 QListWidget#appList::item:selected { background: @itemSel; color: @fg; }
 QListWidget#appList::item:hover:!selected { background: @hover; }
 
-QDialog#preferences { background: @window; }
+QDialog#preferences, QDialog#extensionsDialog { background: @window; }
+QFrame#extCard { background: @pathBg; border-radius: 10px; }
+QFrame#extCard QLabel#prefHint { background: transparent; }
+QLabel#extName { color: @fg; font-weight: bold; background: transparent; }
+QLabel#extState { color: @dim; background: transparent; }
+QLabel#extState[look="good"] { color: @accent; }
+QLabel#extState[look="bad"] { color: #e01b24; }
 QScrollArea#prefScroll, QWidget#prefContent { background: @window; }
 QDialog#connectDialog { background: @window; }
 QLineEdit#connectAddress { background: @pathBg; color: @fg; border: none; border-radius: 6px;

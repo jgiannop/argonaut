@@ -267,6 +267,7 @@ private:
     QAction *m_searchAct = nullptr;
     QAction *m_copyLocationAct = nullptr;
     QAction *m_prefsAct = nullptr;
+    QAction *m_extensionsAct = nullptr; // Ctrl+Shift+X: the Extensions window
     QAction *m_aboutAct = nullptr;
     QAction *m_paletteAct = nullptr;   // Ctrl+Shift+P: run any command by name
     QAction *m_connectAct = nullptr;   // Connect to Server…

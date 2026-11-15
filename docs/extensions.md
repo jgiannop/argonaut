@@ -27,12 +27,12 @@ An extension is an ordinary program with the user's rights. Argonaut does not
 sandbox it. So:
 
 - An extension from the user's own folder **never runs until the user
-  switches it on** in Preferences → Extensions.
+  switches it on** in the Extensions window (Edit → Extensions, Ctrl+Shift+X).
 - Argonaut treats everything an extension sends as data. Texts are cut to
   size, unknown values are replaced, and marks for items outside the folder
   that was asked about are dropped.
 - If an extension's folder is removed, it is stopped the next time Argonaut
-  looks (when Preferences opens, or at the next start) and its switch is
+  looks (when the Extensions window opens, or at the next start) and its switch is
   forgotten: a folder with the same id that appears later starts off.
 - An extension that crashes is started again twice, then left off until it is
   switched off and on again or Argonaut restarts. A crash or hang never stops
@@ -82,7 +82,7 @@ only those are looked at then.
 | `id` | Required. Letters, digits, `.`, `-`, `_`; at most 64 characters. If two extensions share an id, the user's copy wins. |
 | `protocol` | Required. `1`. |
 | `exec` | Required. The program and its arguments, as a list (or one string for a program alone). A relative program is inside the extension's folder. It must be executable. |
-| `name`, `description`, `version`, `author` | Shown in Preferences. |
+| `name`, `description`, `version`, `author` | Shown in the Extensions window. |
 
 ## The conversation
 
@@ -147,7 +147,7 @@ Messages about folders you were not asked to watch are ignored.
 | `tooltip` | Added to the item's tooltip. |
 | `deep` | `true`: the mark is also for everything inside this folder. A key of `""` with `deep` marks every item in the watched folder. |
 
-If several extensions mark the same item, the first one in Preferences' list
+If several extensions mark the same item, the first one in the Extensions window's list
 is shown.
 
 ### Commands
@@ -226,7 +226,7 @@ for line in sys.stdin:
 ```
 
 Make it executable (`chmod +x word-count.py`), put it with its
-`extension.json` in the folder above, open Preferences → Extensions and switch
+`extension.json` in the folder above, open Edit → Extensions (Ctrl+Shift+X), press Look Again and switch
 it on.
 
 A real extension should not block on slow work while messages wait: do slow
