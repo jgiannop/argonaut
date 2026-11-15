@@ -148,7 +148,7 @@ For an optimized build, use `release` instead of `debug`.
 Download `argonaut-files_<version>_amd64.deb` from the [releases page](https://github.com/jgiannop/argonaut/releases) and install it with:
 
 ```bash
-sudo apt install ./argonaut-files_0.5.0_amd64.deb
+sudo apt install ./argonaut-files_0.6.0_amd64.deb
 ```
 
 apt also offers the helpers Argonaut uses when they're there (GVfs for servers, bubblewrap for its sandbox, poppler-utils and exiftool for details, Tracker for searching inside documents).
