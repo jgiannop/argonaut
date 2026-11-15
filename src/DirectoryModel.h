@@ -105,7 +105,7 @@ public:
     };
     // Places that aren't folders: lists of items from anywhere. setPath()
     // takes these paths; they're never on disk.
-    enum class Place { Folder, Recent, Starred };
+    enum class Place { Folder, Recent, Starred, Listing }; // Listing: a list of files an extension keeps
     static QString recentPath() { return QStringLiteral("recent:///"); }
     static QString starredPath() { return QStringLiteral("starred:///"); }
     static Place placeOf(const QString &path);

@@ -75,6 +75,7 @@ private slots:
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void gitChangesCommitAndBranches();
+    void gitChangesAsAListOfFiles();
     void sendByEmailIsAnExtension();
 
 private:
@@ -322,7 +323,7 @@ void TestExtensions::commandsFitTheSelection()
     QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
     QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
     QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
-    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme"})); // the folder's empty space
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme"})); // the folder's empty space
     QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
     QVERIFY(ids(QString(), {}).isEmpty());
     // A command limited to items can't reach outside its folder.
@@ -735,6 +736,98 @@ void TestExtensions::gitChangesCommitAndBranches()
         offered = offered || c.id == "discard";
     QVERIFY(!offered);
     host.setEnabled("git", false);
+}
+
+// "Show Changes": the changed files as a list the file pane shows like a
+// folder, each with its mark, its place in the repository and its changes
+// as its preview; and the list follows what happens to the repository.
+void TestExtensions::gitChangesAsAListOfFiles()
+{
+    if (QStandardPaths::findExecutable("git").isEmpty())
+        QSKIP("git isn't installed");
+    const QString repo = m_dir + "/repo";
+    QDir().mkpath(repo);
+    QVERIFY(git(repo, {"init", "-q"}));
+    writeFile(repo + "/src/deep/tracked.txt", "one\n");
+    writeFile(repo + "/same.txt", "same\n");
+    QVERIFY(git(repo, {"add", "."}));
+    QVERIFY(git(repo, {"commit", "-q", "-m", "first"}));
+    writeFile(repo + "/src/deep/tracked.txt", "two\n");
+    writeFile(repo + "/fresh.txt", "new\n");
+    const QString tracked = repo + "/src/deep/tracked.txt", fresh = repo + "/fresh.txt";
+
+    Host *host = Host::instance();
+    host->rescan();
+    host->setEnabled("git", true);
+    DirectoryModel folder; // a pane on a folder inside the repository, not its top
+    QSignalSpy folderLoaded(&folder, &DirectoryModel::loaded);
+    folder.setPath(repo + "/src");
+    QVERIFY(folderLoaded.wait(10000));
+    auto onFolder = [&](const QString &id) {
+        for (const Extensions::Command &c : host->commands(repo + "/src", {})) {
+            if (c.extension == "git" && c.id == id)
+                return c;
+        }
+        return Extensions::Command();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(!onFolder("changes").id.isEmpty(), 10000);
+    QCOMPARE(onFolder("changes").label, QStringLiteral("Show Changes"));
+
+    QSignalSpy asked(host, &Host::showListingRequested);
+    host->invoke(onFolder("changes"), repo + "/src", {});
+    QTRY_COMPARE_WITH_TIMEOUT(asked.size(), 1, 10000);
+    const QString place = asked.first().at(0).toString();
+    QVERIFY(Host::isListingPath(place));
+    QVERIFY(DirectoryModel::isVirtualPath(place));
+    Extensions::Listing list = host->listing(place);
+    QVERIFY(list.valid);
+    QCOMPARE(list.title, QStringLiteral("Changes on main"));
+    QCOMPARE(list.folder, repo); // the whole repository, from wherever it was asked
+    QVERIFY(list.previews);
+    QStringList files = list.files;
+    files.sort();
+    QCOMPARE(files, (QStringList{fresh, tracked}));
+
+    // In a pane: rows like in a folder, with marks and where they are.
+    DirectoryModel model;
+    QSignalSpy loaded(&model, &DirectoryModel::loaded);
+    model.setPath(place);
+    QVERIFY(loaded.wait(10000));
+    QCOMPARE(model.rowCount(), 2);
+    QVERIFY(model.indexForPath(tracked).isValid());
+    QCOMPARE(model.extensionsFolder(), repo);
+    QTRY_COMPARE_WITH_TIMEOUT(model.indexForPath(tracked).data(DirectoryModel::BadgeRole).value<Badge>().text,
+                              QStringLiteral("M"), 10000);
+    QCOMPARE(model.indexForPath(fresh).data(DirectoryModel::BadgeRole).value<Badge>().text, QStringLiteral("U"));
+    QCOMPARE(model.index(model.indexForPath(tracked).row(), 2).data().toString(), QStringLiteral("src/deep"));
+    QCOMPARE(model.index(model.indexForPath(fresh).row(), 2).data().toString(), QStringLiteral("repo"));
+
+    // A file's preview there is its changes; a new file has none (Argonaut shows the file).
+    QSignalSpy ready(host, &Host::previewReady);
+    auto previewOf = [&](const QString &path) {
+        ready.clear();
+        const int id = host->requestListingPreview(place, path, "text/plain", QSize(800, 600));
+        if (id == 0 || !ready.wait(10000))
+            return Extensions::PreviewReply();
+        return ready.first().at(1).value<Extensions::PreviewReply>();
+    };
+    const Extensions::PreviewReply diff = previewOf(tracked);
+    QCOMPARE(diff.kind, Extensions::PreviewReply::Diff);
+    QVERIFY(diff.text.contains("-one") && diff.text.contains("+two"));
+    QCOMPARE(diff.note, QStringLiteral("1 added · 1 removed (lines)"));
+    QCOMPARE(previewOf(fresh).kind, Extensions::PreviewReply::None);
+    QCOMPARE(host->requestListingPreview(place, repo + "/same.txt", "text/plain", QSize(800, 600)), 0); // not in the list
+
+    // Committed: the list shrinks by itself.
+    QVERIFY(git(repo, {"commit", "-q", "-a", "-m", "second"}));
+    host->refreshAll();
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 1, 15000);
+    QVERIFY(model.indexForPath(fresh).isValid());
+
+    // The extension switched off: the list is gone, and so are its rows.
+    host->setEnabled("git", false);
+    QVERIFY(!host->listing(place).valid);
+    QTRY_COMPARE_WITH_TIMEOUT(model.rowCount(), 0, 10000);
 }
 
 // Send by Email moved out of the window into an extension: offered for

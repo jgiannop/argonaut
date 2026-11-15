@@ -199,6 +199,16 @@ void QuickLook::showItem(const Item &item)
     m_extensionRequest = 0;
     // Never a program in disguise: that one isn't handed to anybody.
     Extensions::Host *host = Extensions::Host::instance();
+    // In an extension's list that previews its own files (Git: the file's
+    // changes), that extension is the one asked, whatever the file is.
+    if (item.verdict != ContentType::Verdict::Dangerous && !item.listing.isEmpty()
+        && host->listingPreviews(item.listing)) {
+        m_extensionRequest = host->requestListingPreview(item.listing, item.path, item.mimeType, pictureBox());
+        if (m_extensionRequest != 0) {
+            m_extensionTimer->start();
+            return;
+        }
+    }
     if (item.verdict != ContentType::Verdict::Dangerous && host->canPreview(item.mimeType)) {
         m_extensionRequest = host->requestPreview(item.path, item.mimeType, pictureBox());
         if (m_extensionRequest != 0) {

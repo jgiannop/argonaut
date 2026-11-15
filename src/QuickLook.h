@@ -34,6 +34,7 @@ public:
         ContentType::Verdict verdict = ContentType::Verdict::NotChecked;
         QString details;               // "PDF document · 1.2 MB · 13/11/2026"
         QIcon icon;
+        QString listing;               // the extension's list it is shown in, if any (its address)
     };
 
     QuickLook(Thumbnailer *thumbnailer, QWidget *parent);

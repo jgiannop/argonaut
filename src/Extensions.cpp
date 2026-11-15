@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QUrl>
 
 namespace Extensions {
 
@@ -29,6 +30,8 @@ constexpr int MaxFolderCommands = 80; // per extension and folder (a list of bra
 constexpr int MaxLabelChars = 60;
 constexpr int MaxMessageChars = 200;
 constexpr int MaxPreviewChars = 1024 * 1024; // text, Markdown or HTML of a preview
+constexpr int MaxListingFiles = 20000;
+constexpr int MaxListings = 20;   // per extension
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
 const QStringList &colors()
@@ -554,6 +557,59 @@ int Host::requestPreview(const QString &path, const QString &mimeType, const QSi
     return 0;
 }
 
+QString Host::listingPath(const QString &extension, const QString &id)
+{
+    return QStringLiteral("listing:///") + extension + QLatin1Char('/') + QString::fromLatin1(QUrl::toPercentEncoding(id));
+}
+
+bool Host::isListingPath(const QString &path)
+{
+    return path.startsWith(QLatin1String("listing:///"));
+}
+
+Listing Host::listing(const QString &path) const
+{
+    if (!isListingPath(path))
+        return {};
+    const QString rest = path.mid(11);
+    const qsizetype slash = rest.indexOf(QLatin1Char('/'));
+    if (slash <= 0)
+        return {};
+    const QString extension = rest.left(slash);
+    const QString id = QUrl::fromPercentEncoding(rest.mid(slash + 1).toLatin1());
+    for (const Running *ext : m_running) {
+        if (ext->manifest.id == extension)
+            return ext->listings.value(id);
+    }
+    return {};
+}
+
+bool Host::listingPreviews(const QString &path) const
+{
+    return listing(path).previews;
+}
+
+int Host::requestListingPreview(const QString &path, const QString &file, const QString &mimeType, const QSize &pixels)
+{
+    const Listing list = listing(path);
+    if (!list.valid || !list.previews || !list.files.contains(file))
+        return 0;
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != list.extension || !ext->process)
+            continue;
+        const int id = ++m_previewRequest;
+        send(ext, {{QStringLiteral("type"), QStringLiteral("preview")},
+                   {QStringLiteral("id"), id},
+                   {QStringLiteral("path"), file},
+                   {QStringLiteral("mime"), mimeType},
+                   {QStringLiteral("listing"), list.id},
+                   {QStringLiteral("width"), pixels.width()},
+                   {QStringLiteral("height"), pixels.height()}});
+        return id;
+    }
+    return 0;
+}
+
 QString Host::nameOf(const QString &id) const
 {
     for (const Manifest &m : m_manifests) {
@@ -704,7 +760,47 @@ void Host::handle(Running *ext, const QByteArray &line)
         emit previewReady(message.value(QLatin1String("id")).toInt(), reply);
         return;
     }
+    if (type == QLatin1String("listing")) { // a list of files it keeps
+        const QString id = message.value(QLatin1String("id")).toString().left(1000);
+        if (id.isEmpty())
+            return;
+        if (message.value(QLatin1String("remove")).toBool()) {
+            if (ext->listings.remove(id) > 0)
+                emit listingChanged(listingPath(ext->manifest.id, id));
+            return;
+        }
+        if (!ext->listings.contains(id) && ext->listings.size() >= MaxListings)
+            return;
+        Listing list;
+        list.valid = true;
+        list.extension = ext->manifest.id;
+        list.id = id;
+        list.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (list.title.isEmpty())
+            list.title = ext->manifest.name;
+        const QString folder = message.value(QLatin1String("folder")).toString();
+        if (QDir::isAbsolutePath(folder))
+            list.folder = QDir::cleanPath(folder);
+        list.previews = message.value(QLatin1String("previews")).toBool();
+        const QJsonArray files = message.value(QLatin1String("files")).toArray();
+        for (const QJsonValue &file : files) {
+            if (list.files.size() >= MaxListingFiles)
+                break;
+            const QString path = file.toString();
+            if (QDir::isAbsolutePath(path)) // a full path, as it is: no "..", no tricks
+                list.files << QDir::cleanPath(path);
+        }
+        ext->listings.insert(id, list);
+        emit listingChanged(listingPath(ext->manifest.id, id));
+        return;
+    }
     if (type == QLatin1String("show")) { // a result for the preview pane
+        if (message.value(QLatin1String("kind")).toString() == QLatin1String("listing")) {
+            const QString id = message.value(QLatin1String("listing")).toString();
+            if (ext->listings.contains(id))
+                emit showListingRequested(listingPath(ext->manifest.id, id));
+            return;
+        }
         const PreviewReply content = readContent(message);
         if (content.kind != PreviewReply::None)
             emit showRequested(ext->manifest.name,
@@ -781,6 +877,10 @@ void Host::exited(Running *ext)
 
 void Host::forget(Running *ext)
 {
+    const QStringList lists = ext->listings.keys();
+    ext->listings.clear();
+    for (const QString &id : lists)
+        emit listingChanged(listingPath(ext->manifest.id, id));
     const QStringList folders = ext->folders.keys();
     ext->folders.clear();
     for (const QString &folder : folders)

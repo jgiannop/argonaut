@@ -13,6 +13,8 @@ Version 1 of the protocol lets an extension:
 - add **commands** to the right-click menu, in submenus if there are many,
   ask the user for a text first (a message, a name), say a line when one is
   done, and show a longer result (a diff, a report) in the preview pane;
+- keep a **list of files** that the file pane shows like a folder (Git's
+  changed files), with your own preview for each file in it;
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
@@ -214,6 +216,41 @@ For a result that needs room, ask for it to be shown in the preview pane:
 `kind`, `text` and `note` are as in a [preview](#previews) answer (`text`,
 `markdown`, `html`, `diff`, `image`). The pane opens if it is closed, and the
 next file the user selects takes it back.
+
+### Lists of files
+
+When your result is a set of files (the changed files of a repository,
+duplicates, search hits), don't describe them in text: give Argonaut the
+list, and it shows them in the file pane as it shows a folder, with icons,
+thumbnails, selection, the right-click menu and your marks and commands.
+
+```json
+{"type": "listing", "id": "changes", "title": "Changes on main",
+ "folder": "/home/me/project",
+ "files": ["/home/me/project/src/main.c", "/home/me/project/notes.txt"],
+ "previews": true}
+```
+
+Send it again with the same `id` whenever the list changes; an open view
+follows. `{"type": "listing", "id": "changes", "remove": true}` takes it away.
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Yours to choose; one list per id (up to 20 lists). |
+| `title` | Shown in the path bar and the tab. |
+| `files` | Full paths, up to 20,000. Files that don't exist are left out of the view. |
+| `folder` | The folder the files belong to. Your marks and commands for that folder apply to the files in the list (their paths relative to it), and the view's Location column is relative to it. Argonaut sends you a `watch` for it while the list is shown. |
+| `previews` | `true`: for every file in this list you are asked for the preview, whatever its type, with `"listing": "<id>"` in the request. Answer `"kind": "none"` for files you have nothing special to show for. |
+
+To open the list in the pane the user is in (usually as the answer to one of
+your commands):
+
+```json
+{"type": "show", "kind": "listing", "listing": "changes"}
+```
+
+Git's **Show Changes** is exactly this: the list of changed files, and each
+file's diff as its preview.
 
 ### Previews
 

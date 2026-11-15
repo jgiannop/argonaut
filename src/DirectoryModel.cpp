@@ -140,6 +140,13 @@ DirectoryModel::DirectoryModel(QObject *parent)
             emit dataChanged(index(0, 0), index(int(m_rows.size()) - 1, 0), {StarredRole});
     });
     m_contentPool.setMaxThreadCount(1); // reading file heads: one disk stream
+    // The list shown is an extension's: it says when to read it again.
+    connect(Extensions::Host::instance(), &Extensions::Host::listingChanged, this, [this](const QString &path) {
+        if (m_place == Place::Listing && path == m_path) {
+            watchForExtensions(Extensions::Host::instance()->listing(path).folder);
+            scheduleRescan();
+        }
+    });
     connect(Extensions::Host::instance(), &Extensions::Host::folderChanged, this, [this](const QString &folder) {
         if (folder != m_extFolder || m_extFolder.isEmpty())
             return;
@@ -277,6 +284,8 @@ DirectoryModel::Place DirectoryModel::placeOf(const QString &path)
         return Place::Recent;
     if (path == starredPath())
         return Place::Starred;
+    if (Extensions::Host::isListingPath(path))
+        return Place::Listing;
     return Place::Folder;
 }
 
@@ -285,6 +294,15 @@ void DirectoryModel::setPath(const QString &path)
     m_path = path;
     m_query.clear();
     m_place = placeOf(path);
+    if (m_place == Place::Listing) {
+        // An extension's list: nothing of ours to watch (the extension says
+        // when it changes); marks and commands are those of its folder.
+        m_trash = false;
+        m_dirs.clear();
+        watchForExtensions(Extensions::Host::instance()->listing(path).folder);
+        relist();
+        return;
+    }
     if (isVirtual()) {
         // Watch the folder of the list's file: it's rewritten atomically.
         m_trash = false;
@@ -500,6 +518,10 @@ void DirectoryModel::startScan(bool initial)
     QList<RecentFiles::Item> listed; // Starred: read here, on the GUI thread
     if (place == Place::Starred) {
         for (const QString &p : Starred::instance().paths())
+            listed.append({p, 0});
+    } else if (place == Place::Listing) {
+        const QStringList files = Extensions::Host::instance()->listing(m_path).files;
+        for (const QString &p : files)
             listed.append({p, 0});
     }
     m_pool.start([this, generation, dirs, trash, initial, words, search, showHidden, place, listed, contents,
@@ -1620,6 +1642,12 @@ QIcon DirectoryModel::iconFor(const FileEntry &e) const
 // or the folder's own name for items directly in it.
 QString DirectoryModel::searchLocation(const FileEntry &e) const
 {
+    if (m_place == Place::Listing && !m_extFolder.isEmpty()
+        && (e.dir == m_extFolder || e.dir.startsWith(m_extFolder + QLatin1Char('/')))) {
+        // In the list's own folder (a repository): where inside it.
+        return e.dir == m_extFolder ? QFileInfo(m_extFolder).fileName()
+                                    : QDir::toNativeSeparators(QDir(m_extFolder).relativeFilePath(e.dir));
+    }
     if (isVirtual()) { // the folder it's in, with ~ for home (like Nautilus)
         return tildePath(e.dir);
     }

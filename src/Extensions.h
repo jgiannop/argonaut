@@ -83,6 +83,19 @@ struct PreviewReply
     QString note;          // one line under the preview ("3 sheets")
 };
 
+// A list of files an extension keeps (Git: the changed files), shown in the
+// file pane like a folder. It has a place's address, listingPath().
+struct Listing
+{
+    bool valid = false;
+    QString extension; // its extension's id
+    QString id;
+    QString title;     // "Changes on main"
+    QString folder;    // the folder the files belong to (marks and commands are asked for it); may be empty
+    QStringList files; // full paths
+    bool previews = false; // the extension is asked for the preview of every file in it
+};
+
 // A selected item, as far as commands care.
 struct Item
 {
@@ -161,6 +174,15 @@ public:
     // (the asker should not wait long, and falls back to its own preview).
     bool canPreview(const QString &mimeType) const;
     int requestPreview(const QString &path, const QString &mimeType, const QSize &pixels);
+    // The same for a file shown in a listing whose extension previews its
+    // files itself (Git: the file's changes), whatever the file's type.
+    bool listingPreviews(const QString &listingPath) const;
+    int requestListingPreview(const QString &listingPath, const QString &path, const QString &mimeType, const QSize &pixels);
+
+    // Listings: "listing:///<extension>/<id>" is one's address in a pane.
+    static QString listingPath(const QString &extension, const QString &id);
+    static bool isListingPath(const QString &path);
+    Listing listing(const QString &listingPath) const; // !valid: there is none (any more)
 
     // How an extension is doing, for the Extensions window.
     enum class State {
@@ -180,6 +202,8 @@ signals:
     void extensionsChanged();                  // the list, or what is switched on
     void message(const QString &extension, const QString &text); // something to tell the user
     void previewReady(int request, const Extensions::PreviewReply &reply);
+    void listingChanged(const QString &listingPath);       // its files or title changed, or it is gone
+    void showListingRequested(const QString &listingPath); // the user asked to see it
     // A result to show in the preview pane (a command's answer: a diff, a report).
     void showRequested(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
 
@@ -201,6 +225,7 @@ private:
         QHash<QString, FolderData> folders;
         QList<Command> commands; // everywhere
         QStringList previewTypes; // what it previews ("text/markdown", "image/*")
+        QHash<QString, Listing> listings; // by id
     };
 
     void startAsNeeded();

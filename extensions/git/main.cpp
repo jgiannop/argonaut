@@ -20,6 +20,7 @@
 namespace {
 
 QHash<QString, GitStatus *> g_folders;
+QHash<QString, QByteArray> g_listed; // repositories whose "Changes" list was asked for -> what was last sent
 
 QJsonObject badgeFor(const GitStatus::Mark &mark)
 {
@@ -54,6 +55,45 @@ QJsonObject badgeFor(const GitStatus::Mark &mark)
     if (mark.deep)
         badge.insert(QStringLiteral("deep"), true);
     return badge;
+}
+
+void write(const QJsonObject &message)
+{
+    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
+    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
+    std::fflush(stdout);
+}
+
+QString listingId(const QString &root)
+{
+    return QStringLiteral("changes:") + root;
+}
+
+// The "Changes" list of a repository: every changed file, wherever it is in
+// it, for the file pane to show like a folder. Sent again when it differs.
+void sendListing(const GitStatus *git, bool always = false)
+{
+    const QString root = git->root();
+    if (root.isEmpty() || (!always && !g_listed.contains(root)))
+        return;
+    QJsonArray files;
+    const QList<GitStatus::Mark> marks = git->marks(root);
+    for (const GitStatus::Mark &mark : marks) {
+        // Files (and whole new folders), not the folders that only hold changes.
+        if (mark.state != GitStatus::Changed && !mark.relativePath.isEmpty())
+            files.append(root + QLatin1Char('/') + mark.relativePath);
+    }
+    const QJsonObject message{{QStringLiteral("type"), QStringLiteral("listing")},
+                              {QStringLiteral("id"), listingId(root)},
+                              {QStringLiteral("title"), QStringLiteral("Changes on %1").arg(git->branch())},
+                              {QStringLiteral("folder"), root},
+                              {QStringLiteral("previews"), true},
+                              {QStringLiteral("files"), files}};
+    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact);
+    if (g_listed.value(root) == line)
+        return;
+    g_listed.insert(root, line);
+    write(message);
 }
 
 QJsonObject command(const QString &id, const QString &label, const QString &group = QStringLiteral("Git"))
@@ -102,8 +142,10 @@ QJsonArray commandsFor(const GitStatus *git, const QList<GitStatus::Mark> &marks
         c.insert(QStringLiteral("target"), QStringLiteral("folder"));
         return c;
     };
-    if (git->changeCount() > 0)
-        commands.append(onFolder(command(QStringLiteral("diff-all"), QStringLiteral("Show All Changes"))));
+    if (git->changeCount() > 0) {
+        commands.append(onFolder(command(QStringLiteral("changes"), QStringLiteral("Show Changes"))));
+        commands.append(onFolder(command(QStringLiteral("diff-all"), QStringLiteral("Show Changes as One Diff"))));
+    }
     if (git->stagedCount() > 0 || git->unstagedCount() > 0) {
         // What is staged is what gets committed; with nothing staged, every
         // changed file git already tracks (new files have to be staged).
@@ -161,9 +203,9 @@ void report(const QString &folder, const GitStatus *git)
         if (git->ready() && !git->blocked() && !git->tooSlow())
             message.insert(QStringLiteral("commands"), commandsFor(git, marks));
     }
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
+    write(message);
+    if (git->ready())
+        sendListing(git); // the open "Changes" list follows
 }
 
 void say(const QString &text)
@@ -254,6 +296,14 @@ void invoke(const QJsonObject &message)
     if (command == QLatin1String("diff") && !paths.isEmpty()) {
         showChanges(git, folder, paths);
         return;
+    } else if (command == QLatin1String("changes")) {
+        // The changed files as a list in the file pane; each one's changes
+        // are its preview there.
+        sendListing(git, true);
+        write({{QStringLiteral("type"), QStringLiteral("show")},
+               {QStringLiteral("kind"), QStringLiteral("listing")},
+               {QStringLiteral("listing"), listingId(git->root())}});
+        return;
     } else if (command == QLatin1String("diff-all")) {
         showChanges(git, folder, {});
         return;
@@ -298,6 +348,48 @@ void invoke(const QJsonObject &message)
     say(ok ? done : error);
 }
 
+// A file selected in the "Changes" list: its changes are its preview. A file
+// git doesn't track yet has none: Argonaut shows the file itself.
+void previewInListing(const QJsonObject &message)
+{
+    QJsonObject reply{{QStringLiteral("type"), QStringLiteral("preview")},
+                      {QStringLiteral("id"), message.value(QLatin1String("id"))},
+                      {QStringLiteral("kind"), QStringLiteral("none")}};
+    const QString listing = message.value(QLatin1String("listing")).toString();
+    const QString path = message.value(QLatin1String("path")).toString();
+    GitStatus *git = nullptr;
+    for (GitStatus *candidate : std::as_const(g_folders)) {
+        if (!candidate->root().isEmpty() && listingId(candidate->root()) == listing && candidate->ready())
+            git = candidate;
+    }
+    if (git && git->state(path) != GitStatus::Untracked && git->state(path) != GitStatus::None) {
+        const QStringList diffArguments = {QStringLiteral("diff"), QStringLiteral("--no-ext-diff"), QStringLiteral("--no-textconv"),
+                                           QStringLiteral("--no-color"), QStringLiteral("-M")};
+        bool ok = false;
+        QByteArray out = git->read(diffArguments + QStringList{QStringLiteral("HEAD")}, {path}, &ok, 600 * 1000);
+        if (!ok)
+            out = git->read(diffArguments + QStringList{QStringLiteral("--cached")}, {path}, &ok, 600 * 1000);
+        if (!out.trimmed().isEmpty()) {
+            const QString text = QString::fromUtf8(out);
+            int added = 0, removed = 0;
+            const QList<QStringView> lines = QStringView(text).split(QLatin1Char('\n'));
+            bool inHunk = false;
+            for (QStringView line : lines) {
+                if (line.startsWith(QLatin1String("@@")))
+                    inHunk = true;
+                else if (inHunk && line.startsWith(QLatin1Char('+')))
+                    ++added;
+                else if (inHunk && line.startsWith(QLatin1Char('-')))
+                    ++removed;
+            }
+            reply.insert(QStringLiteral("kind"), QStringLiteral("diff"));
+            reply.insert(QStringLiteral("text"), text);
+            reply.insert(QStringLiteral("note"), QStringLiteral("%1 added · %2 removed (lines)").arg(added).arg(removed));
+        }
+    }
+    write(reply);
+}
+
 void handle(const QByteArray &line)
 {
     const QJsonObject message = QJsonDocument::fromJson(line).object();
@@ -319,6 +411,8 @@ void handle(const QByteArray &line)
         delete g_folders.take(folder);
     } else if (type == QLatin1String("invoke")) {
         invoke(message);
+    } else if (type == QLatin1String("preview")) {
+        previewInListing(message);
     }
     // "hello" and anything newer than this program: nothing to do.
 }

@@ -217,9 +217,15 @@ void PathBar::rebuild()
     QString base;
     QString rest;
     if (DirectoryModel::isVirtualPath(m_path)) {
-        // Recent / Starred: one place, not a folder.
-        const bool recent = DirectoryModel::placeOf(m_path) == DirectoryModel::Place::Recent;
-        segments.append({recent ? tr("Recent") : tr("Starred"), m_path, recent ? Glyph::Recent : Glyph::Star, true});
+        // Recent / Starred / an extension's list: one place, not a folder.
+        const DirectoryModel::Place place = DirectoryModel::placeOf(m_path);
+        if (place == DirectoryModel::Place::Listing) {
+            const Extensions::Listing list = Extensions::Host::instance()->listing(m_path);
+            segments.append({list.valid ? list.title : tr("List"), m_path, Glyph::List, true});
+        } else {
+            const bool recent = place == DirectoryModel::Place::Recent;
+            segments.append({recent ? tr("Recent") : tr("Starred"), m_path, recent ? Glyph::Recent : Glyph::Star, true});
+        }
     } else if (!trash.isEmpty()) {
         // The Trash is one place, wherever its folders really are.
         segments.append({tr("Trash"), Trash::homeFilesDir(), Glyph::Trash, true});

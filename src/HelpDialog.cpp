@@ -550,8 +550,12 @@ default (names only, ask, or read when needed) and the model, and shows what you
 <h2>The Git menu</h2>
 <p>Click the branch in the path bar, or right-click the folder's empty space and choose <b>Git</b>:</p>
 <ul>
-<li><b>Show All Changes</b> opens the preview pane with everything that changed since the last commit:
-added lines on green, removed lines on red. Right-click changed files → <b>Git → Show Changes</b> for those only.</li>
+<li><b>Show Changes</b> lists the changed files of the whole repository in the file pane, like a folder.
+Select one and press [[Space]]: the preview pane shows what changed in it, added lines on green, removed
+lines on red. The arrow keys go from file to file. The list follows what you stage, commit or edit;
+[[Alt+Left]] goes back to the folder. Deleted files are not in the list (there is nothing to show as a file).</li>
+<li><b>Show Changes as One Diff</b> puts everything that changed in the preview pane as one text. Right-click
+changed files → <b>Git → Show Changes</b> for those only.</li>
 <li><b>Commit…</b> asks for a message. It commits what is staged; when nothing is staged, every changed file
 Git already tracks. The entry says which, and how many. New files have to be staged first.</li>
 <li><b>Switch Branch</b> lists the branches, the current one ticked. <b>New Branch…</b> asks for a name and switches to it.</li>

@@ -142,6 +142,19 @@ MainWindow::MainWindow(QWidget *parent)
         if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
             showMessage(text);
     });
+    // A list of files an extension wants shown (Git: the changes): the pane
+    // you are in goes there, like to any place. Its title can change while
+    // it is open ("Changes on main" after switching branch).
+    connect(Extensions::Host::instance(), &Extensions::Host::showListingRequested, this, [this](const QString &path) {
+        if (!m_chooser && (!QApplication::activeWindow() || QApplication::activeWindow() == this))
+            navigateTo(path);
+    });
+    connect(Extensions::Host::instance(), &Extensions::Host::listingChanged, this, [this](const QString &path) {
+        for (int i = 0; i < m_paneCount; ++i) {
+            if (m_panes[i].current == path && i == m_activePane && !inBackground())
+                refreshChrome();
+        }
+    });
     connect(Extensions::Host::instance(), &Extensions::Host::showRequested, this,
             [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
                 if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
@@ -1072,6 +1085,10 @@ QString MainWindow::titleFor(const QString &path) const
         return tr("Recent");
     case DirectoryModel::Place::Starred:
         return tr("Starred");
+    case DirectoryModel::Place::Listing: {
+        const Extensions::Listing list = Extensions::Host::instance()->listing(path);
+        return list.valid ? list.title : tr("List");
+    }
     case DirectoryModel::Place::Folder:
         break;
     }
@@ -2058,8 +2075,11 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         m_mounts->connectToServer(path);
         return false; // opens when connected
     }
-    // Recent and Starred aren't folders: lists of items from anywhere.
+    // Recent and Starred aren't folders: lists of items from anywhere. So is
+    // an extension's list (Git's changed files), while its extension has it.
     const bool place = DirectoryModel::isVirtualPath(path);
+    if (Extensions::Host::isListingPath(path) && !Extensions::Host::instance()->listing(path).valid)
+        return false;
     const QFileInfo info(path);
     if (!place && (!info.exists() || !info.isDir())) {
         showMessage(tr("Folder not found: %1").arg(path));
@@ -4210,6 +4230,8 @@ void MainWindow::updateQuickLook()
     if (item.path == m_quickLook->path() && m_quickLook->isVisible())
         return;
     item.name = m_pane->model->fileName(source);
+    if (Extensions::Host::isListingPath(m_pane->current))
+        item.listing = m_pane->current; // its extension may preview its files itself
     item.verdict = ContentType::Verdict(source.data(DirectoryModel::VerdictRole).toInt());
     item.mimeType = m_pane->model->isDir(source) ? QStringLiteral("inode/directory") : effectiveMimeAt(source);
     item.icon = source.data(Qt::DecorationRole).value<QIcon>();

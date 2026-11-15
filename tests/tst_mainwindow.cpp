@@ -104,6 +104,7 @@ private slots:
     void terminalBringsTheFilesAlong();
     void extensionMenusAskAndShow();
     void diffIsColoured();
+    void extensionListIsAPlace();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1363,6 +1364,56 @@ void TestMainWindow::diffIsColoured()
     QCOMPARE(background(" same").style(), Qt::NoBrush);
     QCOMPARE(background("+++ b/x").style(), Qt::NoBrush); // the file's name, not an added line
     QVERIFY(doc.begin().begin().fragment().charFormat().fontWeight() == QFont::Bold);
+}
+
+// A list of files an extension keeps: the pane goes there like to a place
+// (title, back, rows for the files that exist), and the extension previews
+// its files itself. Only full paths are taken; a list it never sent isn't shown.
+void TestMainWindow::extensionListIsAPlace()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt"), b = make("b.txt");
+    open(m_dir);
+    QMenu menu;
+    QAction *listMe = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        menu.clear();
+        w->addExtensionCommands(&menu, {});
+        for (QAction *top : menu.actions()) {
+            if (!top->menu())
+                continue;
+            for (QAction *action : top->menu()->actions()) {
+                if (action->text() == "List Me")
+                    listMe = action;
+            }
+        }
+        return listMe != nullptr;
+    }(), 10000);
+    listMe->trigger();
+    const QString place = Extensions::Host::listingPath("fake", "my list/1");
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, place, 10000);
+    QCOMPARE(w->titleFor(place), QStringLiteral("Fake list"));
+    QCOMPARE(w->m_pathBar->path(), place);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_pane->model->indexForPath(a).isValid(), 10000);
+    QTRY_VERIFY(w->m_pane->model->indexForPath(b).isValid()); // "sub/../b.txt", cleaned
+    QCOMPARE(w->m_pane->model->rowCount(), 2);                 // the missing and the relative one aren't rows
+    QVERIFY(!w->m_pasteAct->isEnabled());                      // a place, not a folder to paste into
+
+    // Space: the extension's own preview of the file, not the built-in one.
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QTRY_VERIFY_WITH_TIMEOUT(w->quickLookVisible() && w->m_quickLook->fromExtension(), 10000);
+    QCOMPARE(w->m_quickLook->shownText(), QStringLiteral("LISTING PREVIEW of a.txt in my list/1"));
+
+    // Back to the folder; and with the extension off there is no such place.
+    w->m_backAct->trigger();
+    QCOMPARE(w->m_pane->current, m_dir);
+    host->setEnabled("fake", false);
+    QVERIFY(!w->navigateTo(place));
+    QCOMPARE(w->m_pane->current, m_dir);
 }
 
 #include "tst_mainwindow.moc"

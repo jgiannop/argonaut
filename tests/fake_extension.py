@@ -20,6 +20,7 @@ for line in sys.stdin:
             {"id": "typed", "label": "Type & It…", "target": "folder", "group": "Fake/Sub/Too/Deep", "checked": True,
              "ask": {"label": "Say what:", "text": "default"}},
             {"id": "showme", "label": "Show Me", "target": "folder", "group": "Fake"},
+            {"id": "listme", "label": "List Me", "target": "folder", "group": "Fake"},
             {"id": "", "label": "No id"},
             {"id": "nolabel"}]})
     if m.get("type") == "hello":
@@ -27,7 +28,9 @@ for line in sys.stdin:
     if m.get("type") == "preview":
         name = os.path.basename(m.get("path", ""))
         reply = {"type": "preview", "id": m.get("id")}
-        if "nothing" in name:
+        if m.get("listing"):
+            reply.update(kind="text", text="LISTING PREVIEW of " + name + " in " + m["listing"])
+        elif "nothing" in name:
             reply["kind"] = "none"
         elif "picture" in name:
             import struct, zlib
@@ -49,6 +52,11 @@ for line in sys.stdin:
         say(reply)
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
+        if m.get("command") == "listme":
+            say({"type": "listing", "id": "my list/1", "title": "Fake\nlist", "folder": folder, "previews": True,
+                 "files": [folder + "/a.txt", folder + "/missing.txt", "relative.txt", folder + "/sub/../b.txt"]})
+            say({"type": "show", "kind": "listing", "listing": "my list/1"})
+            say({"type": "show", "kind": "listing", "listing": "no such list"})
         if m.get("command") == "showme":
             say({"type": "show", "title": "A result\nfrom the fake", "kind": "diff", "note": "2 lines",
                  "text": "diff --git a/x b/x\n@@ -1 +1 @@\n-old <b>line</b>\n+new line"})
