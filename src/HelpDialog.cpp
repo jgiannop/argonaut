@@ -335,6 +335,10 @@ Search, the Trash, Recent and Starred always show a plain list.</p>
 <h2>Columns</h2>
 <p>The list shows Name, Size, Type and Modified. Right-click the column header to add <b>Owner</b>,
 <b>Group</b> and <b>Permissions</b>.</p>
+<h2>Fade between folders</h2>
+<p>When you open another folder, the old one fades into the new one for a moment. Nothing loads later because
+of it, and it steps aside when you go through folders quickly. <b>Preferences → Motion</b> switches it on or
+off. Until you choose there, it follows the desktop: off where animations are switched off.</p>
 <h2>Hidden files</h2>
 <p>[[Ctrl+H]] shows or hides dot-files and backups (names ending in ~).</p>
 <h2>Quick Look</h2>

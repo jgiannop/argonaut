@@ -122,6 +122,8 @@ qt_add_library(argonaut_app STATIC
     src/InlineRename.cpp
     src/MountActions.h
     src/MountActions.cpp
+    src/FadeOverlay.h
+    src/FadeOverlay.cpp
     src/ExtensionsDialog.h
     src/ExtensionsDialog.cpp
     src/PreferencesDialog.h

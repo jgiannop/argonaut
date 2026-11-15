@@ -403,6 +403,7 @@ private:
         QTreeView *detailView = nullptr;
         QStackedWidget *viewStack = nullptr;
         QLabel *floatingBar = nullptr;
+        class FadeOverlay *fade = nullptr; // the cross-fade when its folder changes
         QTimer *messageTimer = nullptr;
         QWidget *container = nullptr; // caption + views, in m_paneSplitter
         QLabel *caption = nullptr;    // split view: the pane's folder

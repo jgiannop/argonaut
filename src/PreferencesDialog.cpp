@@ -1,5 +1,7 @@
 #include "PreferencesDialog.h"
 
+#include "FadeOverlay.h"
+
 #include "Claude.h"
 #include "DefaultFileManager.h"
 #include "KeyStore.h"
@@ -203,6 +205,25 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addSpacing(4);
     layout->addWidget(expand);
     layout->addWidget(expandHint);
+
+    // The cross-fade when the folder changes.
+    layout->addSpacing(18);
+    auto *motionHeading = new QLabel(tr("Motion"), this);
+    motionHeading->setObjectName("prefHeading");
+    auto *fade = new QCheckBox(tr("Fade when changing folder"), this);
+    fade->setObjectName("prefCheck");
+    fade->setChecked(FadeOverlay::enabled());
+    auto *fadeHint = new QLabel(tr("The old folder fades into the new one for a moment. Nothing loads later for "
+                                   "it, and it steps aside when you go through folders quickly. Until you choose, "
+                                   "it follows the desktop: off where animations are switched off."),
+                                this);
+    fadeHint->setObjectName("prefHint");
+    fadeHint->setWordWrap(true);
+    connect(fade, &QCheckBox::toggled, this, [](bool on) { FadeOverlay::setEnabled(on); });
+    layout->addWidget(motionHeading);
+    layout->addSpacing(4);
+    layout->addWidget(fade);
+    layout->addWidget(fadeHint);
 
     // Default file manager: Argonaut or Nautilus, switchable both ways.
     layout->addSpacing(18);

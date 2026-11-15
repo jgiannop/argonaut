@@ -9,6 +9,7 @@
 
 #include "DirectoryModel.h"
 #include "ExtensionsDialog.h"
+#include "FadeOverlay.h"
 #include "FileOperations.h"
 #include "AnalyzeView.h"
 #include "Bookmarks.h"
@@ -87,6 +88,7 @@ private slots:
     void previewIsAPaneThatFollowsTheSelection();
     void extensionCommandsAskFirst();
     void extensionsWindowListsAndSwitches();
+    void fadeNeverGetsInTheWay();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1073,6 +1075,41 @@ void TestMainWindow::extensionsWindowListsAndSwitches()
     QVERIFY(!host->isEnabled("fake"));
     QVERIFY(!host->isRunning("fake"));
     dialog->close();
+}
+
+// The cross-fade on a change of folder: it runs over the new folder (which
+// is the current one at once), a second change during it ends it instead of
+// queueing another, it ends by itself, and the switch turns it off.
+void TestMainWindow::fadeNeverGetsInTheWay()
+{
+    make("a/one.txt");
+    make("b/two.txt");
+    open(m_dir);
+    FadeOverlay *fade = w->m_pane->fade;
+    QVERIFY(fade);
+    QTRY_VERIFY(!fade->isRunning());
+
+    QVERIFY(w->navigateTo(m_dir + "/a"));
+    QVERIFY(fade->isRunning());
+    QVERIFY(fade->isVisible());
+    QCOMPARE(w->m_pane->current, m_dir + "/a"); // nothing waits for the effect
+    QVERIFY(fade->testAttribute(Qt::WA_TransparentForMouseEvents));
+
+    QVERIFY(w->navigateTo(m_dir + "/b")); // quickly again: out of the way
+    QVERIFY(!fade->isRunning());
+    QVERIFY(!fade->isVisible());
+    QCOMPARE(w->m_pane->current, m_dir + "/b");
+    QTRY_VERIFY(w->m_pane->model->indexForPath(m_dir + "/b/two.txt").isValid());
+
+    QVERIFY(w->navigateTo(m_dir));
+    QVERIFY(fade->isRunning());
+    QTRY_VERIFY_WITH_TIMEOUT(!fade->isRunning(), 2000); // ends by itself
+    QVERIFY(!fade->isVisible());
+
+    FadeOverlay::setEnabled(false);
+    QVERIFY(w->navigateTo(m_dir + "/a"));
+    QVERIFY(!fade->isRunning());
+    FadeOverlay::setEnabled(true);
 }
 
 #include "tst_mainwindow.moc"

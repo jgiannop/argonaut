@@ -36,6 +36,7 @@
 #include "OperationsPanel.h"
 #include "PathBar.h"
 #include "ExtensionsDialog.h"
+#include "FadeOverlay.h"
 #include "PreferencesDialog.h"
 #include "RecentFiles.h"
 #include "Starred.h"
@@ -1586,6 +1587,7 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     });
     connect(m_pane->proxy, &QAbstractItemModel::layoutChanged, m_rename, &InlineRename::reposition);
 
+    m_pane->fade = new FadeOverlay(m_pane->viewStack); // under the floating bar, over the views
     m_pane->floatingBar = new QLabel(m_pane->viewStack);
     m_pane->floatingBar->setObjectName("floatingBar");
     m_pane->floatingBar->hide();
@@ -2073,6 +2075,11 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         m_pane->back.push(m_pane->current);
         m_pane->forward.clear();
     }
+    // Another folder: the old view fades out over the new one (not while
+    // Analyze has the page, and not before the window is up).
+    if (clean != m_pane->current && !m_pane->current.isEmpty() && m_pane->fade && isVisible()
+        && !(m_analyzing && paneIndex() == 0))
+        m_pane->fade->start(m_pane->view);
     m_pane->current = clean;
 
     m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
