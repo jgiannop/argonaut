@@ -231,27 +231,18 @@ private:
     Theme m_theme;
     QString m_themeId; // empty until the first applyTheme()
     bool m_csd = false;
-    bool m_grid = true;
     bool m_showHidden = false;
     bool m_resizeCursor = false;
 
     FileOperations *m_ops = nullptr;
     OperationsPanel *m_opsPanel = nullptr;
     Toast *m_toast = nullptr;
-    DirectoryModel *m_model = nullptr;
-    FileFilterProxy *m_proxy = nullptr; // between model and view (Open/Save: the file-type filter)
     Thumbnailer *m_thumbnailer = nullptr;
-    FileItemDelegate *m_gridDelegate = nullptr; // one per view: each caches its
-    FileItemDelegate *m_listDelegate = nullptr; // own sizes and layout
-    QAbstractItemView *m_view = nullptr; // the visible one of the two below
-    QListView *m_iconView = nullptr;      // grid
-    QTreeView *m_detailView = nullptr;    // list with columns
     AnalyzeView *m_analyzeView = nullptr;   // Analyze: folder sizes as a tree
     QAction *m_analyzeAct = nullptr;      // Ctrl+3
     QAction *m_analyzeFilesAct = nullptr; // Analyze: also list the biggest files
     QToolButton *m_analyzeButton = nullptr;
     bool m_analyzing = false;
-    QStackedWidget *m_viewStack = nullptr;
     Sidebar *m_sidebar = nullptr;
     QWidget *m_root = nullptr;
     QSplitter *m_splitter = nullptr;
@@ -261,9 +252,6 @@ private:
     QTimer *m_searchTimer = nullptr;     // debounces typing before searching sub-folders
     QAction *m_openLocationAct = nullptr; // search results: open the folder that holds it
     QLabel *m_titleLabel = nullptr;
-    QLabel *m_floatingBar = nullptr;
-    QTimer *m_messageTimer = nullptr;
-    QString m_message;
 
     QToolButton *m_backButton = nullptr;
     QToolButton *m_forwardButton = nullptr;
@@ -322,14 +310,9 @@ private:
     QuickLook *m_quickLook = nullptr;     // made on first use
     QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
     // Recent is shown newest first; the folder sort comes back when leaving.
-    bool m_recentSort = false;
-    int m_sortColumnBefore = 0;
-    Qt::SortOrder m_sortOrderBefore = Qt::AscendingOrder;
     QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
     QAction *m_zoomOutAct = nullptr;      // Ctrl+-
     QAction *m_zoomResetAct = nullptr;    // Ctrl+0
-    int m_gridZoom = 1;                   // index into FileItemDelegate::gridSizes()
-    int m_listZoom = 1;                   // index into FileItemDelegate::listSizes()
     int m_wheelZoom = 0;                  // Ctrl+wheel delta not used yet (touchpads)
     QAction *m_homeAct = nullptr;
     QAction *m_locationAct = nullptr;
@@ -361,7 +344,6 @@ private:
 
     QString m_typeAhead;
     QElapsedTimer m_typeAheadTimer;
-    int m_pendingScroll = -1;     // restore a tab's scroll position once loaded
     TabStrip *m_tabBar = nullptr;
     QAction *m_newTabAct = nullptr;
     QAction *m_closeWindowAct = nullptr;
@@ -403,23 +385,18 @@ private:
 
     MountActions *m_mounts = nullptr; // servers and drives: connect, disconnect, eject
     InlineRename *m_rename = nullptr; // F2: the field over an item's name
-    QString m_pendingRename; // start renaming this once it appears
 
-    QStack<QString> m_backHistory;
-    QStack<QString> m_forwardHistory;
-    QString m_current;
 
-    QStringList m_pendingSelection;
-    QElapsedTimer m_pendingSince;
 
     // ----------------------------------------------------- split view ---
-    // Each file pane has its own folder, history, model, views and state.
-    // The members above (m_model, m_view, m_current…) always belong to the
-    // active pane: activatePane() switches them for good, PaneScope only
-    // while handling something that happened in the other pane.
+    // Each file pane owns its folder, history, model, views and state (Pane).
+    // The window's code reaches all of it through m_pane, the pane it is
+    // working on: the user's pane (m_activePane), or for a moment the other
+    // one, while handling something that happened there (PaneScope).
     struct Pane
     {
         // Widgets (made once by buildPane; never change).
+        // model -> proxy -> the two views; `view` is the visible one.
         DirectoryModel *model = nullptr;
         FileFilterProxy *proxy = nullptr;
         FileItemDelegate *gridDelegate = nullptr;
@@ -432,16 +409,18 @@ private:
         QWidget *container = nullptr; // caption + views, in m_paneSplitter
         QLabel *caption = nullptr;    // split view: the pane's folder
         // State.
-        QAbstractItemView *view = nullptr;
-        QString message;
-        QString current;
-        QStack<QString> back, forward;
-        bool grid = true;
-        int gridZoom = 1, listZoom = 1;
+        QAbstractItemView *view = nullptr; // iconView or detailView, whichever shows
+        QString current;                   // the open folder (or a place: "recent:///")
+        QStack<QString> back, forward;     // history
+        bool grid = true;                  // grid or list
+        int gridZoom = 1, listZoom = 1;    // indexes into FileItemDelegate::gridSizes() / listSizes()
+        QString message;                   // a temporary text in the floating bar
+        // Asked for before the folder was listed, applied when it is:
         QStringList pendingSelection;
         QElapsedTimer pendingSince;
-        int pendingScroll = -1;
-        QString pendingRename;
+        int pendingScroll = -1;            // a tab's scroll position
+        QString pendingRename;             // start renaming this once it appears
+        // Recent sorts by "last used"; the folder order to go back to:
         bool recentSort = false;
         int sortColumnBefore = 0;
         Qt::SortOrder sortOrderBefore = Qt::AscendingOrder;
@@ -450,8 +429,10 @@ private:
     friend class PaneScope;
     Pane m_panes[2];
     int m_paneCount = 0;  // 1, or 2 once the split view was opened
-    int m_activePane = 0;
-    int m_background = 0; // > 0 while working on a pane that isn't the user's
+    int m_activePane = 0;         // the pane the user is in
+    Pane *m_pane = &m_panes[0];   // the pane being worked on: that one, or the other inside a PaneScope
+    int paneIndex() const;        // m_pane's number
+    bool inBackground() const;    // working on the pane the user isn't in: leave the header and actions alone
     bool m_split = false;
     QSplitter *m_paneSplitter = nullptr;
     QAction *m_splitAct = nullptr;        // F3
@@ -461,8 +442,6 @@ private:
     QPointer<QAbstractItemView> m_dragScrollView;
 
     QWidget *buildPane(QWidget *parent, int index);
-    void savePane(int index);
-    void loadPane(int index);
     void activatePane(int index);
     int paneOf(const QObject *object) const;
     void refreshChrome();     // header, title, sidebar, actions: for the active pane

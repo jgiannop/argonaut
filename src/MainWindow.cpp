@@ -148,7 +148,7 @@ MainWindow::MainWindow(QWidget *parent)
     rename.nameRect = [this](const QString &path) { return nameRectOf(path); };
     rename.showMessage = [this](const QString &text) { showMessage(text); };
     m_rename = new InlineRename(rename, this);
-    connect(m_rename, &InlineRename::closed, this, [this] { m_view->setFocus(); });
+    connect(m_rename, &InlineRename::closed, this, [this] { m_pane->view->setFocus(); });
     connect(m_rename, &InlineRename::renamed, this, [this](const QString &from, const QString &to) {
         Starred::instance().renamed(from, to); // a star follows its item
         m_ops->recordUndo(FileJob::Kind::Move, {{from, to}}, tr("Rename"));
@@ -247,7 +247,7 @@ void MainWindow::setupActions()
         act->setCheckable(true);
         sortGroup->addAction(act);
         connect(act, &QAction::triggered, this,
-                [this, column] { sortBy(column, m_model->sortOrder()); });
+                [this, column] { sortBy(column, m_pane->model->sortOrder()); });
         m_sortColumnActs.append(act);
     }
     m_sortColumnActs.first()->setChecked(true);
@@ -260,9 +260,9 @@ void MainWindow::setupActions()
     }
     m_sortAscAct->setChecked(true);
     connect(m_sortAscAct, &QAction::triggered, this,
-            [this] { sortBy(m_model->sortColumn(), Qt::AscendingOrder); });
+            [this] { sortBy(m_pane->model->sortColumn(), Qt::AscendingOrder); });
     connect(m_sortDescAct, &QAction::triggered, this,
-            [this] { sortBy(m_model->sortColumn(), Qt::DescendingOrder); });
+            [this] { sortBy(m_pane->model->sortColumn(), Qt::DescendingOrder); });
 
 #if defined(ARGONAUT_TERMINAL)
     m_terminalAct = new QAction(tr("Terminal"), this);
@@ -270,13 +270,13 @@ void MainWindow::setupActions()
     m_terminalAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)); // like VS Code
     connect(m_terminalAct, &QAction::toggled, this, [this](bool on) {
         if (on)
-            showTerminal(m_current);
+            showTerminal(m_pane->current);
         else
             hideTerminal();
     });
     m_openTerminalHereAct = new QAction(tr("Open in Terminal"), this);
     connect(m_openTerminalHereAct, &QAction::triggered, this, [this] {
-        showTerminal(m_contextFolder.isEmpty() ? m_current : m_contextFolder);
+        showTerminal(m_contextFolder.isEmpty() ? m_pane->current : m_contextFolder);
     });
 #endif
 
@@ -296,7 +296,7 @@ void MainWindow::setupActions()
     m_selectAllAct->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAct, &QAction::triggered, this, [this] {
         if (!m_analyzing)
-            m_view->selectAll();
+            m_pane->view->selectAll();
     });
 
     m_selectMatchingAct = new QAction(tr("Select Items Matching…"), this);
@@ -321,7 +321,7 @@ void MainWindow::setupActions()
 
     m_newTabAct = new QAction(tr("New Tab"), this);
     m_newTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
-    connect(m_newTabAct, &QAction::triggered, this, [this] { openTab(m_current, true); });
+    connect(m_newTabAct, &QAction::triggered, this, [this] { openTab(m_pane->current, true); });
 
     m_reopenTabAct = new QAction(tr("Reopen Closed Tab"), this);
     m_reopenTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
@@ -341,8 +341,8 @@ void MainWindow::setupActions()
     connect(m_openInNewTabAct, &QAction::triggered, this, [this] {
         for (const QModelIndex &index : selectedViewIndexes()) {
             const QModelIndex source = toSource(index);
-            if (m_model->isDir(source))
-                openTab(m_model->filePath(source), false);
+            if (m_pane->model->isDir(source))
+                openTab(m_pane->model->filePath(source), false);
         }
     });
 
@@ -371,7 +371,7 @@ void MainWindow::setupActions()
 
     m_copyLocationAct = new QAction(tr("Copy Location"), this);
     connect(m_copyLocationAct, &QAction::triggered, this, [this] {
-        QApplication::clipboard()->setText(QDir::toNativeSeparators(m_current));
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(m_pane->current));
         showMessage(tr("Location copied"));
     });
 
@@ -414,7 +414,7 @@ void MainWindow::setupActions()
     connect(m_propertiesAct, &QAction::triggered, this, [this] {
         QStringList paths = selectedPaths();
         if (paths.isEmpty())
-            paths << m_current; // nothing selected: the open folder
+            paths << m_pane->current; // nothing selected: the open folder
         (new PropertiesDialog(paths, this))->show();
     });
 
@@ -424,14 +424,14 @@ void MainWindow::setupActions()
     connect(m_extractHereAct, &QAction::triggered, this, [this] {
         const QStringList archives = selectedArchives();
         if (!archives.isEmpty())
-            m_ops->extract(archives, m_current);
+            m_ops->extract(archives, m_pane->current);
     });
     m_extractToAct = new QAction(tr("Extract to…"), this);
     connect(m_extractToAct, &QAction::triggered, this, [this] {
         const QStringList archives = selectedArchives();
         if (archives.isEmpty())
             return;
-        const QString dir = QFileDialog::getExistingDirectory(this, tr("Extract to"), m_current);
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Extract to"), m_pane->current);
         if (!dir.isEmpty())
             m_ops->extract(archives, QDir::fromNativeSeparators(dir));
     });
@@ -452,11 +452,11 @@ void MainWindow::setupActions()
 
     m_restoreAllAct = new QAction(tr("Restore All"), this);
     connect(m_restoreAllAct, &QAction::triggered, this, [this] {
-        if (!m_model->isTrash())
+        if (!m_pane->model->isTrash())
             return;
         QStringList all;
-        for (int row = 0; row < m_model->rowCount(); ++row)
-            all << m_model->filePath(m_model->index(row, 0));
+        for (int row = 0; row < m_pane->model->rowCount(); ++row)
+            all << m_pane->model->filePath(m_pane->model->index(row, 0));
         if (!all.isEmpty())
             m_ops->restore(all); // back where they came from; never overwrites
     });
@@ -496,7 +496,7 @@ void MainWindow::setupActions()
     connect(m_removeRecentAct, &QAction::triggered, this, [this] {
         const QStringList paths = selectedPaths();
         if (!paths.isEmpty() && RecentFiles::remove(paths))
-            m_model->refresh(); // also picked up by the watcher; this is just sooner
+            m_pane->model->refresh(); // also picked up by the watcher; this is just sooner
     });
 
     m_redoAct = new QAction(tr("Redo"), this);
@@ -752,7 +752,7 @@ QWidget *MainWindow::buildContentPane()
     m_searchTimer->setSingleShot(true);
     m_searchTimer->setInterval(150);
     connect(m_searchTimer, &QTimer::timeout, this, [this] {
-        m_model->setSearch(m_searchEdit->text().simplified());
+        m_pane->model->setSearch(m_searchEdit->text().simplified());
         updateFloatingBar();
     });
 
@@ -829,7 +829,7 @@ QWidget *MainWindow::buildContentPane()
     m_analyzeButton = makeButton(tr("Analyze disk usage (Ctrl+3)"));
     m_analyzeButton->setCheckable(true);
     connect(m_analyzeButton, &QToolButton::clicked, this, [this](bool on) {
-        on ? setAnalyzeMode(true) : setGridMode(m_grid);
+        on ? setAnalyzeMode(true) : setGridMode(m_pane->grid);
     });
     row->addWidget(m_analyzeButton);
     m_splitButton = makeButton(tr("Split view (F3)"));
@@ -838,7 +838,7 @@ QWidget *MainWindow::buildContentPane()
     row->addWidget(m_splitButton);
     m_viewButton = makeButton(QString());
     connect(m_viewButton, &QToolButton::clicked, this, [this] {
-        setGridMode(m_analyzing ? m_grid : !m_grid); // from Analyze: back to the file view
+        setGridMode(m_analyzing ? m_pane->grid : !m_pane->grid); // from Analyze: back to the file view
     });
     row->addWidget(m_viewButton);
 
@@ -874,22 +874,22 @@ QWidget *MainWindow::buildContentPane()
     });
 
 
-    // Analyze: its own view, model and selection; never m_view.
-    m_analyzeView = new AnalyzeView(m_viewStack);
+    // Analyze: its own view, model and selection; never m_pane->view.
+    m_analyzeView = new AnalyzeView(m_pane->viewStack);
     connect(m_analyzeView, &QTreeView::customContextMenuRequested, this, &MainWindow::showAnalyzeMenu);
     connect(m_analyzeView, &AnalyzeView::statusChanged, this, &MainWindow::updateFloatingBar);
     // A folder opens in the Analyze view, a file opens in its app (with the
     // usual real-type checks).
     connect(m_analyzeView, &AnalyzeView::fileActivated, this, &MainWindow::openFile);
     connect(m_analyzeView, &AnalyzeView::folderActivated, this, [this](const QString &path) {
-        if (path != m_current)
+        if (path != m_pane->current)
             navigateTo(path);
     });
     connect(m_analyzeView, &AnalyzeView::trashRequested, this, [this](const QString &path) {
-        if (path != m_current) // not the folder being analysed itself
+        if (path != m_pane->current) // not the folder being analysed itself
             m_ops->trash({path});
     });
-    m_viewStack->addWidget(m_analyzeView); // in the first pane only
+    m_pane->viewStack->addWidget(m_analyzeView); // in the first pane only
 
     // Shown only in the Trash: what it is, plus Restore / Empty Trash.
     m_trashBar = new QWidget(pane);
@@ -919,7 +919,7 @@ QWidget *MainWindow::buildContentPane()
     m_trashBar->hide();
     TabStrip::Host tabs;
     tabs.prepare = [this] {
-        if (m_activePane != 0)
+        if (paneIndex() != 0)
             activatePane(0); // tabs belong to the first pane
     };
     tabs.capture = [this] { return captureTab(); };
@@ -944,8 +944,8 @@ QWidget *MainWindow::buildContentPane()
     layout->addWidget(m_contentSplitter, 1);
 
 
-    m_opsPanel = new OperationsPanel(m_ops, m_viewStack);
-    m_toast = new Toast(m_viewStack);
+    m_opsPanel = new OperationsPanel(m_ops, m_pane->viewStack);
+    m_toast = new Toast(m_pane->viewStack);
     connect(m_opsPanel, &OperationsPanel::layoutChanged, this, [this] {
         m_toast->setAvoidRect(m_opsPanel->isVisible() ? m_opsPanel->geometry() : QRect());
     });
@@ -953,105 +953,45 @@ QWidget *MainWindow::buildContentPane()
     updateEditActions();
 
     setGridMode(true);
-    savePane(0); // m_panes[0] knows its widgets from now on
     return pane;
 }
 
 
 // ---------------------------------------------------------------- panes ---
 
-// While alive, the window's pane members belong to pane `index` (if it isn't
-// the active one): for handling what happened in the other pane (its folder
-// loaded, a drop into it…) with the same code. Header, title and actions are
-// left alone meanwhile (m_background).
+// While alive, the window works on pane `index` instead of the user's pane
+// (m_pane points at it): for handling what happened in the other pane (its
+// folder loaded, a drop into it…) with the same code. Header, title and
+// actions are left alone meanwhile (inBackground()).
 class MainWindow::PaneScope
 {
 public:
-    PaneScope(MainWindow *window, int index)
-        : m_window(window), m_previous(window->m_activePane),
-          m_switched(index != window->m_activePane && index >= 0 && index < window->m_paneCount)
+    enum Building { Built, BeingBuilt }; // BeingBuilt: the pane isn't counted in m_paneCount yet
+
+    PaneScope(MainWindow *window, int index, Building building = Built)
+        : m_window(window), m_previous(window->m_pane)
     {
-        if (!m_switched)
-            return;
-        m_window->savePane(m_previous);
-        m_window->loadPane(index);
-        m_window->m_activePane = index;
-        ++m_window->m_background;
+        const int panes = building == BeingBuilt ? int(std::size(window->m_panes)) : window->m_paneCount;
+        if (index >= 0 && index < panes)
+            m_window->m_pane = &m_window->m_panes[index];
     }
-    ~PaneScope()
-    {
-        if (!m_switched)
-            return;
-        m_window->savePane(m_window->m_activePane);
-        m_window->loadPane(m_previous);
-        m_window->m_activePane = m_previous;
-        --m_window->m_background;
-    }
+    ~PaneScope() { m_window->m_pane = m_previous; }
     PaneScope(const PaneScope &) = delete;
     PaneScope &operator=(const PaneScope &) = delete;
 
 private:
     MainWindow *m_window;
-    int m_previous;
-    bool m_switched;
+    Pane *m_previous;
 };
 
-void MainWindow::savePane(int index)
+int MainWindow::paneIndex() const
 {
-    Pane &p = m_panes[index];
-    p.model = m_model;
-    p.proxy = m_proxy;
-    p.gridDelegate = m_gridDelegate;
-    p.listDelegate = m_listDelegate;
-    p.iconView = m_iconView;
-    p.detailView = m_detailView;
-    p.viewStack = m_viewStack;
-    p.floatingBar = m_floatingBar;
-    p.messageTimer = m_messageTimer;
-    p.view = m_view;
-    p.message = m_message;
-    p.current = m_current;
-    p.back = m_backHistory;
-    p.forward = m_forwardHistory;
-    p.grid = m_grid;
-    p.gridZoom = m_gridZoom;
-    p.listZoom = m_listZoom;
-    p.pendingSelection = m_pendingSelection;
-    p.pendingSince = m_pendingSince;
-    p.pendingScroll = m_pendingScroll;
-    p.pendingRename = m_pendingRename;
-    p.recentSort = m_recentSort;
-    p.sortColumnBefore = m_sortColumnBefore;
-    p.sortOrderBefore = m_sortOrderBefore;
+    return int(m_pane - m_panes);
 }
 
-void MainWindow::loadPane(int index)
+bool MainWindow::inBackground() const
 {
-    const Pane &p = m_panes[index];
-    m_model = p.model;
-    m_proxy = p.proxy;
-    m_gridDelegate = p.gridDelegate;
-    m_listDelegate = p.listDelegate;
-    m_iconView = p.iconView;
-    m_detailView = p.detailView;
-    m_viewStack = p.viewStack;
-    m_floatingBar = p.floatingBar;
-    m_messageTimer = p.messageTimer;
-    m_view = p.view;
-    m_message = p.message;
-    m_current = p.current;
-    m_backHistory = p.back;
-    m_forwardHistory = p.forward;
-    m_grid = p.grid;
-    m_gridZoom = p.gridZoom;
-    m_listZoom = p.listZoom;
-    m_pendingSelection = p.pendingSelection;
-    m_pendingSince = p.pendingSince;
-    m_pendingScroll = p.pendingScroll;
-    m_pendingRename = p.pendingRename;
-    m_recentSort = p.recentSort;
-    m_sortColumnBefore = p.sortColumnBefore;
-    m_sortOrderBefore = p.sortOrderBefore;
+    return m_pane != &m_panes[m_activePane];
 }
 
 int MainWindow::paneOf(const QObject *object) const
@@ -1068,20 +1008,19 @@ int MainWindow::paneOf(const QObject *object) const
 
 void MainWindow::activatePane(int index)
 {
-    if (index == m_activePane || index < 0 || index >= m_paneCount || m_background)
+    if (index == m_activePane || index < 0 || index >= m_paneCount || inBackground())
         return;
     m_rename->cancel();
     if (m_quickLook)
         m_quickLook->hide();
     setSearchActive(false); // the search field belongs to the active pane
     if (m_analyzing)
-        setGridMode(m_grid); // Analyze is the first pane's
-    savePane(m_activePane);
-    loadPane(index);
+        setGridMode(m_pane->grid); // Analyze is the first pane's
     m_activePane = index;
+    m_pane = &m_panes[index];
     refreshChrome();
-    if (!m_view->hasFocus())
-        m_view->setFocus();
+    if (!m_pane->view->hasFocus())
+        m_pane->view->setFocus();
 }
 
 QString MainWindow::titleFor(const QString &path) const
@@ -1105,10 +1044,10 @@ QString MainWindow::titleFor(const QString &path) const
 // The header, title, sidebar and actions show the active pane.
 void MainWindow::refreshChrome()
 {
-    if (m_background)
+    if (inBackground())
         return;
-    m_trashBar->setVisible(m_model->isTrash());
-    m_pathBar->setPath(m_current);
+    m_trashBar->setVisible(m_pane->model->isTrash());
+    m_pathBar->setPath(m_pane->current);
     updateGitBadge();
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) {
@@ -1116,7 +1055,7 @@ void MainWindow::refreshChrome()
         m_titleLabel->setText(m_chooser->shortTitle()); // short: apps' titles can be long
     } else
 #endif
-        setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_current)));
+        setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_pane->current)));
     syncSidebarSelection();
     updateActions();
     updateEditActions();
@@ -1170,16 +1109,16 @@ void MainWindow::showCommandPalette()
     for (QAction *act : {m_starAct, m_removeRecentAct, m_openInNewTabAct, m_openLocationAct, m_openTerminalHereAct}) {
         if (!act || seen.contains(act) || !act->isEnabled() || !act->isVisible())
             continue;
-        if (act == m_removeRecentAct && m_model->place() != DirectoryModel::Place::Recent)
+        if (act == m_removeRecentAct && m_pane->model->place() != DirectoryModel::Place::Recent)
             continue;
-        if (act == m_openLocationAct && !(m_model->isSearch() || m_model->isVirtual()))
+        if (act == m_openLocationAct && !(m_pane->model->isSearch() || m_pane->model->isVirtual()))
             continue;
         if ((act == m_starAct || act == m_openInNewTabAct || act == m_openLocationAct) && selectedPaths().isEmpty())
             continue;
         seen.insert(act);
         commands.append({clean(act->text()), selection, act});
     }
-    m_contextFolder = m_current; // "Open in Terminal" acts on the open folder
+    m_contextFolder = m_pane->current; // "Open in Terminal" acts on the open folder
     m_palette->open(commands);
 }
 
@@ -1241,9 +1180,9 @@ void MainWindow::showGuide(const QString &topic)
 
 void MainWindow::updateGitBadge()
 {
-    if (m_background || !m_pathBar)
+    if (inBackground() || !m_pathBar)
         return;
-    const GitStatus *git = m_model ? m_model->git() : nullptr;
+    const GitStatus *git = m_pane->model ? m_pane->model->git() : nullptr;
     if (!git || !git->inRepository()) {
         m_pathBar->setGitInfo(QString(), 0, QString());
         return;
@@ -1285,13 +1224,10 @@ void MainWindow::resetGitEverywhere()
 void MainWindow::applyExpandFolders()
 {
     for (int i = 0; i < m_paneCount; ++i) {
-        // The widgets in Pane never change; its state is only current for
-        // the pane that isn't active (the active one's lives in the members).
-        const bool grid = i == m_activePane ? m_grid : m_panes[i].grid;
-        m_panes[i].model->setTreeEnabled(m_expandFolders && !grid);
+        m_panes[i].model->setTreeEnabled(m_expandFolders && !m_panes[i].grid);
     }
-    if (m_detailView)
-        m_detailView->viewport()->update();
+    if (m_pane->detailView)
+        m_pane->detailView->viewport()->update();
 }
 
 void MainWindow::setExpandFoldersEverywhere(bool on)
@@ -1309,28 +1245,28 @@ void MainWindow::setExpandFoldersEverywhere(bool on)
 // the folder an item is in (like Nautilus).
 bool MainWindow::handleTreeKey(QKeyEvent *key)
 {
-    if (!m_model->isTreeActive() || key->modifiers() != Qt::NoModifier
+    if (!m_pane->model->isTreeActive() || key->modifiers() != Qt::NoModifier
         || (key->key() != Qt::Key_Right && key->key() != Qt::Key_Left))
         return false;
-    const QModelIndex current = m_detailView->currentIndex().siblingAtColumn(0);
+    const QModelIndex current = m_pane->detailView->currentIndex().siblingAtColumn(0);
     if (!current.isValid())
         return false;
-    const QString path = m_model->filePath(toSource(current));
+    const QString path = m_pane->model->filePath(toSource(current));
     if (key->key() == Qt::Key_Right) {
-        if (current.data(DirectoryModel::ExpandableRole).toBool() && !m_model->isExpanded(path))
-            m_model->expand(path);
+        if (current.data(DirectoryModel::ExpandableRole).toBool() && !m_pane->model->isExpanded(path))
+            m_pane->model->expand(path);
         return true; // never scroll sideways
     }
-    if (m_model->isExpanded(path)) {
-        m_model->collapse(path);
+    if (m_pane->model->isExpanded(path)) {
+        m_pane->model->collapse(path);
         return true;
     }
     if (current.data(DirectoryModel::TreeDepthRole).toInt() > 0) {
-        const QModelIndex parent = toView(m_model->indexForPath(QFileInfo(path).absolutePath()));
+        const QModelIndex parent = toView(m_pane->model->indexForPath(QFileInfo(path).absolutePath()));
         if (parent.isValid()) {
-            m_detailView->selectionModel()->setCurrentIndex(
+            m_pane->detailView->selectionModel()->setCurrentIndex(
                 parent, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-            m_detailView->scrollTo(parent);
+            m_pane->detailView->scrollTo(parent);
         }
     }
     return true;
@@ -1360,7 +1296,7 @@ void MainWindow::showListHeaderMenu(QHeaderView *header, const QPoint &pos)
     menu->addSection(tr("Show Columns"));
     for (int column : {DirectoryModel::OwnerColumn, DirectoryModel::GroupColumn,
                        DirectoryModel::PermissionsColumn}) {
-        QAction *act = menu->addAction(m_model->headerData(column, Qt::Horizontal).toString());
+        QAction *act = menu->addAction(m_pane->model->headerData(column, Qt::Horizontal).toString());
         act->setCheckable(true);
         const QString key = QString::number(column);
         act->setChecked(m_listColumns.contains(key));
@@ -1376,12 +1312,12 @@ void MainWindow::showListHeaderMenu(QHeaderView *header, const QPoint &pos)
 
 bool MainWindow::canChangeSelection() const
 {
-    if (m_model->isTrash())
+    if (m_pane->model->isTrash())
         return true; // the Trash's own folders
     QHash<QString, Access::FolderAccess> folders;
     for (const QModelIndex &viewIndex : selectedViewIndexes()) {
         const QModelIndex source = toSource(viewIndex);
-        const QString path = m_model->filePath(source);
+        const QString path = m_pane->model->filePath(source);
         const int slash = int(path.lastIndexOf(QLatin1Char('/')));
         const QString dir = slash <= 0 ? QStringLiteral("/") : path.left(slash);
         if (!Access::canChangeItemsIn(dir, source.data(DirectoryModel::OwnerIdRole).toUInt(), &folders))
@@ -1392,10 +1328,10 @@ bool MainWindow::canChangeSelection() const
 
 void MainWindow::fitListColumns()
 {
-    if (!m_detailView)
+    if (!m_pane->detailView)
         return;
-    const int width = m_viewStack->width();
-    QHeaderView *header = m_detailView->header();
+    const int width = m_pane->viewStack->width();
+    QHeaderView *header = m_pane->detailView->header();
     header->setSectionHidden(DirectoryModel::TypeColumn, width < 640);
     header->setSectionHidden(DirectoryModel::ModifiedColumn, width < 460);
 }
@@ -1409,10 +1345,10 @@ void MainWindow::updatePaneCaptions()
         if (!caption)
             continue;
         caption->setVisible(m_split);
-        const QString path = i == m_activePane ? m_current : m_panes[i].current;
+        const QString path = m_panes[i].current;
         caption->setText(titleFor(path));
         caption->setToolTip(QDir::toNativeSeparators(path));
-        if (m_background)
+        if (inBackground())
             continue; // only texts change; which pane is active didn't
         const bool active = i == m_activePane;
         if (caption->property("active").toBool() != active) {
@@ -1427,35 +1363,19 @@ void MainWindow::ensureSecondPane()
 {
     if (m_paneCount > 1)
         return;
-    // Build pane 1 into the members, then put pane 0 back.
-    const QString start = m_current;
-    const bool grid = m_grid;
-    const int gridZoom = m_gridZoom;
-    const int listZoom = m_listZoom;
-    savePane(0);
-    m_activePane = 1;
-    m_grid = grid;
-    m_gridZoom = gridZoom;
-    m_listZoom = listZoom;
-    m_current.clear();
-    m_backHistory.clear();
-    m_forwardHistory.clear();
-    m_pendingSelection.clear();
-    m_pendingScroll = -1;
-    m_pendingRename.clear();
-    m_recentSort = false;
-    m_message.clear();
-    QWidget *container = buildPane(m_paneSplitter, 1);
-    m_paneSplitter->addWidget(container);
-    m_iconView->setGridSize(m_gridDelegate->gridCellSize(m_iconView->fontMetrics()));
-    sortBy(m_panes[0].detailView->header()->sortIndicatorSection(),
-           m_panes[0].detailView->header()->sortIndicatorOrder()); // same order as the first pane
-    savePane(1);
-    loadPane(0);
-    m_activePane = 0;
+    const Pane &first = m_panes[0];
     {
-        PaneScope scope(this, 1);
-        navigateTo(start, false); // starts where the first pane is
+        PaneScope scope(this, 1, PaneScope::BeingBuilt);
+        // It starts like the first pane (view, zoom, order, folder), with a
+        // history of its own.
+        m_pane->grid = first.grid;
+        m_pane->gridZoom = first.gridZoom;
+        m_pane->listZoom = first.listZoom;
+        QWidget *container = buildPane(m_paneSplitter, 1);
+        m_paneSplitter->addWidget(container);
+        m_pane->iconView->setGridSize(m_pane->gridDelegate->gridCellSize(m_pane->iconView->fontMetrics()));
+        sortBy(first.detailView->header()->sortIndicatorSection(), first.detailView->header()->sortIndicatorOrder());
+        navigateTo(first.current, false);
     }
     const int half = qMax(1, m_paneSplitter->width() / 2);
     m_paneSplitter->setSizes({half, half});
@@ -1467,13 +1387,13 @@ void MainWindow::setSplitView(bool on)
         return;
     if (on) {
         if (m_analyzing)
-            setGridMode(m_grid);
+            setGridMode(m_pane->grid);
         ensureSecondPane();
         m_split = true;
         m_panes[1].container->show();
         activatePane(1); // the new pane is where you'll go next
     } else {
-        if (m_activePane != 0)
+        if (paneIndex() != 0)
             activatePane(0);
         m_split = false;
         m_panes[1].container->hide();
@@ -1490,7 +1410,7 @@ QString MainWindow::otherPaneFolder() const
 {
     if (!m_split || m_paneCount < 2)
         return {};
-    const QString other = m_panes[1 - m_activePane].current;
+    const QString other = m_panes[1 - paneIndex()].current;
     if (other.isEmpty() || DirectoryModel::isVirtualPath(other) || Trash::isFilesDir(other)
         || !QFileInfo(other).isDir() || !QFileInfo(other).isWritable())
         return {};
@@ -1513,38 +1433,38 @@ void MainWindow::transferToOtherPane(bool move)
 }
 
 // Everything one file pane needs: model, views, delegates, floating bar. It
-// builds into the window's members (as the active pane), which the caller
-// saves into m_panes[index].
+// builds into m_pane, which the caller points at m_panes[index] (the first
+// pane by default; ensureSecondPane with a PaneScope).
 QWidget *MainWindow::buildPane(QWidget *parent, int index)
 {
-    m_model = new DirectoryModel(this);
-    m_model->setTreeEnabled(m_expandFolders && !m_grid);
-    m_model->setSearchContents(QSettings().value("search/contents", false).toBool());
-    m_proxy = new FileFilterProxy(this);
-    m_proxy->setSourceModel(m_model);
-    m_model->setShowHidden(m_showHidden);
-    connect(m_model, &DirectoryModel::gitChanged, this, [this, index] {
-        if (index == m_activePane && !m_background)
+    m_pane->model = new DirectoryModel(this);
+    m_pane->model->setTreeEnabled(m_expandFolders && !m_pane->grid);
+    m_pane->model->setSearchContents(QSettings().value("search/contents", false).toBool());
+    m_pane->proxy = new FileFilterProxy(this);
+    m_pane->proxy->setSourceModel(m_pane->model);
+    m_pane->model->setShowHidden(m_showHidden);
+    connect(m_pane->model, &DirectoryModel::gitChanged, this, [this, index] {
+        if (index == paneIndex() && !inBackground())
             updateGitBadge();
     });
     for (auto signal : {&QAbstractItemModel::rowsInserted, &QAbstractItemModel::rowsRemoved}) {
-        connect(m_model, signal, this, [this, index] {
-            if (index == m_activePane && !m_background && m_model->isTrash())
+        connect(m_pane->model, signal, this, [this, index] {
+            if (index == paneIndex() && !inBackground() && m_pane->model->isTrash())
                 updateEditActions(); // Restore All follows what's left in the Trash
         });
     }
-    connect(m_model, &DirectoryModel::loaded, this, [this, index] {
+    connect(m_pane->model, &DirectoryModel::loaded, this, [this, index] {
         PaneScope scope(this, index);
         updateFloatingBar();
         updateEditActions();
         applyPendingSelection();
-        if (m_pendingScroll >= 0) { // a tab coming back: where it was
-            m_view->verticalScrollBar()->setValue(m_pendingScroll);
-            m_pendingScroll = -1;
+        if (m_pane->pendingScroll >= 0) { // a tab coming back: where it was
+            m_pane->view->verticalScrollBar()->setValue(m_pane->pendingScroll);
+            m_pane->pendingScroll = -1;
         }
     });
     // The open folder was deleted or moved: go to the nearest folder left.
-    connect(m_model, &DirectoryModel::folderGone, this, [this, index](const QString &gone) {
+    connect(m_pane->model, &DirectoryModel::folderGone, this, [this, index](const QString &gone) {
         PaneScope scope(this, index);
         QString path = gone;
         while (!QFileInfo(path).isDir()) {
@@ -1557,25 +1477,25 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
         showMessage(tr("“%1” no longer exists").arg(QFileInfo(gone).fileName()));
     });
     // New files may reach the view a little after a paste finishes.
-    connect(m_proxy, &QAbstractItemModel::rowsInserted, this, [this, index] {
+    connect(m_pane->proxy, &QAbstractItemModel::rowsInserted, this, [this, index] {
         PaneScope scope(this, index);
         applyPendingSelection();
     });
     // "Searching… 12 found" as results arrive.
     auto searchCount = [this, index] {
         PaneScope scope(this, index);
-        if (m_model->isSearch())
+        if (m_pane->model->isSearch())
             updateFloatingBar();
     };
-    connect(m_model, &QAbstractItemModel::rowsInserted, this, searchCount);
-    connect(m_model, &QAbstractItemModel::rowsRemoved, this, searchCount);
-    connect(m_model, &QAbstractItemModel::modelReset, this, searchCount);
+    connect(m_pane->model, &QAbstractItemModel::rowsInserted, this, searchCount);
+    connect(m_pane->model, &QAbstractItemModel::rowsRemoved, this, searchCount);
+    connect(m_pane->model, &QAbstractItemModel::modelReset, this, searchCount);
 
-    m_gridDelegate = new FileItemDelegate(m_thumbnailer, this);
-    m_listDelegate = new FileItemDelegate(m_thumbnailer, this);
-    m_listDelegate->setGridMode(false);
-    m_gridDelegate->setTheme(m_theme);
-    m_listDelegate->setTheme(m_theme);
+    m_pane->gridDelegate = new FileItemDelegate(m_thumbnailer, this);
+    m_pane->listDelegate = new FileItemDelegate(m_thumbnailer, this);
+    m_pane->listDelegate->setGridMode(false);
+    m_pane->gridDelegate->setTheme(m_theme);
+    m_pane->listDelegate->setTheme(m_theme);
 
     auto *container = new QWidget(parent);
     container->setObjectName("paneContainer");
@@ -1588,41 +1508,41 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     caption->installEventFilter(this); // a click makes the pane active
     layout->addWidget(caption);
 
-    m_viewStack = new QStackedWidget(container);
-    m_viewStack->setObjectName("viewStack");
-    m_viewStack->installEventFilter(this); // resize -> reposition overlays
-    layout->addWidget(m_viewStack, 1);
+    m_pane->viewStack = new QStackedWidget(container);
+    m_pane->viewStack->setObjectName("viewStack");
+    m_pane->viewStack->installEventFilter(this); // resize -> reposition overlays
+    layout->addWidget(m_pane->viewStack, 1);
 
     // Grid.
-    m_iconView = new QListView(m_viewStack);
-    m_iconView->setObjectName("files");
-    m_iconView->setViewMode(QListView::IconMode);
-    m_iconView->setMovement(QListView::Static);
-    m_iconView->setResizeMode(QListView::Adjust);
-    m_iconView->setUniformItemSizes(true);
-    m_iconView->setWordWrap(true);
-    m_iconView->setSpacing(0);
-    setupFileView(m_iconView);
-    m_iconView->setItemDelegate(m_gridDelegate);
-    m_gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_gridZoom));
-    m_listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_listZoom));
-    m_iconView->setGridSize(m_gridDelegate->gridCellSize(m_iconView->fontMetrics()));
+    m_pane->iconView = new QListView(m_pane->viewStack);
+    m_pane->iconView->setObjectName("files");
+    m_pane->iconView->setViewMode(QListView::IconMode);
+    m_pane->iconView->setMovement(QListView::Static);
+    m_pane->iconView->setResizeMode(QListView::Adjust);
+    m_pane->iconView->setUniformItemSizes(true);
+    m_pane->iconView->setWordWrap(true);
+    m_pane->iconView->setSpacing(0);
+    setupFileView(m_pane->iconView);
+    m_pane->iconView->setItemDelegate(m_pane->gridDelegate);
+    m_pane->gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_pane->gridZoom));
+    m_pane->listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
+    m_pane->iconView->setGridSize(m_pane->gridDelegate->gridCellSize(m_pane->iconView->fontMetrics()));
 
     // List with columns. Both views share the model and the selection.
-    m_detailView = new QTreeView(m_viewStack);
-    m_detailView->setObjectName("detailView");
-    m_detailView->setRootIsDecorated(false);
-    m_detailView->setItemsExpandable(false);
-    m_detailView->setIndentation(0);
-    m_detailView->setUniformRowHeights(true);
-    m_detailView->setAllColumnsShowFocus(true);
-    m_detailView->setSelectionBehavior(QAbstractItemView::SelectRows);
-    setupFileView(m_detailView);
-    m_detailView->setItemDelegate(m_listDelegate);
-    QItemSelectionModel *unused = m_detailView->selectionModel();
-    m_detailView->setSelectionModel(m_iconView->selectionModel());
+    m_pane->detailView = new QTreeView(m_pane->viewStack);
+    m_pane->detailView->setObjectName("detailView");
+    m_pane->detailView->setRootIsDecorated(false);
+    m_pane->detailView->setItemsExpandable(false);
+    m_pane->detailView->setIndentation(0);
+    m_pane->detailView->setUniformRowHeights(true);
+    m_pane->detailView->setAllColumnsShowFocus(true);
+    m_pane->detailView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    setupFileView(m_pane->detailView);
+    m_pane->detailView->setItemDelegate(m_pane->listDelegate);
+    QItemSelectionModel *unused = m_pane->detailView->selectionModel();
+    m_pane->detailView->setSelectionModel(m_pane->iconView->selectionModel());
     delete unused;
-    QHeaderView *columns = m_detailView->header();
+    QHeaderView *columns = m_pane->detailView->header();
     columns->setStretchLastSection(false);
     columns->setHighlightSections(false);
     columns->setSectionsMovable(false);
@@ -1642,16 +1562,16 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
             [this, columns](const QPoint &pos) { showListHeaderMenu(columns, pos); });
     // Header clicks sort the model (FileFilterProxy forwards sort()).
     columns->setSortIndicator(DirectoryModel::NameColumn, Qt::AscendingOrder);
-    m_detailView->setSortingEnabled(true);
+    m_pane->detailView->setSortingEnabled(true);
     connect(columns, &QHeaderView::sortIndicatorChanged, this, &MainWindow::updateSortActions);
-    m_viewStack->addWidget(m_iconView);
-    m_viewStack->addWidget(m_detailView);
-    m_view = m_grid ? static_cast<QAbstractItemView *>(m_iconView) : m_detailView;
-    m_viewStack->setCurrentWidget(m_view);
+    m_pane->viewStack->addWidget(m_pane->iconView);
+    m_pane->viewStack->addWidget(m_pane->detailView);
+    m_pane->view = m_pane->grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : m_pane->detailView;
+    m_pane->viewStack->setCurrentWidget(m_pane->view);
 
-    QItemSelectionModel *selection = m_iconView->selectionModel();
+    QItemSelectionModel *selection = m_pane->iconView->selectionModel();
     connect(selection, &QItemSelectionModel::currentChanged, this, [this, index] {
-        if (index == m_activePane && !m_background && quickLookVisible())
+        if (index == paneIndex() && !inBackground() && quickLookVisible())
             updateQuickLook(); // arrows move through the files, the preview follows
     });
     connect(selection, &QItemSelectionModel::selectionChanged, this, [this, index] {
@@ -1659,17 +1579,17 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
         updateFloatingBar();
         updateEditActions();
     });
-    connect(m_proxy, &QAbstractItemModel::layoutChanged, m_rename, &InlineRename::reposition);
+    connect(m_pane->proxy, &QAbstractItemModel::layoutChanged, m_rename, &InlineRename::reposition);
 
-    m_floatingBar = new QLabel(m_viewStack);
-    m_floatingBar->setObjectName("floatingBar");
-    m_floatingBar->hide();
-    m_messageTimer = new QTimer(this);
-    m_messageTimer->setSingleShot(true);
-    m_messageTimer->setInterval(3000);
-    connect(m_messageTimer, &QTimer::timeout, this, [this, index] {
+    m_pane->floatingBar = new QLabel(m_pane->viewStack);
+    m_pane->floatingBar->setObjectName("floatingBar");
+    m_pane->floatingBar->hide();
+    m_pane->messageTimer = new QTimer(this);
+    m_pane->messageTimer->setSingleShot(true);
+    m_pane->messageTimer->setInterval(3000);
+    connect(m_pane->messageTimer, &QTimer::timeout, this, [this, index] {
         PaneScope scope(this, index);
-        m_message.clear();
+        m_pane->message.clear();
         updateFloatingBar();
     });
 
@@ -1697,7 +1617,7 @@ void MainWindow::applyTheme(bool force)
     m_forwardButton->setIcon(glyphIcon(Glyph::ChevronRight, m_theme.fg));
     m_searchButton->setIcon(glyphIcon(Glyph::Search, m_theme.fg));
     m_menuButton->setIcon(glyphIcon(Glyph::Menu, m_theme.fg));
-    m_viewButton->setIcon(glyphIcon(m_grid ? Glyph::List : Glyph::Grid, m_theme.fg));
+    m_viewButton->setIcon(glyphIcon(m_pane->grid ? Glyph::List : Glyph::Grid, m_theme.fg));
     m_analyzeButton->setIcon(glyphIcon(Glyph::Usage, m_theme.fg));
     if (m_csd) {
         m_minButton->setIcon(glyphIcon(Glyph::Minimize, m_theme.fg));
@@ -1721,7 +1641,7 @@ void MainWindow::applyTheme(bool force)
     m_terminal->setTheme(m_theme);
 #endif
     m_toast->setTheme(m_theme);
-    m_view->viewport()->update();
+    m_pane->view->viewport()->update();
 
     m_sidebar->setTheme(m_theme); // rebuilds its rows
     syncSidebarSelection();
@@ -1793,13 +1713,13 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
 // Ctrl+D: add the open folder to the bookmarks, or remove it.
 void MainWindow::toggleBookmark()
 {
-    if (m_current.isEmpty() || m_model->isTrash() || m_model->isVirtual())
+    if (m_pane->current.isEmpty() || m_pane->model->isTrash() || m_pane->model->isVirtual())
         return;
-    if (Bookmarks::contains(m_current)) {
-        Bookmarks::remove(m_current);
+    if (Bookmarks::contains(m_pane->current)) {
+        Bookmarks::remove(m_pane->current);
         showMessage(tr("Removed from bookmarks"));
-    } else if (Bookmarks::add(m_current)) {
-        showMessage(tr("“%1” added to bookmarks").arg(QFileInfo(m_current).fileName()));
+    } else if (Bookmarks::add(m_pane->current)) {
+        showMessage(tr("“%1” added to bookmarks").arg(QFileInfo(m_pane->current).fileName()));
     }
     m_sidebar->refreshSoon();
     updateBookmarkAction();
@@ -1807,11 +1727,11 @@ void MainWindow::toggleBookmark()
 
 void MainWindow::updateBookmarkAction()
 {
-    if (m_background)
+    if (inBackground())
         return;
-    const bool marked = Bookmarks::contains(m_current);
+    const bool marked = Bookmarks::contains(m_pane->current);
     m_bookmarkAct->setText(marked ? tr("Remove Bookmark") : tr("Bookmark This Folder"));
-    m_bookmarkAct->setEnabled(!m_current.isEmpty() && !m_model->isTrash() && !m_model->isVirtual());
+    m_bookmarkAct->setEnabled(!m_pane->current.isEmpty() && !m_pane->model->isTrash() && !m_pane->model->isVirtual());
 }
 
 void MainWindow::applySearchFilters()
@@ -1824,7 +1744,7 @@ void MainWindow::applySearchFilters()
     if (date != DirectoryModel::DateFilter::Any)
         shown << m_dateFilters->checkedAction()->text();
     m_filterButton->setText(shown.isEmpty() ? tr("Filters") : shown.join(QStringLiteral(" · ")));
-    m_model->setSearchFilters(type, date);
+    m_pane->model->setSearchFilters(type, date);
     updateFloatingBar();
 }
 
@@ -1834,14 +1754,14 @@ void MainWindow::applySearchFilters()
 // folders), or go into it, like Nautilus.
 void MainWindow::springOver(const QString &folder, int pane)
 {
-    if (pane != m_activePane && pane < m_paneCount) {
+    if (pane != paneIndex() && pane < m_paneCount) {
         PaneScope scope(this, pane); // a drag over the other pane: open it there
-        springOver(folder, m_activePane);
+        springOver(folder, paneIndex());
         return;
     }
-    if (!m_grid && m_model->isTreeActive() && m_model->indexForPath(folder).isValid()) {
-        if (!m_model->isExpanded(folder))
-            m_model->expand(folder);
+    if (!m_pane->grid && m_pane->model->isTreeActive() && m_pane->model->indexForPath(folder).isValid()) {
+        if (!m_pane->model->isExpanded(folder))
+            m_pane->model->expand(folder);
         return;
     }
     navigateTo(folder);
@@ -1865,7 +1785,7 @@ void MainWindow::setAsBackground(const QString &image)
 QMenu *MainWindow::scriptsMenu(const QStringList &selection)
 {
     const QString root = DesktopActions::scriptsFolder();
-    if (m_model->isVirtual() || m_model->isTrash())
+    if (m_pane->model->isVirtual() || m_pane->model->isTrash())
         return nullptr;
     const QList<DesktopActions::Script> scripts = DesktopActions::scripts(root);
     if (scripts.isEmpty())
@@ -1882,7 +1802,7 @@ QMenu *MainWindow::scriptsMenu(const QStringList &selection)
                     continue;
                 }
                 menu->addAction(entry.name, this, [this, script = entry.path, selection] {
-                    if (!DesktopActions::runScript(script, m_current, selection, geometry()))
+                    if (!DesktopActions::runScript(script, m_pane->current, selection, geometry()))
                         showMessage(tr("Couldn't run “%1”").arg(QFileInfo(script).fileName()));
                 });
             }
@@ -1900,9 +1820,9 @@ QMenu *MainWindow::scriptsMenu(const QStringList &selection)
 
 void MainWindow::organizeWithClaude()
 {
-    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable() || m_model->isVirtual())
+    if (m_pane->current.isEmpty() || !QFileInfo(m_pane->current).isWritable() || m_pane->model->isVirtual())
         return;
-    const QString folder = m_current;
+    const QString folder = m_pane->current;
     OrganizerDialog dialog(folder, this);
     connect(&dialog, &OrganizerDialog::openPreferences, this, [this] { m_prefsAct->trigger(); });
     if (dialog.exec() != QDialog::Accepted)
@@ -1961,7 +1881,7 @@ void MainWindow::ejectDrive(const QString &root, const QString &name)
             }
         }
     }
-    if (m_current == root || m_current.startsWith(root + QLatin1Char('/')))
+    if (m_pane->current == root || m_pane->current.startsWith(root + QLatin1Char('/')))
         navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
 
     m_mounts->eject(root, name);
@@ -1978,7 +1898,7 @@ void MainWindow::loadSettings()
         m_splitter->restoreState(settings.value("window/sidebarSplitter").toByteArray());
     m_terminalHeight = settings.value("window/terminalHeight", 0).toInt();
     if (settings.contains("view/listHeader"))
-        m_detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
+        m_pane->detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
     m_listColumns = settings.value("view/listColumns").toStringList();
     m_expandFolders = settings.value("view/expandFolders", false).toBool();
     applyExpandFolders();
@@ -1993,7 +1913,7 @@ void MainWindow::loadSettings()
     if (settings.value("view/split", false).toBool()) {
         const QString otherPath = settings.value("view/splitPath").toString();
         QTimer::singleShot(0, this, [this, otherPath] {
-            if (m_current.isEmpty() || m_split)
+            if (m_pane->current.isEmpty() || m_split)
                 return;
             setSplitView(true);
             if (!otherPath.isEmpty() && (QFileInfo(otherPath).isDir() || DirectoryModel::isVirtualPath(otherPath)))
@@ -2011,9 +1931,9 @@ void MainWindow::loadSettings()
         }
         return best;
     };
-    m_gridZoom = nearest(FileItemDelegate::gridSizes(),
+    m_pane->gridZoom = nearest(FileItemDelegate::gridSizes(),
                          settings.value("view/gridIconSize", FileItemDelegate::DefaultGridIconSize).toInt());
-    m_listZoom = nearest(FileItemDelegate::listSizes(),
+    m_pane->listZoom = nearest(FileItemDelegate::listSizes(),
                          settings.value("view/listIconSize", FileItemDelegate::DefaultListIconSize).toInt());
     applyZoom();
 }
@@ -2026,27 +1946,27 @@ void MainWindow::saveSettings()
     if (m_terminalPanel && m_terminalPanel->isVisible())
         m_terminalHeight = m_terminalPanel->height();
     settings.setValue("window/terminalHeight", m_terminalHeight);
-    settings.setValue("view/listHeader", m_detailView->header()->saveState());
+    settings.setValue("view/listHeader", m_pane->detailView->header()->saveState());
     settings.setValue("view/listColumns", m_listColumns);
-    settings.setValue("view/sortColumn", m_recentSort ? m_sortColumnBefore : m_model->sortColumn());
-    settings.setValue("view/sortOrder", int(m_recentSort ? m_sortOrderBefore : m_model->sortOrder()));
+    settings.setValue("view/sortColumn", m_pane->recentSort ? m_pane->sortColumnBefore : m_pane->model->sortColumn());
+    settings.setValue("view/sortOrder", int(m_pane->recentSort ? m_pane->sortOrderBefore : m_pane->model->sortOrder()));
     settings.setValue("view/showHidden", m_showHidden);
     settings.setValue("view/sidebar", m_sidebarAct->isChecked());
-    settings.setValue("view/grid", m_grid);
+    settings.setValue("view/grid", m_pane->grid);
     settings.setValue("view/split", m_split);
     if (m_split)
         settings.setValue("view/splitPath", m_panes[1].current);
-    settings.setValue("view/gridIconSize", FileItemDelegate::gridSizes().at(m_gridZoom));
-    settings.setValue("view/listIconSize", FileItemDelegate::listSizes().at(m_listZoom));
+    settings.setValue("view/gridIconSize", FileItemDelegate::gridSizes().at(m_pane->gridZoom));
+    settings.setValue("view/listIconSize", FileItemDelegate::listSizes().at(m_pane->listZoom));
     settings.setValue("view/analyzeFiles", m_analyzeFilesAct->isChecked());
 }
 
 // Highlight the sidebar entry matching the current folder, like Nautilus.
 void MainWindow::syncSidebarSelection()
 {
-    if (m_background)
+    if (inBackground())
         return;
-    m_sidebar->selectPath(m_current);
+    m_sidebar->selectPath(m_pane->current);
 }
 
 // ----------------------------------------------------------- navigation ---
@@ -2102,10 +2022,10 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     }
 
     const QString clean = place ? path : QDir::cleanPath(info.absoluteFilePath());
-    if (clean == m_current)
+    if (clean == m_pane->current)
         return true;
 
-    if (!m_background) {
+    if (!inBackground()) {
         // Leaving search here must not re-list the old folder: setPath()
         // below ends the search anyway.
         const QSignalBlocker blocker(m_searchEdit);
@@ -2114,43 +2034,43 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
         setSearchActive(false);
         m_rename->cancel();
     }
-    m_pendingSelection.clear();
-    m_pendingRename.clear();
-    if (addToHistory && !m_current.isEmpty()) {
-        m_backHistory.push(m_current);
-        m_forwardHistory.clear();
+    m_pane->pendingSelection.clear();
+    m_pane->pendingRename.clear();
+    if (addToHistory && !m_pane->current.isEmpty()) {
+        m_pane->back.push(m_pane->current);
+        m_pane->forward.clear();
     }
-    m_current = clean;
+    m_pane->current = clean;
 
     m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
-    if (m_quickLook && !m_background)
+    if (m_quickLook && !inBackground())
         m_quickLook->hide();
-    m_model->setPath(clean);
+    m_pane->model->setPath(clean);
     // Recent: newest first. The folder sort comes back when leaving it.
     const bool recent = DirectoryModel::placeOf(clean) == DirectoryModel::Place::Recent;
-    if (recent && !m_recentSort) {
-        m_sortColumnBefore = m_model->sortColumn();
-        m_sortOrderBefore = m_model->sortOrder();
-        m_recentSort = true;
+    if (recent && !m_pane->recentSort) {
+        m_pane->sortColumnBefore = m_pane->model->sortColumn();
+        m_pane->sortOrderBefore = m_pane->model->sortOrder();
+        m_pane->recentSort = true;
         sortBy(DirectoryModel::ModifiedColumn, Qt::DescendingOrder);
-    } else if (!recent && m_recentSort) {
-        m_recentSort = false;
-        sortBy(m_sortColumnBefore, m_sortOrderBefore);
+    } else if (!recent && m_pane->recentSort) {
+        m_pane->recentSort = false;
+        sortBy(m_pane->sortColumnBefore, m_pane->sortOrderBefore);
     }
-    if (m_analyzing && !m_background) { // Analyze is the first pane's, and the active one's
+    if (m_analyzing && !inBackground()) { // Analyze is the first pane's, and the active one's
         if (place)
-            setGridMode(m_grid); // Analyze measures folders
+            setGridMode(m_pane->grid); // Analyze measures folders
         else
             m_analyzeView->setFolder(clean); // instant if it's inside what was measured
     }
-    m_view->scrollToTop();
+    m_pane->view->scrollToTop();
 
     // Tabs belong to the first pane.
     const QString title = titleFor(clean);
-    if (m_activePane == 0 && m_tabBar)
+    if (paneIndex() == 0 && m_tabBar)
         m_tabBar->setActivePath(clean);
     updatePaneCaptions();
-    if (m_background)
+    if (inBackground())
         updateFloatingBar(); // this pane's own; the header shows the other one
     else
         refreshChrome();
@@ -2159,27 +2079,27 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 
 void MainWindow::goBack()
 {
-    if (m_backHistory.isEmpty())
+    if (m_pane->back.isEmpty())
         return;
-    const QString previous = m_current;
-    if (navigateTo(m_backHistory.pop(), false))
-        m_forwardHistory.push(previous);
+    const QString previous = m_pane->current;
+    if (navigateTo(m_pane->back.pop(), false))
+        m_pane->forward.push(previous);
     updateActions();
 }
 
 void MainWindow::goForward()
 {
-    if (m_forwardHistory.isEmpty())
+    if (m_pane->forward.isEmpty())
         return;
-    const QString previous = m_current;
-    if (navigateTo(m_forwardHistory.pop(), false))
-        m_backHistory.push(previous);
+    const QString previous = m_pane->current;
+    if (navigateTo(m_pane->forward.pop(), false))
+        m_pane->back.push(previous);
     updateActions();
 }
 
 void MainWindow::goUp()
 {
-    QDir dir(m_current);
+    QDir dir(m_pane->current);
     if (dir.cdUp())
         navigateTo(dir.absolutePath());
 }
@@ -2187,14 +2107,14 @@ void MainWindow::goUp()
 void MainWindow::openIndex(const QModelIndex &viewIndex)
 {
     const QModelIndex index = toSource(viewIndex);
-    const QString path = m_model->filePath(index);
+    const QString path = m_pane->model->filePath(index);
 #if defined(ARGONAUT_DBUS)
-    if (m_chooser && !m_model->isDir(index)) { // a file: that's the choice, nothing is opened
+    if (m_chooser && !m_pane->model->isDir(index)) { // a file: that's the choice, nothing is opened
         m_chooser->fileActivated(path);
         return;
     }
 #endif
-    if (m_model->isDir(index))
+    if (m_pane->model->isDir(index))
         navigateTo(path);
     else
         openFile(path);
@@ -2202,12 +2122,12 @@ void MainWindow::openIndex(const QModelIndex &viewIndex)
 
 void MainWindow::updateActions()
 {
-    if (m_background)
+    if (inBackground())
         return; // the header shows the active pane
-    m_backAct->setEnabled(!m_backHistory.isEmpty());
-    m_forwardAct->setEnabled(!m_forwardHistory.isEmpty());
-    const bool place = DirectoryModel::isVirtualPath(m_current);
-    m_upAct->setEnabled(!place && !m_current.isEmpty() && !QDir(m_current).isRoot());
+    m_backAct->setEnabled(!m_pane->back.isEmpty());
+    m_forwardAct->setEnabled(!m_pane->forward.isEmpty());
+    const bool place = DirectoryModel::isVirtualPath(m_pane->current);
+    m_upAct->setEnabled(!place && !m_pane->current.isEmpty() && !QDir(m_pane->current).isRoot());
     m_analyzeAct->setEnabled(!place);
     if (m_analyzeButton)
         m_analyzeButton->setEnabled(!place);
@@ -2228,24 +2148,24 @@ void MainWindow::setGridMode(bool grid)
     m_analyzing = false;
     if (m_analyzeButton)
         m_analyzeButton->setChecked(false);
-    m_grid = grid;
-    m_model->setTreeEnabled(m_expandFolders && !grid); // the grid shows only the open folder
-    QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_iconView) : m_detailView;
-    const bool hadFocus = m_view && m_view->hasFocus();
-    const QModelIndex current = m_view ? m_view->currentIndex() : QModelIndex();
+    m_pane->grid = grid;
+    m_pane->model->setTreeEnabled(m_expandFolders && !grid); // the grid shows only the open folder
+    QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : m_pane->detailView;
+    const bool hadFocus = m_pane->view && m_pane->view->hasFocus();
+    const QModelIndex current = m_pane->view ? m_pane->view->currentIndex() : QModelIndex();
     if (!grid) {
         // The grid selects only the first column; the table selects rows.
         QItemSelection rows;
         for (const QModelIndex &index : selectedViewIndexes())
             rows.select(index, index.siblingAtColumn(DirectoryModel::ColumnCount - 1));
-        m_view->selectionModel()->select(rows, QItemSelectionModel::ClearAndSelect);
+        m_pane->view->selectionModel()->select(rows, QItemSelectionModel::ClearAndSelect);
     }
-    m_viewStack->setCurrentWidget(next);
-    m_view = next;
+    m_pane->viewStack->setCurrentWidget(next);
+    m_pane->view = next;
     if (current.isValid())
-        m_view->scrollTo(current);
+        m_pane->view->scrollTo(current);
     if (hadFocus || wasAnalyzing)
-        m_view->setFocus();
+        m_pane->view->setFocus();
     if (wasAnalyzing) {
         updateEditActions();
         updateFloatingBar();
@@ -2256,27 +2176,27 @@ void MainWindow::setGridMode(bool grid)
 
 void MainWindow::updateViewChrome()
 {
-    if (m_background || !m_viewButton)
+    if (inBackground() || !m_viewButton)
         return;
     if (m_zoomInAct) { // grid and list have their own zoom limits
-        const int level = m_grid ? m_gridZoom : m_listZoom;
-        const int last = int((m_grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes()).size()) - 1;
+        const int level = m_pane->grid ? m_pane->gridZoom : m_pane->listZoom;
+        const int last = int((m_pane->grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes()).size()) - 1;
         m_zoomInAct->setEnabled(level < last);
         m_zoomOutAct->setEnabled(level > 0);
     }
-    m_viewButton->setIcon(glyphIcon(m_grid ? Glyph::List : Glyph::Grid, m_theme.fg));
-    m_viewButton->setToolTip(m_grid ? tr("List view (Ctrl+2)") : tr("Grid view (Ctrl+1)"));
+    m_viewButton->setIcon(glyphIcon(m_pane->grid ? Glyph::List : Glyph::Grid, m_theme.fg));
+    m_viewButton->setToolTip(m_pane->grid ? tr("List view (Ctrl+2)") : tr("Grid view (Ctrl+1)"));
     if (m_gridAct && !m_analyzing)
-        (m_grid ? m_gridAct : m_listAct)->setChecked(true);
+        (m_pane->grid ? m_gridAct : m_listAct)->setChecked(true);
 }
 
 void MainWindow::setAnalyzeMode(bool on)
 {
     if (!on) {
-        setGridMode(m_grid);
+        setGridMode(m_pane->grid);
         return;
     }
-    if (m_activePane != 0)
+    if (paneIndex() != 0)
         activatePane(0); // Analyze lives in the first pane
     m_rename->cancel();
     setSearchActive(false); // search is about files; Analyze shows folders
@@ -2285,8 +2205,8 @@ void MainWindow::setAnalyzeMode(bool on)
     m_analyzing = true;
     m_analyzeAct->setChecked(true);
     m_analyzeButton->setChecked(true);
-    m_viewStack->setCurrentWidget(m_analyzeView);
-    m_analyzeView->setFolder(m_current);
+    m_pane->viewStack->setCurrentWidget(m_analyzeView);
+    m_analyzeView->setFolder(m_pane->current);
     m_analyzeView->setFocus();
     updateEditActions();
     updateFloatingBar();
@@ -2302,23 +2222,23 @@ void MainWindow::showAnalyzeMenu(const QPoint &pos)
         menu->addAction(tr("Open"), this, [this, path] { openFile(path); });
         menu->addAction(tr("Show in Folder"), this, [this, path] {
             navigateTo(QFileInfo(path).absolutePath());
-            setGridMode(m_grid);
+            setGridMode(m_pane->grid);
             selectPaths({path});
         });
     } else if (!path.isEmpty()) {
         menu->addAction(tr("Open Folder"), this, [this, path] {
             navigateTo(path);
-            setGridMode(m_grid);
+            setGridMode(m_pane->grid);
         });
         menu->addAction(tr("Analyze This Folder"), this, [this, path] { navigateTo(path); })
-            ->setEnabled(path != m_current);
+            ->setEnabled(path != m_pane->current);
         menu->addAction(tr("Open in New Tab"), this, [this, path] { openTab(path, false); });
     }
     if (!path.isEmpty()) {
         menu->addAction(tr("Copy Location"), this, [path] {
             QApplication::clipboard()->setText(QDir::toNativeSeparators(path));
         });
-        if (path != m_current) {
+        if (path != m_pane->current) {
             menu->addSeparator();
             menu->addAction(tr("Move to Trash"), this, [this, path] { m_ops->trash({path}); });
         }
@@ -2333,9 +2253,9 @@ void MainWindow::zoom(int step)
 {
     if (m_analyzing)
         return;
-    const QList<int> &sizes = m_grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes();
-    int &level = m_grid ? m_gridZoom : m_listZoom;
-    const int defaultLevel = int(sizes.indexOf(m_grid ? FileItemDelegate::DefaultGridIconSize
+    const QList<int> &sizes = m_pane->grid ? FileItemDelegate::gridSizes() : FileItemDelegate::listSizes();
+    int &level = m_pane->grid ? m_pane->gridZoom : m_pane->listZoom;
+    const int defaultLevel = int(sizes.indexOf(m_pane->grid ? FileItemDelegate::DefaultGridIconSize
                                                      : FileItemDelegate::DefaultListIconSize));
     const int next = step == 0 ? defaultLevel : qBound(0, level + step, int(sizes.size()) - 1);
     if (next == level)
@@ -2346,13 +2266,13 @@ void MainWindow::zoom(int step)
 
 void MainWindow::applyZoom()
 {
-    m_gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_gridZoom));
-    m_listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_listZoom));
-    m_iconView->setGridSize(m_gridDelegate->gridCellSize(m_iconView->fontMetrics()));
+    m_pane->gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_pane->gridZoom));
+    m_pane->listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
+    m_pane->iconView->setGridSize(m_pane->gridDelegate->gridCellSize(m_pane->iconView->fontMetrics()));
     // Keep what you were looking at in view.
-    const QModelIndex current = m_view->currentIndex();
+    const QModelIndex current = m_pane->view->currentIndex();
     if (current.isValid())
-        m_view->scrollTo(current);
+        m_pane->view->scrollTo(current);
     m_rename->reposition();
     updateViewChrome();
 }
@@ -2375,7 +2295,7 @@ void MainWindow::setSearchActive(bool active)
         m_searchAct->setChecked(active); // re-enters with the same value
     if (active) {
         if (m_analyzing)
-            setGridMode(m_grid); // search finds files: show the file view
+            setGridMode(m_pane->grid); // search finds files: show the file view
         m_locationStack->setCurrentWidget(m_searchEdit->parentWidget());
         m_searchEdit->setFocus(Qt::ShortcutFocusReason);
         m_searchEdit->selectAll();
@@ -2384,10 +2304,10 @@ void MainWindow::setSearchActive(bool active)
         m_typeFilters->actions().first()->setChecked(true);
         m_dateFilters->actions().first()->setChecked(true);
         m_filterButton->setText(tr("Filters"));
-        m_model->setSearchFilters(DirectoryModel::TypeFilter::Any, DirectoryModel::DateFilter::Any);
+        m_pane->model->setSearchFilters(DirectoryModel::TypeFilter::Any, DirectoryModel::DateFilter::Any);
         m_searchEdit->clear();
         m_locationStack->setCurrentWidget(m_pathBar);
-        m_view->setFocus();
+        m_pane->view->setFocus();
     }
 }
 
@@ -2396,69 +2316,69 @@ void MainWindow::setSearchActive(bool active)
 // each key doesn't start a new walk; clearing is immediate.
 void MainWindow::updateFilter()
 {
-    m_model->setShowHidden(m_showHidden);
+    m_pane->model->setShowHidden(m_showHidden);
     const QString query = m_searchEdit ? m_searchEdit->text().simplified() : QString();
     if (query.isEmpty() || !m_searchTimer) {
         if (m_searchTimer)
             m_searchTimer->stop();
-        m_model->setSearch(query);
+        m_pane->model->setSearch(query);
     } else {
         m_searchTimer->start();
     }
-    if (m_view) // not during setupUi
+    if (m_pane->view) // not during setupUi
         updateFloatingBar();
 }
 
 QModelIndex MainWindow::toSource(const QModelIndex &viewIndex) const
 {
-    return viewIndex.model() == m_proxy ? m_proxy->mapToSource(viewIndex) : viewIndex;
+    return viewIndex.model() == m_pane->proxy ? m_pane->proxy->mapToSource(viewIndex) : viewIndex;
 }
 
 QModelIndex MainWindow::toView(const QModelIndex &sourceIndex) const
 {
-    return m_proxy->mapFromSource(sourceIndex);
+    return m_pane->proxy->mapFromSource(sourceIndex);
 }
 
 // -------------------------------------------------------- floating bar ---
 
 void MainWindow::showMessage(const QString &text)
 {
-    m_message = text;
-    m_messageTimer->start();
+    m_pane->message = text;
+    m_pane->messageTimer->start();
     updateFloatingBar();
 }
 
 void MainWindow::updateFloatingBar()
 {
-    QString text = m_message;
+    QString text = m_pane->message;
     if (text.isEmpty() && m_analyzing)
         text = m_analyzeView->statusText();
     if (text.isEmpty() && !m_analyzing) {
         const QModelIndexList selected = selectedViewIndexes();
         if (selected.size() == 1) {
             const QModelIndex idx = toSource(selected.first());
-            text = m_model->isDir(idx)
-                       ? tr("“%1” selected").arg(m_model->fileName(idx))
+            text = m_pane->model->isDir(idx)
+                       ? tr("“%1” selected").arg(m_pane->model->fileName(idx))
                        : tr("“%1” selected (%2)")
-                             .arg(m_model->fileName(idx),
-                                  formatSize(m_model->size(idx)));
+                             .arg(m_pane->model->fileName(idx),
+                                  formatSize(m_pane->model->size(idx)));
         } else if (selected.size() > 1) {
             qint64 bytes = 0;
             for (const QModelIndex &viewIdx : selected) {
                 const QModelIndex idx = toSource(viewIdx);
-                if (!m_model->isDir(idx))
-                    bytes += m_model->size(idx);
+                if (!m_pane->model->isDir(idx))
+                    bytes += m_pane->model->size(idx);
             }
             text = tr("%n items selected", nullptr, int(selected.size()));
             if (bytes > 0)
                 text += QStringLiteral(" (%1)").arg(formatSize(bytes));
         }
     }
-    if (text.isEmpty() && !m_analyzing && m_model->isSearch()) {
-        const int found = m_model->rowCount();
-        if (m_model->isLoading())
+    if (text.isEmpty() && !m_analyzing && m_pane->model->isSearch()) {
+        const int found = m_pane->model->rowCount();
+        if (m_pane->model->isLoading())
             text = found == 0 ? tr("Searching…") : tr("Searching… %1 found").arg(QLocale().toString(found));
-        else if (m_model->searchTruncated())
+        else if (m_pane->model->searchTruncated())
             text = tr("Showing the first %1 results").arg(QLocale().toString(found));
         else
             text = found == 0   ? tr("No results")
@@ -2467,24 +2387,24 @@ void MainWindow::updateFloatingBar()
     }
 
     if (text.isEmpty()) {
-        m_floatingBar->hide();
+        m_pane->floatingBar->hide();
         return;
     }
-    m_floatingBar->setText(text);
-    m_floatingBar->adjustSize();
+    m_pane->floatingBar->setText(text);
+    m_pane->floatingBar->adjustSize();
     positionFloatingBar();
-    m_floatingBar->show();
-    m_floatingBar->raise();
+    m_pane->floatingBar->show();
+    m_pane->floatingBar->raise();
 }
 
 void MainWindow::positionFloatingBar()
 {
     const int margin = 10;
-    const int maxWidth = qMax(100, m_viewStack->width() - 2 * margin);
-    if (m_floatingBar->width() > maxWidth)
-        m_floatingBar->resize(maxWidth, m_floatingBar->height());
-    m_floatingBar->move(m_viewStack->width() - m_floatingBar->width() - margin,
-                        m_viewStack->height() - m_floatingBar->height() - margin);
+    const int maxWidth = qMax(100, m_pane->viewStack->width() - 2 * margin);
+    if (m_pane->floatingBar->width() > maxWidth)
+        m_pane->floatingBar->resize(maxWidth, m_pane->floatingBar->height());
+    m_pane->floatingBar->move(m_pane->viewStack->width() - m_pane->floatingBar->width() - margin,
+                        m_pane->viewStack->height() - m_pane->floatingBar->height() - margin);
 }
 
 // ------------------------------------------------- window / decorations ---
@@ -2547,7 +2467,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // and resizes there are handled as that pane, without switching to it.
     if (m_paneCount > 1) {
         const int pane = paneOf(watched);
-        if (pane >= 0 && pane != m_activePane) {
+        if (pane >= 0 && pane != paneIndex()) {
             switch (event->type()) {
             case QEvent::MouseButtonPress:
             case QEvent::MouseButtonDblClick:
@@ -2555,7 +2475,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             case QEvent::KeyPress:
             case QEvent::Wheel:
             case QEvent::FocusIn:
-                if (!m_background)
+                if (!inBackground())
                     activatePane(pane);
                 break;
             case QEvent::DragEnter:
@@ -2592,9 +2512,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     case QEvent::DragLeave:
     case QEvent::Drop:
         if (isFileViewport(watched))
-            return handleViewDrag(watched == m_iconView->viewport()
-                                      ? static_cast<QAbstractItemView *>(m_iconView)
-                                      : m_detailView,
+            return handleViewDrag(watched == m_pane->iconView->viewport()
+                                      ? static_cast<QAbstractItemView *>(m_pane->iconView)
+                                      : m_pane->detailView,
                                   event);
         if (m_sidebar && watched == m_sidebar->viewport())
             return handleSidebarDrag(event);
@@ -2705,21 +2625,21 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             ejectDrive(Sidebar::pathOf(item), item->text());
             return true; // don't also open it
         }
-    } else if (m_detailView && watched == m_detailView->viewport()
+    } else if (m_pane->detailView && watched == m_pane->detailView->viewport()
                && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)
                && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton
                && [&] { // on a folder's ▸ arrow: open or close it, nothing else
                       const QPoint pos = static_cast<QMouseEvent *>(event)->position().toPoint();
-                      const QModelIndex index = m_detailView->indexAt(pos).siblingAtColumn(0);
-                      const QRect arrow = m_listDelegate->expanderRect(m_detailView->visualRect(index), index);
+                      const QModelIndex index = m_pane->detailView->indexAt(pos).siblingAtColumn(0);
+                      const QRect arrow = m_pane->listDelegate->expanderRect(m_pane->detailView->visualRect(index), index);
                       if (!index.isValid() || !arrow.adjusted(-2, -4, 2, 4).contains(pos))
                           return false;
                       if (event->type() == QEvent::MouseButtonPress) {
-                          const QString path = m_model->filePath(toSource(index));
-                          if (m_model->isExpanded(path))
-                              m_model->collapse(path);
+                          const QString path = m_pane->model->filePath(toSource(index));
+                          if (m_pane->model->isExpanded(path))
+                              m_pane->model->collapse(path);
                           else
-                              m_model->expand(path);
+                              m_pane->model->expand(path);
                       }
                       return true;
                   }()) {
@@ -2729,8 +2649,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *view = static_cast<QAbstractItemView *>(static_cast<QWidget *>(watched)->parentWidget());
         const QModelIndex source =
             toSource(view->indexAt(static_cast<QMouseEvent *>(event)->position().toPoint()));
-        if (source.isValid() && m_model->isDir(source))
-            openTab(m_model->filePath(source), false);
+        if (source.isValid() && m_pane->model->isDir(source))
+            openTab(m_pane->model->filePath(source), false);
         return true;
     } else if (m_tabBar && watched == m_tabBar && event->type() == QEvent::MouseButtonRelease
                && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton) {
@@ -2738,12 +2658,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (index >= 0)
             m_tabBar->closeTab(index);
         return true;
-    } else if (m_view
+    } else if (m_pane->view
                && ((isFileViewport(watched) && event->type() == QEvent::MouseButtonPress)
-                   || ((watched == m_iconView || watched == m_detailView)
+                   || ((watched == m_pane->iconView || watched == m_pane->detailView)
                        && event->type() == QEvent::KeyPress))) {
-        m_pendingSelection.clear();
-        m_pendingRename.clear();
+        m_pane->pendingSelection.clear();
+        m_pane->pendingRename.clear();
         if (event->type() == QEvent::KeyPress && typeAheadKey(static_cast<QKeyEvent *>(event)))
             return true;
         if (event->type() == QEvent::KeyPress) {
@@ -2756,15 +2676,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 m_quickLook->hide();
                 return true;
             }
-            if (watched == m_detailView && handleTreeKey(key))
+            if (watched == m_pane->detailView && handleTreeKey(key))
                 return true;
         }
     }
     if (m_rename->isActive() && isFileViewport(watched) && event->type() == QEvent::Paint)
         m_rename->reposition(); // item positions are final when the view paints
-    if (m_viewStack && watched == m_viewStack && event->type() == QEvent::Resize) {
+    if (m_pane->viewStack && watched == m_pane->viewStack && event->type() == QEvent::Resize) {
         fitListColumns();
-        if (m_floatingBar->isVisible())
+        if (m_pane->floatingBar->isVisible())
             positionFloatingBar();
         if (m_opsPanel->isVisible()) {
             m_opsPanel->reposition();
@@ -2788,7 +2708,7 @@ QStringList MainWindow::selectedPaths() const
 {
     QStringList paths;
     for (const QModelIndex &index : selectedViewIndexes())
-        paths.append(m_model->filePath(toSource(index)));
+        paths.append(m_pane->model->filePath(toSource(index)));
     return paths;
 }
 
@@ -2807,8 +2727,8 @@ void MainWindow::openSelection()
     }
     for (const QModelIndex &index : selected) {
         const QModelIndex source = toSource(index);
-        if (!m_model->isDir(source))
-            openFile(m_model->filePath(source));
+        if (!m_pane->model->isDir(source))
+            openFile(m_pane->model->filePath(source));
     }
 }
 
@@ -2836,16 +2756,16 @@ void MainWindow::paste()
         return;
     }
     if (cut) {
-        m_ops->move(paths, m_current);
+        m_ops->move(paths, m_pane->current);
         QApplication::clipboard()->clear(); // a cut is pasted only once
     } else {
-        m_ops->copy(paths, m_current);
+        m_ops->copy(paths, m_pane->current);
     }
 }
 
 void MainWindow::trashSelection()
 {
-    if (m_model->isTrash()) {
+    if (m_pane->model->isTrash()) {
         deleteSelection(); // already in the Trash: the only step left is forever
         return;
     }
@@ -2902,7 +2822,7 @@ void MainWindow::deleteSelection()
 
 void MainWindow::restoreSelection()
 {
-    if (!m_model->isTrash())
+    if (!m_pane->model->isTrash())
         return;
     const QStringList paths = selectedPaths();
     if (!paths.isEmpty())
@@ -2938,30 +2858,30 @@ void MainWindow::performDrop(const QStringList &sources, const QString &targetDi
 
 void MainWindow::updateEditActions()
 {
-    if (m_background)
+    if (inBackground())
         return; // actions act on the active pane
-    const bool hasSelection = !m_analyzing && m_view && m_view->selectionModel()->hasSelection();
-    const bool inTrash = m_model && m_model->isTrash();
+    const bool hasSelection = !m_analyzing && m_pane->view && m_pane->view->selectionModel()->hasSelection();
+    const bool inTrash = m_pane->model && m_pane->model->isTrash();
     // Items in a folder you can't change can be copied, not moved or trashed.
     const bool changeable = hasSelection && (inTrash || canChangeSelection());
     for (QAction *action : {m_openAct, m_copyAct})
         action->setEnabled(hasSelection);
     for (QAction *action : {m_cutAct, m_trashAct})
         action->setEnabled(changeable);
-    const bool writable = !m_analyzing && !inTrash && !m_current.isEmpty() && QFileInfo(m_current).isWritable();
+    const bool writable = !m_analyzing && !inTrash && !m_pane->current.isEmpty() && QFileInfo(m_pane->current).isWritable();
     m_deleteAct->setEnabled(changeable);
     m_restoreAct->setEnabled(inTrash && hasSelection);
     if (m_trashRestoreButton)
         m_trashRestoreButton->setText(tr("Restore")); // setDefaultAction resets it
     m_emptyTrashAct->setEnabled(Trash::isSupported());
-    m_restoreAllAct->setEnabled(inTrash && m_model->rowCount() > 0);
+    m_restoreAllAct->setEnabled(inTrash && m_pane->model->rowCount() > 0);
     m_pasteAct->setEnabled(writable && FileOperations::clipboardHasFiles());
     m_newFolderAct->setEnabled(writable);
     m_newFileAct->setEnabled(writable);
     m_renameAct->setEnabled(!inTrash && changeable);
     m_newDocumentMenu->menuAction()->setEnabled(writable);
-    m_organizeAct->setEnabled(writable && !m_model->isSearch() && !m_model->isVirtual());
-    const bool fileView = !m_analyzing && m_view && m_model->rowCount() > 0;
+    m_organizeAct->setEnabled(writable && !m_pane->model->isSearch() && !m_pane->model->isVirtual());
+    const bool fileView = !m_analyzing && m_pane->view && m_pane->model->rowCount() > 0;
     m_selectMatchingAct->setEnabled(fileView);
     m_invertSelectionAct->setEnabled(fileView);
     const bool archives = FileJob::archivesSupported();
@@ -2987,8 +2907,8 @@ void MainWindow::updateEditActions()
 
 void MainWindow::showContextMenu(const QPoint &pos)
 {
-    const QModelIndex index = m_view->indexAt(pos);
-    QItemSelectionModel *selection = m_view->selectionModel();
+    const QModelIndex index = m_pane->view->indexAt(pos);
+    QItemSelectionModel *selection = m_pane->view->selectionModel();
     if (index.isValid() && !selection->isSelected(index))
         selection->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect);
     else if (!index.isValid())
@@ -2997,16 +2917,16 @@ void MainWindow::showContextMenu(const QPoint &pos)
 
     QMenu *menu = makeMenu();
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    m_contextFolder = m_current;
-    if (index.isValid() && m_model->isDir(toSource(index)))
-        m_contextFolder = m_model->filePath(toSource(index));
-    if (index.isValid() && m_model->isTrash()) {
+    m_contextFolder = m_pane->current;
+    if (index.isValid() && m_pane->model->isDir(toSource(index)))
+        m_contextFolder = m_pane->model->filePath(toSource(index));
+    if (index.isValid() && m_pane->model->isTrash()) {
         menu->addAction(m_restoreAct);
         menu->addAction(m_deleteAct);
         menu->addSeparator();
         menu->addAction(m_openAct);
         menu->addAction(m_copyAct);
-    } else if (!index.isValid() && m_model->isTrash()) {
+    } else if (!index.isValid() && m_pane->model->isTrash()) {
         menu->addAction(m_restoreAllAct);
         menu->addAction(m_emptyTrashAct);
         menu->addAction(m_hiddenAct);
@@ -3017,32 +2937,32 @@ void MainWindow::showContextMenu(const QPoint &pos)
         const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
         if ((verdict == ContentType::Verdict::Mismatch || verdict == ContentType::Verdict::Dangerous)
             && selectedViewIndexes().size() == 1) {
-            const QString path = m_model->filePath(toSource(index));
+            const QString path = m_pane->model->filePath(toSource(index));
             const QString fixed = ContentType::fixedName(QFileInfo(path).fileName(),
                                                          index.data(DirectoryModel::ContentMimeRole).toString());
             if (!fixed.isEmpty())
                 menu->addAction(tr("Rename to “%1”").arg(fixed), this, [this, path] { fixExtension(path); });
         }
         const QStringList files = selectedFiles();
-        if (!m_model->isDir(toSource(index)) && OpenWith::isSupported() && !files.isEmpty())
+        if (!m_pane->model->isDir(toSource(index)) && OpenWith::isSupported() && !files.isEmpty())
             menu->addMenu(openWithMenu(files));
 #if defined(Q_OS_LINUX)
         {
             // Send by Email… (files only) and Set as Background (one image).
-            if (!files.isEmpty() && files.size() == selectedPaths().size() && !m_model->isTrash())
+            if (!files.isEmpty() && files.size() == selectedPaths().size() && !m_pane->model->isTrash())
                 menu->addAction(tr("Send by Email…"), this, [this, files] { sendByEmail(files); });
             static const QMimeDatabase mimeDb;
-            if (files.size() == 1 && selectedPaths().size() == 1 && !m_model->isTrash()
+            if (files.size() == 1 && selectedPaths().size() == 1 && !m_pane->model->isTrash()
                 && mimeDb.mimeTypeForFile(files.first()).name().startsWith(QLatin1String("image/"))
                 && !qEnvironmentVariable("XDG_CURRENT_DESKTOP").isEmpty())
                 menu->addAction(tr("Set as Background"), this, [this, image = files.first()] { setAsBackground(image); });
         }
 #endif
-        if ((m_model->isSearch() || m_model->isVirtual()) && selectedViewIndexes().size() == 1)
+        if ((m_pane->model->isSearch() || m_pane->model->isVirtual()) && selectedViewIndexes().size() == 1)
             menu->addAction(m_openLocationAct);
-        if (m_model->isDir(toSource(index)))
+        if (m_pane->model->isDir(toSource(index)))
             menu->addAction(m_openInNewTabAct);
-        if (m_openTerminalHereAct && m_model->isDir(toSource(index)))
+        if (m_openTerminalHereAct && m_pane->model->isDir(toSource(index)))
             menu->addAction(m_openTerminalHereAct);
         if (FileJob::archivesSupported()) {
             menu->addSeparator();
@@ -3055,7 +2975,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addSeparator();
         m_starAct->setText(selectionIsStarred() ? tr("Unstar") : tr("Star"));
         menu->addAction(m_starAct);
-        if (m_model->place() == DirectoryModel::Place::Recent)
+        if (m_pane->model->place() == DirectoryModel::Place::Recent)
             menu->addAction(m_removeRecentAct);
         menu->addSeparator();
         menu->addAction(m_renameAct);
@@ -3099,7 +3019,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addSeparator();
         menu->addAction(m_propertiesAct);
     }
-    menu->popup(m_view->viewport()->mapToGlobal(pos));
+    menu->popup(m_pane->view->viewport()->mapToGlobal(pos));
 }
 
 // The selected items that aren't folders.
@@ -3129,10 +3049,10 @@ QStringList MainWindow::selectedArchives() const
         const ContentType::Result r = DirectoryModel::contentResult(index);
         // The real type: a ".zip" that is really 7z still extracts; a
         // program named ".zip" doesn't.
-        if (r.verdict == ContentType::Verdict::Dangerous || m_model->isDir(toSource(index))
+        if (r.verdict == ContentType::Verdict::Dangerous || m_pane->model->isDir(toSource(index))
             || !FileOperations::isArchive(ContentType::effectiveMime(r)))
             return {};
-        archives << m_model->filePath(toSource(index));
+        archives << m_pane->model->filePath(toSource(index));
     }
     return archives;
 }
@@ -3142,9 +3062,9 @@ void MainWindow::compressSelection()
     const QStringList paths = selectedPaths();
     if (paths.isEmpty() || !FileJob::archivesSupported())
         return;
-    CompressDialog dialog(paths, m_current, this);
+    CompressDialog dialog(paths, m_pane->current, this);
     if (dialog.exec() == QDialog::Accepted)
-        m_ops->compress(paths, m_current, dialog.archiveName(), dialog.format());
+        m_ops->compress(paths, m_pane->current, dialog.archiveName(), dialog.format());
 }
 
 void MainWindow::onJobFinished(FileJob *job)
@@ -3157,8 +3077,8 @@ void MainWindow::onJobFinished(FileJob *job)
     // Results can be in sub-folders, which aren't watched: search again.
     for (int i = 0; i < m_paneCount; ++i) {
         PaneScope scope(this, i);
-        if (m_model->isSearch())
-            m_model->refresh();
+        if (m_pane->model->isSearch())
+            m_pane->model->refresh();
     }
     // A moved item takes its star (and those of what's inside) with it.
     if (job->kind() == FileJob::Kind::Move) {
@@ -3167,7 +3087,7 @@ void MainWindow::onJobFinished(FileJob *job)
     }
     m_analyzeView->applyJob(job->kind(), results);
     if (m_analyzing && m_analyzeView->isEmpty())
-        m_analyzeView->setFolder(m_current); // the shown folder itself went: measure again
+        m_analyzeView->setFolder(m_pane->current); // the shown folder itself went: measure again
 
     if (job->isCanceled()) {
         showMessage(tr("Canceled"));
@@ -3211,7 +3131,7 @@ void MainWindow::onJobFinished(FileJob *job)
             PaneScope scope(this, i);
             QStringList here;
             for (const TransferResult &r : results) {
-                if (QFileInfo(r.target).absolutePath() == m_current)
+                if (QFileInfo(r.target).absolutePath() == m_pane->current)
                     here.append(r.target);
             }
             if (!here.isEmpty())
@@ -3262,7 +3182,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return; // the file manager's own settings stay as they were
     }
 #endif
-    if (m_activePane != 0)
+    if (paneIndex() != 0)
         activatePane(0); // settings describe the first pane
     saveSettings();
     QMainWindow::closeEvent(event);
@@ -3270,25 +3190,25 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::selectPaths(const QStringList &paths)
 {
-    m_pendingSelection = paths;
-    m_pendingSince.start();
+    m_pane->pendingSelection = paths;
+    m_pane->pendingSince.start();
     applyPendingSelection();
 }
 
 void MainWindow::applyPendingSelection()
 {
-    if (m_pendingSelection.isEmpty())
+    if (m_pane->pendingSelection.isEmpty())
         return;
-    if (m_pendingSince.elapsed() > 5000) { // give up quietly
-        m_pendingSelection.clear();
+    if (m_pane->pendingSince.elapsed() > 5000) { // give up quietly
+        m_pane->pendingSelection.clear();
         return;
     }
 
     QItemSelection selection;
     QModelIndex first;
     int found = 0;
-    for (const QString &path : std::as_const(m_pendingSelection)) {
-        const QModelIndex index = toView(m_model->indexForPath(path));
+    for (const QString &path : std::as_const(m_pane->pendingSelection)) {
+        const QModelIndex index = toView(m_pane->model->indexForPath(path));
         if (!index.isValid())
             continue;
         selection.select(index, index.siblingAtColumn(DirectoryModel::ColumnCount - 1));
@@ -3299,18 +3219,18 @@ void MainWindow::applyPendingSelection()
     if (!first.isValid())
         return;
 
-    QItemSelectionModel *model = m_view->selectionModel();
+    QItemSelectionModel *model = m_pane->view->selectionModel();
     model->select(selection, QItemSelectionModel::ClearAndSelect);
     model->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
-    m_view->scrollTo(first);
+    m_pane->view->scrollTo(first);
 
-    if (found == m_pendingSelection.size())
-        m_pendingSelection.clear();
+    if (found == m_pane->pendingSelection.size())
+        m_pane->pendingSelection.clear();
 
-    if (!m_pendingRename.isEmpty()) {
-        const QModelIndex index = toView(m_model->indexForPath(m_pendingRename));
+    if (!m_pane->pendingRename.isEmpty()) {
+        const QModelIndex index = toView(m_pane->model->indexForPath(m_pane->pendingRename));
         if (index.isValid()) {
-            m_pendingRename.clear();
+            m_pane->pendingRename.clear();
             startRename(index);
         }
     }
@@ -3436,11 +3356,11 @@ QWidget *MainWindow::buildMenuBar()
 
 void MainWindow::createNewItem(bool folder)
 {
-    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable()) {
+    if (m_pane->current.isEmpty() || !QFileInfo(m_pane->current).isWritable()) {
         showMessage(tr("You can't create items in this folder"));
         return;
     }
-    const QDir dir(m_current);
+    const QDir dir(m_pane->current);
     const QString base = folder ? tr("New Folder") : tr("New File");
     QString path = dir.filePath(base);
     for (int i = 2; QFileInfo(path).exists() || QFileInfo(path).isSymLink(); ++i)
@@ -3459,7 +3379,7 @@ void MainWindow::createNewItem(bool folder)
     }
     // Undo trashes it (same as undoing a copy).
     m_ops->recordUndo(FileJob::Kind::Copy, {{QString(), path}}, folder ? tr("New Folder") : tr("New File"));
-    m_pendingRename = path;
+    m_pane->pendingRename = path;
     selectPaths({path});
 }
 
@@ -3501,7 +3421,7 @@ void MainWindow::batchRename(const QStringList &paths)
 
 void MainWindow::selectMatching()
 {
-    if (m_analyzing || !m_view)
+    if (m_analyzing || !m_pane->view)
         return;
     bool ok = false;
     const QString pattern = QInputDialog::getText(
@@ -3514,37 +3434,37 @@ void MainWindow::selectMatching()
 
     QItemSelection selection;
     QModelIndex first;
-    const int rows = m_proxy->rowCount();
+    const int rows = m_pane->proxy->rowCount();
     for (int row = 0; row < rows; ++row) {
-        const QModelIndex index = m_proxy->index(row, 0);
-        if (!Naming::matchesPattern(m_model->fileName(toSource(index)), m_lastPattern))
+        const QModelIndex index = m_pane->proxy->index(row, 0);
+        if (!Naming::matchesPattern(m_pane->model->fileName(toSource(index)), m_lastPattern))
             continue;
         selection.select(index, index.siblingAtColumn(DirectoryModel::ColumnCount - 1));
         if (!first.isValid())
             first = index;
     }
-    QItemSelectionModel *model = m_view->selectionModel();
+    QItemSelectionModel *model = m_pane->view->selectionModel();
     model->select(selection, QItemSelectionModel::ClearAndSelect);
     if (!first.isValid()) {
         showMessage(tr("No items match “%1”").arg(m_lastPattern));
         return;
     }
     model->setCurrentIndex(first, QItemSelectionModel::NoUpdate);
-    m_view->scrollTo(first);
-    m_view->setFocus();
+    m_pane->view->scrollTo(first);
+    m_pane->view->setFocus();
 }
 
 void MainWindow::invertSelection()
 {
-    if (m_analyzing || !m_view)
+    if (m_analyzing || !m_pane->view)
         return;
-    const int rows = m_proxy->rowCount();
+    const int rows = m_pane->proxy->rowCount();
     if (rows == 0)
         return;
     QItemSelection all;
-    all.select(m_proxy->index(0, 0), m_proxy->index(rows - 1, DirectoryModel::ColumnCount - 1));
-    m_view->selectionModel()->select(all, QItemSelectionModel::Toggle);
-    m_view->setFocus();
+    all.select(m_pane->proxy->index(0, 0), m_pane->proxy->index(rows - 1, DirectoryModel::ColumnCount - 1));
+    m_pane->view->selectionModel()->select(all, QItemSelectionModel::Toggle);
+    m_pane->view->setFocus();
 }
 
 // ------------------------------------------------------- new from template ---
@@ -3596,19 +3516,19 @@ void MainWindow::fillNewDocumentMenu()
 
 void MainWindow::createFromTemplate(const QString &templatePath)
 {
-    if (m_current.isEmpty() || !QFileInfo(m_current).isWritable()) {
+    if (m_pane->current.isEmpty() || !QFileInfo(m_pane->current).isWritable()) {
         showMessage(tr("You can't create items in this folder"));
         return;
     }
     QString error;
-    const QString path = Templates::create(templatePath, m_current, &error);
+    const QString path = Templates::create(templatePath, m_pane->current, &error);
     if (path.isEmpty()) {
         showMessage(error);
         return;
     }
     // Undo trashes it (same as undoing a copy).
     m_ops->recordUndo(FileJob::Kind::Copy, {{templatePath, path}}, tr("New Document"));
-    m_pendingRename = path;
+    m_pane->pendingRename = path;
     selectPaths({path});
 }
 
@@ -3621,26 +3541,26 @@ void MainWindow::startRename(const QModelIndex &viewIndex)
         m_rename->cancel();
         return;
     }
-    m_view->scrollTo(viewIndex);
-    m_rename->start(m_view->viewport(), m_model->filePath(source), m_model->isDir(source),
-                    m_grid ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
+    m_pane->view->scrollTo(viewIndex);
+    m_rename->start(m_pane->view->viewport(), m_pane->model->filePath(source), m_pane->model->isDir(source),
+                    m_pane->grid ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
 }
 
 // Where `path`'s name is drawn in the visible view; null if it isn't listed.
 QRect MainWindow::nameRectOf(const QString &path) const
 {
-    const QModelIndex index = toView(m_model->indexForPath(path));
+    const QModelIndex index = toView(m_pane->model->indexForPath(path));
     if (!index.isValid())
         return {};
-    const FileItemDelegate *delegate = m_grid ? m_gridDelegate : m_listDelegate;
-    return delegate->nameEditorRect(m_view->visualRect(index), m_view->fontMetrics(), index);
+    const FileItemDelegate *delegate = m_pane->grid ? m_pane->gridDelegate : m_pane->listDelegate;
+    return delegate->nameEditorRect(m_pane->view->visualRect(index), m_pane->view->fontMetrics(), index);
 }
 
 // ---------------------------------------------------------- file views ---
 
 void MainWindow::setupFileView(QAbstractItemView *view)
 {
-    view->setModel(m_proxy);
+    view->setModel(m_pane->proxy);
     view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     view->setFrameShape(QFrame::NoFrame);
     view->setMouseTracking(true);
@@ -3675,7 +3595,7 @@ QModelIndexList MainWindow::selectedViewIndexes() const
     QModelIndexList items;
     if (m_analyzing)
         return items; // the file view is hidden: its selection mustn't be acted on
-    for (const QModelIndex &index : m_iconView->selectionModel()->selectedIndexes()) {
+    for (const QModelIndex &index : m_pane->iconView->selectionModel()->selectedIndexes()) {
         if (index.column() == 0)
             items.append(index);
     }
@@ -3684,26 +3604,26 @@ QModelIndexList MainWindow::selectedViewIndexes() const
 
 bool MainWindow::isFileViewport(const QObject *object) const
 {
-    return (m_iconView && object == m_iconView->viewport())
-           || (m_detailView && object == m_detailView->viewport());
+    return (m_pane->iconView && object == m_pane->iconView->viewport())
+           || (m_pane->detailView && object == m_pane->detailView->viewport());
 }
 
 void MainWindow::sortBy(int column, Qt::SortOrder order)
 {
-    m_detailView->sortByColumn(column, order); // updates the header and sorts the model
+    m_pane->detailView->sortByColumn(column, order); // updates the header and sorts the model
     updateSortActions();
 }
 
 void MainWindow::updateSortActions()
 {
-    if (m_background)
+    if (inBackground())
         return;
     if (m_sortColumnActs.isEmpty())
         return;
-    const int column = m_model->sortColumn();
+    const int column = m_pane->model->sortColumn();
     if (column >= 0 && column < m_sortColumnActs.size())
         m_sortColumnActs.at(column)->setChecked(true);
-    (m_model->sortOrder() == Qt::AscendingOrder ? m_sortAscAct : m_sortDescAct)->setChecked(true);
+    (m_pane->model->sortOrder() == Qt::AscendingOrder ? m_sortAscAct : m_sortDescAct)->setChecked(true);
 }
 
 // --------------------------------------------------------- drag & drop ---
@@ -3775,9 +3695,9 @@ Qt::DropAction MainWindow::dropActionFor(const QStringList &sources, const QStri
 
 void MainWindow::setDropTarget(const QModelIndex &viewIndex)
 {
-    m_gridDelegate->setDropTarget(viewIndex);
-    m_listDelegate->setDropTarget(viewIndex);
-    m_view->viewport()->update();
+    m_pane->gridDelegate->setDropTarget(viewIndex);
+    m_pane->listDelegate->setDropTarget(viewIndex);
+    m_pane->view->viewport()->update();
 }
 
 bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
@@ -3800,11 +3720,11 @@ bool MainWindow::handleViewDrag(QAbstractItemView *view, QEvent *event)
     // Anywhere else: drop into the open folder.
     const QPoint pos = drop->position().toPoint();
     QModelIndex target = view->indexAt(pos);
-    QString targetDir = m_current;
+    QString targetDir = m_pane->current;
     if (target.isValid()) {
         const QModelIndex source = toSource(target);
-        const QString path = m_model->filePath(source);
-        if (m_model->isDir(source) && !sources.contains(path))
+        const QString path = m_pane->model->filePath(source);
+        if (m_pane->model->isDir(source) && !sources.contains(path))
             targetDir = path;
         else
             target = QModelIndex();
@@ -3926,7 +3846,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
     m_sidebar->setCurrentItem(item); // highlight the place under the cursor
     if (targetDir != m_springPath && !Trash::isFilesDir(targetDir)) {
         m_springPath = targetDir; // held still: open it, like Nautilus
-        m_springPane = m_activePane;
+        m_springPane = paneIndex();
         m_springTimer->start();
     }
     drop->setDropAction(action);
@@ -4019,7 +3939,7 @@ void MainWindow::hideTerminal()
     const bool hadFocus = m_terminal->hasFocus();
     m_terminalPanel->hide();
     if (hadFocus)
-        m_view->setFocus();
+        m_pane->view->setFocus();
 }
 
 #else
@@ -4064,33 +3984,33 @@ void MainWindow::showNextConflict()
 TabStrip::Tab MainWindow::captureTab() const
 {
     TabStrip::Tab tab;
-    tab.path = m_current;
-    tab.back = m_backHistory;
-    tab.forward = m_forwardHistory;
+    tab.path = m_pane->current;
+    tab.back = m_pane->back;
+    tab.forward = m_pane->forward;
     tab.selection = selectedPaths();
-    tab.scroll = m_view->verticalScrollBar()->value();
+    tab.scroll = m_pane->view->verticalScrollBar()->value();
     return tab;
 }
 
 void MainWindow::restoreTab(const TabStrip::Tab &tab)
 {
-    if (tab.path != m_current) {
+    if (tab.path != m_pane->current) {
         if (!navigateTo(tab.path, false)) // its folder may be gone by now
             navigateTo(QDir::homePath(), false);
     } else {
-        setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_current)));
+        setWindowTitle(tr("%1 — Argonaut").arg(titleFor(m_pane->current)));
     }
-    m_backHistory = tab.back;
-    m_forwardHistory = tab.forward;
+    m_pane->back = tab.back;
+    m_pane->forward = tab.forward;
     updateActions();
     if (!tab.selection.isEmpty())
         selectPaths(tab.selection);
     else
-        m_view->selectionModel()->clearSelection();
-    if (m_model->isLoading())
-        m_pendingScroll = tab.scroll; // applied when the folder is listed
+        m_pane->view->selectionModel()->clearSelection();
+    if (m_pane->model->isLoading())
+        m_pane->pendingScroll = tab.scroll; // applied when the folder is listed
     else
-        m_view->verticalScrollBar()->setValue(tab.scroll);
+        m_pane->view->verticalScrollBar()->setValue(tab.scroll);
 }
 
 void MainWindow::openTab(const QString &path, bool activate)
@@ -4142,10 +4062,10 @@ bool MainWindow::typeAheadKey(QKeyEvent *event)
 void MainWindow::typeAheadFind()
 {
     QModelIndex hit;
-    const int rows = m_proxy->rowCount();
+    const int rows = m_pane->proxy->rowCount();
     for (const bool prefix : {true, false}) {
         for (int row = 0; row < rows && !hit.isValid(); ++row) {
-            const QModelIndex index = m_proxy->index(row, 0);
+            const QModelIndex index = m_pane->proxy->index(row, 0);
             const QString name = index.data().toString();
             if (prefix ? name.startsWith(m_typeAhead, Qt::CaseInsensitive)
                        : name.contains(m_typeAhead, Qt::CaseInsensitive))
@@ -4155,11 +4075,11 @@ void MainWindow::typeAheadFind()
             break;
     }
     if (hit.isValid()) {
-        QItemSelectionModel *selection = m_view->selectionModel();
+        QItemSelectionModel *selection = m_pane->view->selectionModel();
         selection->select(QItemSelection(hit, hit.siblingAtColumn(DirectoryModel::ColumnCount - 1)),
                           QItemSelectionModel::ClearAndSelect);
         selection->setCurrentIndex(hit, QItemSelectionModel::NoUpdate);
-        m_view->scrollTo(hit);
+        m_pane->view->scrollTo(hit);
         showMessage(tr("Find: %1").arg(m_typeAhead));
     } else {
         showMessage(tr("Find: %1 — no match").arg(m_typeAhead));
@@ -4184,13 +4104,13 @@ void MainWindow::toggleQuickLook()
         m_quickLook->hide();
         return;
     }
-    if (m_analyzing || !m_view->currentIndex().isValid())
+    if (m_analyzing || !m_pane->view->currentIndex().isValid())
         return;
     if (!m_quickLook) {
         m_quickLook = new QuickLook(m_thumbnailer, this);
         connect(m_quickLook, &QuickLook::navigate, this, [this](QKeyEvent *key) {
             QKeyEvent copy(QEvent::KeyPress, key->key(), key->modifiers(), key->text());
-            QApplication::sendEvent(m_view, &copy);
+            QApplication::sendEvent(m_pane->view, &copy);
         });
         connect(m_quickLook, &QuickLook::openRequested, this, [this](const QString &path) {
             m_quickLook->hide();
@@ -4206,28 +4126,28 @@ void MainWindow::toggleQuickLook()
     m_quickLook->move(mapToGlobal(QPoint((width() - size.width()) / 2, (height() - size.height()) / 2)));
     updateQuickLook();
     m_quickLook->show();
-    m_view->setFocus(); // keys keep going to the file view
+    m_pane->view->setFocus(); // keys keep going to the file view
 }
 
 void MainWindow::updateQuickLook()
 {
-    const QModelIndex view = m_view->currentIndex();
+    const QModelIndex view = m_pane->view->currentIndex();
     if (!view.isValid() || !m_quickLook)
         return;
     const QModelIndex source = toSource(view.siblingAtColumn(0));
     QuickLook::Item item;
-    item.path = m_model->filePath(source);
+    item.path = m_pane->model->filePath(source);
     if (item.path == m_quickLook->path() && m_quickLook->isVisible())
         return;
-    item.name = m_model->fileName(source);
+    item.name = m_pane->model->fileName(source);
     item.verdict = ContentType::Verdict(source.data(DirectoryModel::VerdictRole).toInt());
-    item.mimeType = m_model->isDir(source) ? QStringLiteral("inode/directory") : effectiveMimeAt(source);
+    item.mimeType = m_pane->model->isDir(source) ? QStringLiteral("inode/directory") : effectiveMimeAt(source);
     item.icon = source.data(Qt::DecorationRole).value<QIcon>();
     static const QMimeDatabase db;
     QStringList details;
-    details << (m_model->isDir(source) ? tr("Folder") : db.mimeTypeForName(item.mimeType).comment());
-    if (!m_model->isDir(source))
-        details << formatSize(m_model->size(source));
+    details << (m_pane->model->isDir(source) ? tr("Folder") : db.mimeTypeForName(item.mimeType).comment());
+    if (!m_pane->model->isDir(source))
+        details << formatSize(m_pane->model->size(source));
     details << QLocale().toString(source.data(DirectoryModel::ModifiedRole).toDateTime(), QLocale::ShortFormat);
     item.details = details.join(QStringLiteral(" · "));
     m_quickLook->showItem(item);
@@ -4392,8 +4312,8 @@ void MainWindow::startChooser(const ChooserRequest &request)
     ChooserMode::Host host;
     host.window = this;
     host.selectedPaths = [this] { return selectedPaths(); };
-    host.currentFolder = [this] { return m_current; };
-    host.inTrash = [this] { return m_model->isTrash(); };
+    host.currentFolder = [this] { return m_pane->current; };
+    host.inTrash = [this] { return m_pane->model->isTrash(); };
     host.navigateTo = [this](const QString &folder) { return navigateTo(folder); };
     host.showMessage = [this](const QString &text) { showMessage(text); };
     m_chooser = new ChooserMode(request, host, this);
@@ -4414,15 +4334,15 @@ void MainWindow::startChooser(const ChooserRequest &request)
                                       m_shortcutsAct});
 
     m_contentLayout->addWidget(m_chooser->bar());
-    auto applyFilter = [this] { m_proxy->setChooserFilter(m_chooser->currentFilter(), m_chooser->request().directory); };
+    auto applyFilter = [this] { m_pane->proxy->setChooserFilter(m_chooser->currentFilter(), m_chooser->request().directory); };
     applyFilter();
     connect(m_chooser, &ChooserMode::filterChanged, this, applyFilter);
 
     const auto selection = request.multiple ? QAbstractItemView::ExtendedSelection
                                             : QAbstractItemView::SingleSelection;
-    m_iconView->setSelectionMode(selection);
-    m_detailView->setSelectionMode(selection);
-    connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, m_chooser, &ChooserMode::selectionChanged);
+    m_pane->iconView->setSelectionMode(selection);
+    m_pane->detailView->setSelectionMode(selection);
+    connect(m_pane->view->selectionModel(), &QItemSelectionModel::selectionChanged, m_chooser, &ChooserMode::selectionChanged);
 
     connect(m_chooser, &ChooserMode::finished, this, [this](uint response, const QVariantMap &results) {
         emit chooserFinished(response, results);

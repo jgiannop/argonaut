@@ -21,6 +21,7 @@ public:
     explicit PathBar(QWidget *parent = nullptr);
 
     void setPath(const QString &path); // clean path with '/' separators
+    QString path() const { return m_path; }
     void setTheme(const Theme &theme);
     void startEditing();
     QToolButton *menuButton() const { return m_menuButton; }

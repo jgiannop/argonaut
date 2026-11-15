@@ -15,6 +15,7 @@
 #include "InlineRename.h"
 #include "MainWindow.h"
 #include "MountActions.h"
+#include "PathBar.h"
 #include "Sidebar.h"
 #include "TabStrip.h"
 #include "TestSupport.h"
@@ -69,6 +70,9 @@ private slots:
     void dropOnTheTrashTrashes();
     void splitViewActsOnThePaneYouAreIn();
     void showHiddenAppliesToBothPanes();
+    void splitPanesKeepTheirOwnFolderViewAndHistory();
+    void otherPaneWorksInTheBackground();
+    void copyToOtherPane();
     void tabsOfPlacesHaveTheirNames();
     void tabsRememberFolderSelectionAndHistory();
     void inlineRenameRenamesAndRefusesTakenNames();
@@ -140,7 +144,7 @@ QString TestMainWindow::make(const QString &relative, const QByteArray &content)
 
 void TestMainWindow::open(const QString &folder)
 {
-    QSignalSpy loaded(w->m_model, &DirectoryModel::loaded);
+    QSignalSpy loaded(w->m_pane->model, &DirectoryModel::loaded);
     QVERIFY(w->navigateTo(folder));
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
 }
@@ -246,7 +250,7 @@ void TestMainWindow::deleteInsideTheTrashIsConfirmed()
     QVERIFY(exists(inTrash("a.txt")) && exists(inTrash("b.txt")));
 
     open(Trash::homeFilesDir());
-    QVERIFY(w->m_model->isTrash());
+    QVERIFY(w->m_pane->model->isTrash());
     select({inTrash("a.txt")});
 
     answerNext("Cancel");
@@ -491,6 +495,122 @@ void TestMainWindow::splitViewActsOnThePaneYouAreIn()
     QVERIFY(exists(m_dir + "/right/stay.txt"));
 }
 
+// Each pane owns its folder, history, view mode and selection; the header
+// shows the pane you are in.
+void TestMainWindow::splitPanesKeepTheirOwnFolderViewAndHistory()
+{
+    const QString l = make("left/l.txt");
+    make("left/deep/x.txt");
+    const QString r = make("right/r.txt");
+    open(m_dir + "/left");
+    w->m_listAct->trigger(); // the first pane as a list
+    QVERIFY(!w->m_pane->grid);
+
+    w->setSplitView(true);
+    QCOMPARE(w->m_paneCount, 2);
+    QCOMPARE(w->m_activePane, 1);
+    QCOMPARE(w->m_pane, &w->m_panes[1]);
+    QVERIFY(!w->inBackground());
+    // The new pane starts like the first: same folder, same kind of view.
+    QCOMPARE(w->m_panes[1].current, m_dir + "/left");
+    QVERIFY(!w->m_panes[1].grid);
+    QVERIFY(w->m_panes[1].model != w->m_panes[0].model);
+    QVERIFY(w->m_panes[1].back.isEmpty()); // but its own history
+
+    open(m_dir + "/right");
+    w->m_gridAct->trigger(); // the second pane as a grid
+    QTRY_VERIFY(w->m_panes[1].model->indexForPath(r).isValid());
+    select({r});
+    QCOMPARE(w->m_panes[0].current, m_dir + "/left"); // untouched
+    QVERIFY(!w->m_panes[0].grid);
+    QVERIFY(w->m_panes[1].grid);
+    QVERIFY(w->m_backAct->isEnabled()); // pane 2 came from "left"
+    QCOMPARE(w->m_pathBar->path(), m_dir + "/right");
+
+    // Back in the first pane: its folder in the header, its own (empty) way back.
+    w->activatePane(0);
+    QCOMPARE(w->m_pane, &w->m_panes[0]);
+    QCOMPARE(w->m_pane->current, m_dir + "/left");
+    QCOMPARE(w->m_pathBar->path(), m_dir + "/left");
+    QVERIFY(w->m_listAct->isChecked());
+    open(m_dir + "/left/deep");
+    QCOMPARE(w->m_panes[1].current, m_dir + "/right");
+    QCOMPARE(w->m_panes[1].back.size(), 1);
+    QCOMPARE(w->m_panes[0].back.size(), 1); // left -> deep
+
+    // The second pane kept its selection all along.
+    w->activatePane(1);
+    QCOMPARE(w->selectedPaths(), QStringList{r});
+    QVERIFY(w->m_gridAct->isChecked());
+
+    // Split off: back to one pane, the first, as it was.
+    w->setSplitView(false);
+    QCOMPARE(w->m_activePane, 0);
+    QCOMPARE(w->m_pane->current, m_dir + "/left/deep");
+    QCOMPARE(w->m_pathBar->path(), m_dir + "/left/deep");
+    QVERIFY(exists(l) && exists(r));
+}
+
+// What happens in the pane you are not in (its folder changes, files appear)
+// is handled there, and leaves your pane and the header alone.
+void TestMainWindow::otherPaneWorksInTheBackground()
+{
+    make("left/l.txt");
+    make("right/r.txt");
+    open(m_dir + "/left");
+    w->setSplitView(true);
+    open(m_dir + "/right");
+    w->activatePane(0);
+    select({m_dir + "/left/l.txt"});
+    const QString header = w->m_pathBar->path();
+    const QString title = w->windowTitle();
+
+    // A file appears in the other pane's folder: its model picks it up.
+    const QString added = make("right/new.txt");
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_panes[1].model->indexForPath(added).isValid(), 5000);
+    QCOMPARE(w->m_pane, &w->m_panes[0]); // still working on the user's pane
+    QVERIFY(!w->inBackground());
+    QCOMPARE(w->m_pathBar->path(), header);
+    QCOMPARE(w->windowTitle(), title);
+    QCOMPARE(w->selectedPaths(), QStringList{m_dir + "/left/l.txt"});
+
+    // The other pane's folder disappears: that pane leaves it, yours stays.
+    QDir(m_dir + "/right").removeRecursively();
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_panes[1].current != m_dir + "/right", 5000);
+    QCOMPARE(w->m_panes[0].current, m_dir + "/left");
+    QCOMPARE(w->m_pathBar->path(), header);
+    QCOMPARE(w->m_pane, &w->m_panes[0]);
+}
+
+// F5: the selection is copied into the other pane's folder, through the
+// normal engine (so it can be undone), and shown selected there.
+void TestMainWindow::copyToOtherPane()
+{
+    const QString a = make("left/a.txt");
+    QDir().mkpath(m_dir + "/right");
+    open(m_dir + "/left");
+    w->setSplitView(true);
+    open(m_dir + "/right");
+    w->activatePane(0);
+    select({a});
+    QTRY_VERIFY(w->m_copyToOtherAct->isEnabled());
+
+    runJob([&] { w->m_copyToOtherAct->trigger(); });
+    QVERIFY(exists(a));
+    QVERIFY(exists(m_dir + "/right/a.txt"));
+    // The copy is selected in the pane it went to; yours keeps its selection.
+    QTRY_VERIFY(w->m_panes[1].model->indexForPath(m_dir + "/right/a.txt").isValid());
+    QCOMPARE(w->selectedPaths(), QStringList{a});
+    {
+        w->activatePane(1);
+        QTRY_COMPARE(w->selectedPaths(), QStringList{m_dir + "/right/a.txt"});
+        w->activatePane(0);
+    }
+    runJob([&] { w->m_undoAct->trigger(); });
+    QVERIFY(!exists(m_dir + "/right/a.txt"));
+    QVERIFY(exists(a));
+}
+
 // "Show Hidden Files" is one switch for the window: both panes follow it.
 void TestMainWindow::showHiddenAppliesToBothPanes()
 {
@@ -532,7 +652,7 @@ void TestMainWindow::tabsOfPlacesHaveTheirNames()
     QCOMPARE(titles, (QStringList{QFileInfo(m_dir).fileName(), "Trash", "Recent"})); // newest right after the active tab
     // And the tab really opens the place.
     w->m_tabBar->activate(2);
-    QTRY_COMPARE(w->m_current, DirectoryModel::recentPath());
+    QTRY_COMPARE(w->m_pane->current, DirectoryModel::recentPath());
 }
 
 // Tabs share the one view: leaving a tab saves its folder, selection and
@@ -548,21 +668,21 @@ void TestMainWindow::tabsRememberFolderSelectionAndHistory()
     open(m_dir + "/one");
     open(m_dir + "/one/sub");
     w->m_backAct->trigger(); // back in "one", with somewhere to go forward to
-    QTRY_COMPARE(w->m_current, m_dir + "/one");
-    QTRY_VERIFY(w->m_model->indexForPath(a).isValid());
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/one");
+    QTRY_VERIFY(w->m_pane->model->indexForPath(a).isValid());
     select({a});
 
     w->openTab(m_dir + "/two", true);
-    QTRY_COMPARE(w->m_current, m_dir + "/two");
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/two");
     QCOMPARE(tabs->count(), 2);
     QCOMPARE(tabs->activeIndex(), 1);
     QVERIFY(tabs->isVisibleTo(w.get()));
-    QTRY_VERIFY(w->m_model->indexForPath(b).isValid());
+    QTRY_VERIFY(w->m_pane->model->indexForPath(b).isValid());
     select({b});
     QVERIFY(!w->m_forwardAct->isEnabled()); // the new tab has its own, empty history
 
     tabs->step(-1); // Ctrl+Shift+Tab
-    QTRY_COMPARE(w->m_current, m_dir + "/one");
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/one");
     QTRY_COMPARE(w->selectedPaths(), QStringList{a});
     QVERIFY(w->m_forwardAct->isEnabled());
     QCOMPARE(tabs->tabText(0), QStringLiteral("one"));
@@ -571,16 +691,16 @@ void TestMainWindow::tabsRememberFolderSelectionAndHistory()
     // Close the second tab from the first, then bring it back as it was.
     tabs->closeTab(1);
     QCOMPARE(tabs->count(), 1);
-    QCOMPARE(w->m_current, m_dir + "/one");
+    QCOMPARE(w->m_pane->current, m_dir + "/one");
     QVERIFY(!tabs->isVisibleTo(w.get()));
     tabs->reopenClosed();
     QCOMPARE(tabs->count(), 2);
-    QTRY_COMPARE(w->m_current, m_dir + "/two");
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/two");
     QTRY_COMPARE(w->selectedPaths(), QStringList{b});
 
     // Closing the active tab shows a neighbour; files are never touched.
     tabs->closeActive();
-    QTRY_COMPARE(w->m_current, m_dir + "/one");
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/one");
     QVERIFY(exists(a) && exists(b));
 }
 
@@ -594,7 +714,7 @@ void TestMainWindow::inlineRenameRenamesAndRefusesTakenNames()
     QVERIFY(w->m_renameAct->isEnabled());
     w->m_renameAct->trigger();
     QTRY_VERIFY(w->m_rename->isActive());
-    auto *edit = w->m_view->viewport()->findChild<QLineEdit *>("renameEdit");
+    auto *edit = w->m_pane->view->viewport()->findChild<QLineEdit *>("renameEdit");
     QVERIFY(edit);
     QCOMPARE(edit->text(), QStringLiteral("report.tar.gz"));
     QCOMPARE(edit->selectedText(), QStringLiteral("report")); // the name, not ".tar.gz"
@@ -620,11 +740,11 @@ void TestMainWindow::inlineRenameRenamesAndRefusesTakenNames()
     QVERIFY(exists(a));
 
     // Esc changes nothing.
-    QTRY_VERIFY(w->m_model->indexForPath(a).isValid());
+    QTRY_VERIFY(w->m_pane->model->indexForPath(a).isValid());
     select({a});
     w->m_renameAct->trigger();
     QTRY_VERIFY(w->m_rename->isActive());
-    edit = w->m_view->viewport()->findChild<QLineEdit *>("renameEdit");
+    edit = w->m_pane->view->viewport()->findChild<QLineEdit *>("renameEdit");
     QVERIFY(edit);
     edit->setText("never.txt");
     QTest::keyClick(edit, Qt::Key_Escape);
@@ -646,7 +766,7 @@ void TestMainWindow::ejectLeavesTheDriveAndRunsTheTool()
     QSignalSpy messages(w->m_mounts, &MountActions::message);
     QSignalSpy changed(w->m_mounts, &MountActions::mountsChanged);
     w->ejectDrive(drive, "Stick");
-    QTRY_COMPARE(w->m_current, QDir::homePath());
+    QTRY_COMPARE(w->m_pane->current, QDir::homePath());
     QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 5000); // the tool finished: the sidebar is rebuilt
     QFile f(log);
     QVERIFY(f.open(QIODevice::ReadOnly));
@@ -719,10 +839,10 @@ void TestMainWindow::chooserOpenReturnsTheSelection()
     request.multiple = true;
     request.currentFolder = m_dir;
     QSignalSpy finished(w.get(), &MainWindow::chooserFinished);
-    QSignalSpy loaded(w->m_model, &DirectoryModel::loaded);
+    QSignalSpy loaded(w->m_pane->model, &DirectoryModel::loaded);
     w->startChooser(request);
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
-    QCOMPARE(w->m_current, m_dir);
+    QCOMPARE(w->m_pane->current, m_dir);
 
     // Nothing chosen: no answer yet.
     w->m_chooser->accept();
@@ -753,7 +873,7 @@ void TestMainWindow::chooserSaveAsksBeforeReplacing()
     request.currentFolder = m_dir;
     request.currentName = "report.txt";
     QSignalSpy finished(w.get(), &MainWindow::chooserFinished);
-    QSignalSpy loaded(w->m_model, &DirectoryModel::loaded);
+    QSignalSpy loaded(w->m_pane->model, &DirectoryModel::loaded);
     w->startChooser(request);
     QTRY_VERIFY_WITH_TIMEOUT(!loaded.isEmpty(), 10000);
     QCOMPARE(w->m_chooser->bar()->name(), QStringLiteral("report.txt"));
