@@ -1,9 +1,11 @@
 #pragma once
 
 #include "FileRules.h"
+#include "Places.h"
 #include "Screen.h"
 
 #include <QElapsedTimer>
+#include <QImage>
 #include <QObject>
 #include <QSet>
 #include <QStringList>
@@ -74,6 +76,12 @@ public:
     QString folder(int pane) const;
     int activePane() const { return m_active; }
     bool isSplit() const { return m_split; }
+    bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
+    bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
+    bool isPreviewLoading() const { return m_previewLoading; }
+    bool isSidebarShown() const { return m_sidebar; } // the list of places at the left (Ctrl+B)
+    bool isInSidebar() const { return m_inSidebar; }  // and the keys go to it
+    void setSidebarShown(bool on);
     bool isShellOpen() const { return m_shell != nullptr; } // the shell panel is under the panes
     bool isInShell() const { return m_inShell; }            // and what is typed goes to it
     // false: no panel; F12 hands the whole terminal over (shellRequested).
@@ -132,6 +140,7 @@ private:
         int cols = 1;          // grid, from the last frame: items on a line
         int cellWidth = 1;     // grid: cells an item takes
         int widestName = 0;    // grid: the longest name's width (of the first few thousand)
+        int barY = 0, barHeight = 0; // the scrollbar, from the last frame (height 0: there is none)
         bool widthStale = true;
     };
     enum class Mode { Normal, Prompt, Question, Conflict, Help };
@@ -144,7 +153,6 @@ private:
     void goUp();
     void openCursor();
     void openFile(const QString &path); // Enter or a double click on a file
-    void viewFile(const QString &path); // F3
     void moveCursor(Pane &p, int row);
     void rowsChanged(Pane &p);
     int upRows(const Pane &p) const;   // 1 when the list starts with ".."
@@ -158,9 +166,19 @@ private:
     void newFolder();
     void rename();
     void goTo();
+    void setPreviewShown(bool on);
+    void syncPreview();              // the preview is of the item under the cursor
+    void drawPreview(Screen &screen, int x, int width, int top, int height);
+    bool previewKey(const Key &key); // false: not the preview's key
+    void scrollPreview(int top);
+    void refreshPlaces();
+    void drawSidebar(Screen &screen, int top, int height);
+    bool sidebarKey(const Key &key); // false: not the sidebar's key
+    void openPlace(int entry);
+    void nextArea(bool backwards);   // Tab: the panes and the sidebar in turn
     void toggleShell();
     void closeShell();
-    void drawShell(Screen &screen, int y, int height);
+    void drawShell(Screen &screen, int x, int right, int y, int height);
     void setSplit(bool on);
     void toggleGrid();
     int perLine(const Pane &p) const { return p.view == View::List ? 1 : qMax(1, p.cols); } // items on a line of the pane
@@ -185,6 +203,10 @@ private:
     // The bottom line of a grid: the item under the cursor with its size
     // and date, then the counts. `lines`: of items, in all and on screen.
     void drawGridFooter(Screen &screen, const Pane &p, int x, int width, int y, int totalLines, int lines);
+    // A scrollbar down the pane's right edge, when there are more lines of
+    // items (`total`) than fit (`shown`). `height`: screen lines it runs over.
+    void drawScrollbar(Screen &screen, Pane &p, bool active, int x, int y, int height, int total, int shown);
+    void scrollTo(Pane &p, int top); // the first line of items shown; the cursor comes along if it must
     QString footerText(const Pane &p) const; // how many items, and what is selected
     void drawBottom(Screen &screen);
     void drawHelp(Screen &screen);
@@ -200,8 +222,38 @@ private:
     Shell *m_shell = nullptr;
     bool m_inShell = false;       // keys go to the shell, not to the files
     bool m_embeddedShell = true;
-    int m_shellY = -1, m_shellHeight = 0; // from the last frame
+    int m_shellX = 0, m_shellY = -1, m_shellHeight = 0; // from the last frame
     int m_lastWidth = 100, m_lastHeight = 30;
+    // The sidebar: the places (Places::list, as in the window), looked up
+    // now and then. Rows are entries with a line between the groups.
+    bool m_sidebar = true;
+    bool m_inSidebar = false;
+    QList<Places::Entry> m_places;
+    QList<int> m_sideRows;       // what each row is: an entry's number, or -1 for a line
+    QTimer m_placesTimer;
+    int m_sideCursor = 0;        // the row the keys are on
+    int m_sideTop = 0;
+    int m_sideWidth = 0;         // from the last frame (0: not on screen)
+    int m_sideY = 0, m_sideShown = 0;
+    // The preview (F3): what Preview::load gives for the item under the
+    // cursor, as lines of text or a picture made of half blocks. Loaded on
+    // another thread; an answer for an item we have moved on from is dropped.
+    bool m_preview = false;
+    bool m_inPreview = false;
+    QString m_previewPath;       // what it is of ("" : nothing)
+    quint64 m_previewRequest = 0;
+    bool m_previewLoading = false;
+    QString m_previewTitle, m_previewInfo;
+    QStringList m_previewLines;  // text, an archive's entries, or a line of explanation
+    bool m_previewWarning = false; // the lines are a warning (a program in disguise)
+    QImage m_previewImage;       // a picture, at a few pixels to the cell
+    QStringList m_previewWrapped; // m_previewLines cut to the pane's width…
+    int m_previewWrapWidth = -1;  // …which was this
+    int m_previewTop = 0;
+    int m_previewX = 0, m_previewWidth = 0;        // from the last frame (0: not on screen)
+    int m_previewY = 0, m_previewShown = 0, m_previewTotal = 0;
+    int m_helpTop = 0;           // the help's first line shown
+    int m_helpLines = 0, m_helpShown = 0; // from the last frame
     Mode m_mode = Mode::Normal;
     QString m_message;
     QTimer m_messageTimer;

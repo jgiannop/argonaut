@@ -4,6 +4,8 @@
 
 #include "App.h"
 #include "Shell.h"
+#include "Bookmarks.h"
+#include "DirectoryModel.h"
 #include "FileOperations.h"
 #include "Screen.h"
 #include "TestSupport.h"
@@ -13,6 +15,7 @@
 #include <QDir>
 #include <QFile>
 #include <QSettings>
+#include <QImage>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -49,6 +52,9 @@ private slots:
     void startsWithOnePane();
     void gridView();
     void bigIcons();
+    void scrollbars();
+    void placesAtTheLeft();
+    void previewAtTheRight();
     void shellInTheFolder();
     void shellPanel();
 
@@ -125,6 +131,7 @@ void TestTui::init()
     QDir(Trash::homeFilesDir()).removeRecursively();
     QDir(QFileInfo(Trash::homeFilesDir()).absolutePath() + "/info").removeRecursively();
     QSettings().remove("tui"); // every test starts with lists
+    QSettings().setValue("tui/sidebar", false); // and without the places at the left, unless it is about them
     app = std::make_unique<App>(m_left, m_right);
     settle();
 }
@@ -168,7 +175,7 @@ void TestTui::showsTwoPanes()
     QVERIFY(!text.contains(".secret"));
     QVERIFY(text.contains("3 items"));
     QVERIFY(text.contains("Nothing here")); // the empty right pane
-    QVERIFY(lines.last().contains("F5 Copy") && lines.last().contains("F10 Quit"));
+    QVERIFY(lines.last().contains("F5 Copy") && lines.last().contains("q Quit"));
     // The cursor row of the active pane stands out.
     Screen s(100, 24);
     app->render(s);
@@ -565,7 +572,7 @@ void TestTui::gridView()
     QVERIFY2(lines.at(2).contains("../") && lines.at(2).contains("Documents/") && lines.at(2).contains("alpha.txt"),
              qPrintable(lines.at(2)));
     QVERIFY(!text.contains("Modified"));
-    QVERIFY(text.contains("F9 Icons") && text.contains("F10 Quit")); // what F9 goes to next
+    QVERIFY(text.contains("F9 Icons") && text.contains("q Quit")); // what F9 goes to next
     QCOMPARE(app->cursorPath(), m_left + "/Documents");
     QVERIFY2(lines.at(lines.size() - 3).contains("Documents") && lines.at(lines.size() - 3).contains("12 items"),
              qPrintable(lines.at(lines.size() - 3)));
@@ -740,6 +747,214 @@ void TestTui::bigIcons()
     QVERIFY(screen(40, 12).contains("███████"));
 }
 
+// A scrollbar down a pane's right edge when there is more than fits, in
+// every view, and in a help longer than the screen. None when all fits.
+void TestTui::scrollbars()
+{
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    // What a pane's last column shows, top to bottom: "│" track, "█" handle.
+    auto bar = [this](int width = 100, int height = 24) {
+        Screen s(width, height);
+        app->render(s);
+        QString column;
+        for (int y = 1; y < height - 3; ++y)
+            column += QString::fromUcs4(&s.at(width - 1, y).ch, 1);
+        return column.trimmed();
+    };
+    QVERIFY2(bar().isEmpty(), qPrintable(bar())); // four items: nothing to scroll
+
+    for (int i = 0; i < 200; ++i)
+        make(QStringLiteral("file%1.txt").arg(i, 3, 10, QChar('0')));
+    keys({Key::control('r')});
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("203 items"), 10000);
+
+    for (const char *view : {"list", "grid", "icons"}) {
+        keys({Key::of(Key::Home)});
+        const QString top = bar();
+        QVERIFY2(top.startsWith(QChar(0x2588)) && top.endsWith(QChar(0x2502)), view); // the handle is at the top
+        QVERIFY2(top.count(QChar(0x2588)) < top.size(), view);
+        keys({Key::of(Key::End)});
+        const QString bottom = bar();
+        QVERIFY2(bottom.startsWith(QChar(0x2502)) && bottom.endsWith(QChar(0x2588)), view); // at the bottom
+        QCOMPARE(bottom.size(), top.size());
+        QCOMPARE(bottom.count(QChar(0x2588)), top.count(QChar(0x2588)));
+
+        // A click on the bar goes to that part: its top is the start, and
+        // the cursor comes along; the pane's files are still what is clicked elsewhere.
+        Screen s(100, 24);
+        app->render(s);
+        int firstY = -1, lastY = -1;
+        for (int y = 1; y < 21; ++y) {
+            if (s.at(99, y).ch == 0x2502 || s.at(99, y).ch == 0x2588) {
+                if (firstY < 0)
+                    firstY = y;
+                lastY = y;
+            }
+        }
+        QVERIFY2(firstY > 0 && lastY > firstY, view);
+        QVERIFY2(!screen().contains("Documents/"), view);
+        app->mouse({Tui::Mouse::Press, 99, firstY});
+        QVERIFY2(screen().contains("Documents/"), view);
+        QVERIFY2(bar().startsWith(QChar(0x2588)), view);
+        app->mouse({Tui::Mouse::Press, 99, lastY});
+        QVERIFY2(screen().contains("file199.txt"), view);
+        QVERIFY2(!app->cursorPath().isEmpty() && screen().contains(QFileInfo(app->cursorPath()).fileName().left(8)), view);
+        app->mouse({Tui::Mouse::Press, 99, (firstY + lastY) / 2});
+        QVERIFY2(!screen().contains("Documents/") && !screen().contains("file199.txt"), view);
+        keys({Key::of(Key::F9)}); // the next view
+    }
+    QCOMPARE(app->view(0), App::View::List);
+
+    // Two panes: each has its own, at its own edge.
+    keys({Key::of(Key::F4)});
+    settle();
+    Screen two(100, 24);
+    app->render(two);
+    QString middle, right;
+    for (int y = 3; y < 20; ++y) {
+        middle += QString::fromUcs4(&two.at(48, y).ch, 1);
+        right += QString::fromUcs4(&two.at(99, y).ch, 1);
+    }
+    QVERIFY2(middle.contains(QChar(0x2588)) && right.contains(QChar(0x2588)), qPrintable(middle + "|" + right));
+    keys({Key::of(Key::F4)});
+
+    // The help: on a short screen it scrolls and shows a bar; a key that
+    // isn't for moving closes it. On a tall screen any key closes it.
+    keys({Key::of(Key::F1)});
+    const QString first = screen(100, 14);
+    QVERIFY(first.contains("Argonaut in the terminal"));
+    QVERIFY(!first.contains("Press any key."));
+    QVERIFY(first.contains("the wheel"));
+    QVERIFY(!bar(100, 14).isEmpty());
+    keys({Key::of(Key::PageDown)});
+    QVERIFY(app->isAsking());
+    QVERIFY(!screen(100, 14).contains("Argonaut in the terminal"));
+    keys({Key::of(Key::End)});
+    QVERIFY(screen(100, 14).contains("Press any key."));
+    app->mouse({Tui::Mouse::WheelUp, 5, 5});
+    QVERIFY(!screen(100, 14).contains("Press any key."));
+    keys({Key::character('x')});
+    QVERIFY(!app->isAsking());
+    keys({Key::of(Key::F1)});
+    QVERIFY(screen(100, 60).contains("Press any key."));
+    keys({Key::of(Key::Down)}); // it all fits: Down is "any key"
+    QVERIFY(!app->isAsking());
+}
+
+// The sidebar: the same places as the window's (Recent, Starred, the
+// standard folders, the Trash, bookmarks, drives), at the left of the files.
+void TestTui::placesAtTheLeft()
+{
+    Bookmarks::add(m_left + "/Documents");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(!app->isSidebarShown()); // the tests' setting; on unless switched off
+    QVERIFY(!screen().contains("Places"));
+    app->setSidebarShown(true);
+    Screen s(100, 30);
+    app->render(s);
+    QStringList lines = s.text().split('\n');
+    QVERIFY2(lines.at(1).startsWith(" Places") && lines.at(1).contains("left"), qPrintable(s.text())); // beside the pane's heading
+    auto rowOf = [&](const QString &name) {
+        for (int y = 2; y < lines.size(); ++y) {
+            if (lines.at(y).left(21).trimmed() == name)
+                return y;
+        }
+        return -1;
+    };
+    QVERIFY(rowOf("Recent") == 2 && rowOf("Starred") == 3);
+    QVERIFY(rowOf("Home") > 0 && rowOf("Trash") > rowOf("Home"));
+    QVERIFY2(rowOf("Documents") > rowOf("Trash") + 1, qPrintable(s.text())); // the bookmark, after a line
+    QVERIFY(lines.at(rowOf("Trash") + 1).contains(QString(8, QChar(0x2500))));
+    QVERIFY(rowOf("Computer") > rowOf("Documents"));
+    // The files are beside it, whole: nothing of a pane is under the sidebar.
+    QVERIFY(lines.at(4).indexOf("Documents/") > 22);
+    QVERIFY(lines.at(4).contains("1 item"));
+    QVERIFY(!app->isInSidebar());
+
+    // A click on a place opens it in the pane; its row is then the marked one.
+    app->mouse({Tui::Mouse::Press, 4, rowOf("Home")});
+    settle();
+    QCOMPARE(app->folder(0), QDir::homePath());
+    QVERIFY(!app->isInSidebar());
+    app->render(s);
+    QCOMPARE(s.at(2, rowOf("Home")).style.paper, Tui::Paper::CursorIdle);
+    QCOMPARE(s.at(2, rowOf("Trash")).style.paper, Tui::Paper::Normal);
+    // A click on a file still lands on the file.
+    app->mouse({Tui::Mouse::Press, 4, rowOf("Documents")}); // the bookmark
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    app->render(s);
+    const int fileX = int(s.line(4).indexOf("inside.txt"));
+    QVERIFY(fileX > 22);
+    app->mouse({Tui::Mouse::Press, fileX + 1, 4});
+    QCOMPARE(app->cursorPath(), m_left + "/Documents/inside.txt");
+
+    // Tab goes to the places; Up and Down move over the lines between the
+    // groups; Enter opens one in the pane and the keys are the files' again.
+    keys({Key::of(Key::Tab)});
+    QVERIFY(app->isInSidebar());
+    app->render(s);
+    QCOMPARE(s.at(2, rowOf("Documents")).style.paper, Tui::Paper::Cursor); // on the open folder's row
+    keys({Key::of(Key::Up)});
+    app->render(s);
+    QCOMPARE(s.at(2, rowOf("Trash")).style.paper, Tui::Paper::Cursor); // over the line
+    // The files' keys do nothing to the files from here.
+    keys({Key::of(Key::F8), Key::character('D'), Key::of(Key::F7)});
+    settle();
+    QVERIFY(!app->isAsking());
+    QVERIFY(exists(m_left + "/Documents/inside.txt"));
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), Trash::homeFilesDir());
+    QVERIFY(!app->isInSidebar());
+    keys({Key::of(Key::Tab), Key::of(Key::Home), Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), DirectoryModel::recentPath());
+    // Esc leaves the places without going anywhere; with two panes Tab goes round all three.
+    keys({Key::of(Key::Tab), Key::of(Key::Escape)});
+    QVERIFY(!app->isInSidebar());
+    keys({Key::of(Key::F4)});
+    settle();
+    QCOMPARE(app->activePane(), 0);
+    keys({Key::of(Key::Tab)});
+    QCOMPARE(app->activePane(), 1);
+    keys({Key::of(Key::Tab)});
+    QVERIFY(app->isInSidebar());
+    keys({Key::of(Key::Tab)});
+    QVERIFY(!app->isInSidebar());
+    QCOMPARE(app->activePane(), 0);
+    Key back = Key::of(Key::Tab);
+    back.shift = true;
+    keys({back});
+    QVERIFY(app->isInSidebar());
+    // A place opens in the pane you came from.
+    keys({back});
+    QCOMPARE(app->activePane(), 1);
+    app->render(s);
+    lines = s.text().split('\n');
+    app->mouse({Tui::Mouse::Press, 4, rowOf("Home")});
+    settle();
+    QCOMPARE(app->folder(1), QDir::homePath());
+    keys({Key::of(Key::F4)});
+
+    // Ctrl+B hides it and shows it; that is remembered. A narrow terminal has no room for it.
+    auto headed = [this](int width) { return screen(width, 30).split('\n').at(1).startsWith(" Places"); };
+    QVERIFY(headed(100));
+    QVERIFY(!headed(63));
+    keys({Key::control('b')});
+    QVERIFY(!app->isSidebarShown());
+    QVERIFY(!headed(100));
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(!app->isSidebarShown());
+    keys({Key::control('b')});
+    QVERIFY(screen(100, 30).split('\n').at(1).startsWith(" Places"));
+    Bookmarks::remove(m_left + "/Documents");
+}
+
 void TestTui::shellInTheFolder()
 {
     // Where there is no shell panel (no libvterm), F12 or Ctrl+` asks for a
@@ -810,7 +1025,7 @@ void TestTui::shellPanel()
         if (lines.at(y).contains("Terminal") && lines.at(y).contains("left"))
             title = y;
     }
-    QVERIFY2(title >= 10 && title <= 12, qPrintable(screen())); // the lower half of 24 lines
+    QVERIFY2(title >= 14 && title <= 15, qPrintable(screen())); // about the lower third (35%) of 24 lines
     QVERIFY(lines.at(1).contains("left") && lines.at(4).contains("Documents/")); // the files are still above
     QVERIFY(lines.last().contains("F12 Files") && !lines.last().contains("F8 Trash"));
     Screen s(100, 24);
@@ -875,6 +1090,42 @@ void TestTui::shellPanel()
     QVERIFY(!app->isInShell());
     QVERIFY(!screen().contains("ready>"));
     QVERIFY(screen(140, 24).contains("F12 Terminal"));
+
+    // With the places at the left, the terminal is under the files only:
+    // the places keep their whole height, as the window's sidebar does.
+    app->setSidebarShown(true);
+    keys({Key::of(Key::F12)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(100, 30).contains("ready>"), 10000);
+    {
+        Screen wide(100, 30);
+        app->render(wide);
+        const QStringList rows = wide.text().split('\n');
+        int bar = -1, prompt = -1, trash = -1;
+        for (int y = 0; y < rows.size(); ++y) {
+            if (rows.at(y).mid(22).contains("Terminal") && rows.at(y).mid(22).contains("left"))
+                bar = y;
+            if (rows.at(y).contains("ready>"))
+                prompt = y;
+            if (rows.at(y).left(21).trimmed() == "Trash")
+                trash = y;
+        }
+        QVERIFY2(bar > 5 && prompt > bar && trash > 0, qPrintable(wide.text()));
+        QVERIFY(rows.at(bar).left(21).trimmed() != "Terminal");      // not over the places
+        QCOMPARE(rows.at(prompt).indexOf("ready>"), 22);              // the shell starts where the files do
+        QCOMPARE(wide.at(21, 27).ch, char32_t(0x2502));               // the places' edge runs to the bottom
+        QVERIFY(wide.cursorX() >= 22);
+        // A click on a place beside the terminal is still a place; one on the terminal goes into it.
+        keys({Key::of(Key::F12)});
+        QVERIFY(!app->isInShell());
+        app->mouse({Tui::Mouse::Press, 4, bar + 1 < trash ? trash : bar + 1});
+        QVERIFY(!app->isInShell());
+        app->mouse({Tui::Mouse::Press, 40, prompt});
+        QVERIFY(app->isInShell());
+        type("exit");
+        keys({Key::of(Key::Enter)});
+        QTRY_VERIFY_WITH_TIMEOUT(!app->isShellOpen(), 10000);
+    }
+    app->setSidebarShown(false);
 
     // Quitting with the shell open ends it.
     keys({Key::of(Key::F12)});
@@ -1096,19 +1347,121 @@ void TestTui::opensFiles()
     QVERIFY(app->message().contains("program disguised as a document"));
     QCOMPARE(view.size(), 1);
 
-    // F3 reads a text file in the terminal, wherever we are; nothing else.
-    app->selectPath(text);
-    QCOMPARE(app->cursorPath(), text);
-    keys({Key::of(Key::F3)});
-    QCOMPARE(view.size(), 2);
-    app->selectPath(binary);
-    QCOMPARE(app->cursorPath(), binary);
-    keys({Key::of(Key::F3)});
-    QCOMPARE(app->message(), QStringLiteral("“data.bin” isn't a text file"));
-    app->selectPath(m_left + "/Documents");
-    keys({Key::of(Key::F3)});
-    QCOMPARE(view.size(), 2);
     QCOMPARE(app->folder(0), m_left);
+}
+
+// F3: the preview at the right, of the item under the cursor: a text
+// file's lines with a scrollbar, an archive's entries, a rough picture, a
+// warning for a program in disguise (never its content).
+void TestTui::previewAtTheRight()
+{
+    QByteArray longText;
+    for (int i = 1; i <= 120; ++i)
+        longText += "line number " + QByteArray::number(i) + (i == 3 ? " " + QByteArray(200, 'w') : QByteArray()) + "\n";
+    const QString text = make("long.txt", longText);
+    const QString script = make("holiday.pdf", "#!/bin/sh\necho gotcha\n");
+    QImage picture(64, 32, QImage::Format_RGB32);
+    picture.fill(QColor(200, 30, 30));
+    for (int y = 16; y < 32; ++y) {
+        for (int x = 0; x < 64; ++x)
+            picture.setPixelColor(x, y, QColor(30, 30, 200));
+    }
+    const QString image = m_left + "/picture.png";
+    QVERIFY(picture.save(image));
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    auto loaded = [this] {
+        screen(120, 30); // a frame asks for what is under the cursor
+        return !app->isPreviewLoading();
+    };
+    QVERIFY(screen(120, 30).contains("F3 Preview"));
+    QVERIFY(!app->isPreviewShown());
+
+    // F3: beside the files, of the item under the cursor (a folder first).
+    keys({Key::of(Key::F3)});
+    QVERIFY(app->isPreviewShown());
+    QTRY_VERIFY_WITH_TIMEOUT(loaded(), 10000);
+    QStringList lines = screen(120, 30).split('\n');
+    const int edge = int(lines.at(5).lastIndexOf(QChar(0x2502)));
+    QVERIFY2(edge > 60 && edge < 80, qPrintable(lines.join('\n'))); // about two fifths of the width
+    QVERIFY(lines.at(1).mid(edge).contains("Documents"));
+    QVERIFY2(lines.join('\n').contains("1 item inside."), qPrintable(lines.join('\n')));
+    QVERIFY(lines.at(4).left(edge).contains("Documents/")); // the files are still there, narrower
+
+    // It follows the cursor: a text file's lines, long ones on to the next line.
+    app->selectPath(text);
+    QTRY_VERIFY_WITH_TIMEOUT(loaded() && screen(120, 30).contains("line number 1"), 10000);
+    lines = screen(120, 30).split('\n');
+    QVERIFY(lines.at(1).mid(edge).contains("long.txt"));
+    QVERIFY(lines.at(2).mid(edge).contains("kB") || lines.at(2).mid(edge).contains("bytes"));
+    QCOMPARE(lines.at(4).mid(edge + 2).left(13), QStringLiteral("line number 1"));
+    QVERIFY(lines.at(6).mid(edge).contains("line number 3 www"));
+    QVERIFY(lines.at(7).mid(edge + 2).startsWith("www")); // wrapped, not cut off
+    QVERIFY(lines.join('\n').contains("lines 1–"));
+    // A scrollbar at its right edge, the handle at the top.
+    Screen s(120, 30);
+    app->render(s);
+    QCOMPARE(s.at(119, 4).ch, char32_t(0x2588));
+    QCOMPARE(s.at(119, 25).ch, char32_t(0x2502));
+
+    // The wheel over it scrolls it (not the files); a click on the bar jumps.
+    const QString cursorBefore = app->cursorPath();
+    app->mouse({Tui::Mouse::WheelDown, 100, 10});
+    QVERIFY(!screen(120, 30).contains("line number 1 "));
+    QVERIFY(screen(120, 30).contains("line number 4"));
+    QCOMPARE(app->cursorPath(), cursorBefore);
+    app->mouse({Tui::Mouse::Press, 119, 26}); // the bar's last line: the end
+    QVERIFY(screen(120, 30).contains("line number 120"));
+    app->render(s);
+    QCOMPARE(s.at(119, 26).ch, char32_t(0x2588));
+    app->mouse({Tui::Mouse::Press, 119, 4});
+    QVERIFY(screen(120, 30).contains("line number 1 ") || screen(120, 30).contains("line number 1\n"));
+
+    // Tab goes to it: the arrows and the page keys scroll; the files' keys do nothing to the files.
+    keys({Key::of(Key::Tab)});
+    QVERIFY(app->isInPreview());
+    keys({Key::of(Key::PageDown), Key::of(Key::Down)});
+    QVERIFY(!screen(120, 30).contains("line number 2 "));
+    keys({Key::of(Key::F8), Key::of(Key::Delete), Key::character('D')});
+    settle();
+    QVERIFY(!app->isAsking());
+    QVERIFY(exists(text));
+    QCOMPARE(app->cursorPath(), cursorBefore);
+    keys({Key::of(Key::End)});
+    QVERIFY(screen(120, 30).contains("line number 120"));
+    keys({Key::of(Key::Home), Key::of(Key::Escape)});
+    QVERIFY(!app->isInPreview());
+
+    // A program dressed as a PDF: a warning, never what is in it.
+    app->selectPath(script);
+    QTRY_VERIFY_WITH_TIMEOUT(loaded() && screen(120, 30).contains("disguised"), 10000);
+    QVERIFY(!screen(120, 30).contains("gotcha"));
+
+    // A picture: rough, in half blocks, its colours the picture's (red above blue).
+    app->selectPath(image);
+    QTRY_VERIFY_WITH_TIMEOUT(loaded() && screen(120, 30).contains(QChar(0x2580)), 10000);
+    QVERIFY(screen(120, 30).contains("64 × 32"));
+    app->render(s);
+    bool red = false, blue = false;
+    for (int y = 4; y < 28; ++y) {
+        for (int x = edge + 2; x < 118; ++x) {
+            const Tui::Style style = s.at(x, y).style;
+            if (!style.raw)
+                continue;
+            red = red || style.fg == 160 || style.fg == 196 || style.fg == 124;
+            blue = blue || style.bg == 20 || style.bg == 21 || style.bg == 19 || style.fg == 20 || style.fg == 21 || style.fg == 19;
+        }
+    }
+    QVERIFY(red);
+    QVERIFY(blue);
+
+    // ".." has nothing to preview; a narrow terminal has no room for the pane; F3 closes it.
+    keys({Key::of(Key::Home)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("Up to the folder this one is in."), 10000);
+    QVERIFY(!screen(60, 24).contains("Up to the folder"));
+    keys({Key::of(Key::F3)});
+    QVERIFY(!app->isPreviewShown());
+    QVERIFY(!screen(120, 30).contains("Up to the folder"));
 }
 
 int main(int argc, char **argv)

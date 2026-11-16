@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include <iterator>
+
 #include "Shell.h"
 
 #include "DirectoryModel.h"
@@ -18,12 +20,23 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
+#include <QMimeDatabase>
+#include <QThreadPool>
 #include <QPointer>
 #include <QSettings>
 
 namespace Tui {
 
 namespace {
+
+// The shell panel's height (its title line included) in an area of
+// `paneHeight` lines: about a third (35%), like the window's terminal; the
+// files keep the rest, and at least four lines.
+int shellHeightFor(int paneHeight)
+{
+    return qMax(2, qMin((paneHeight * 35 + 50) / 100, paneHeight - 4));
+}
 
 const Style kBar{Ink::Normal, Paper::Bar, false};
 const Style kDim{Ink::Dim, Paper::Normal, false};
@@ -95,6 +108,26 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
                 if (m_mode == Mode::Normal)
                     nextConflict();
             });
+    // The sidebar's places: drives and bookmarks change behind our back.
+    m_sidebar = QSettings().value(QStringLiteral("tui/sidebar"), true).toBool();
+    m_placesTimer.setInterval(3000);
+    connect(&m_placesTimer, &QTimer::timeout, this, &App::refreshPlaces);
+    m_placesTimer.start();
+    connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &App::refreshPlaces);
+    // An extension has a folder for what was chosen from it (a server's,
+    // once connected): the pane goes there.
+    connect(Extensions::Host::instance(), &Extensions::Host::openRequested, this,
+            [this](const QString &, const QString &folder) { navigate(pane(), folder); });
+    connect(Extensions::Host::instance(), &Extensions::Host::message, this,
+            [this](const QString &, const QString &text) { say(text); });
+    // What an extension wants to ask (a login) has no dialog here yet: it
+    // is told no, and the user why nothing happens.
+    connect(Extensions::Host::instance(), &Extensions::Host::formRequested, this, [this](const Extensions::Form &form) {
+        if (!Extensions::Host::instance()->takeForm(form.extension, form.id))
+            return;
+        Extensions::Host::instance()->answerForm(form.extension, form.id, true);
+        say(QStringLiteral("“%1” has something to ask, which only the window version can show yet").arg(form.extensionName));
+    }, Qt::QueuedConnection);
     m_messageTimer.setSingleShot(true);
     m_messageTimer.setInterval(4000);
     connect(&m_messageTimer, &QTimer::timeout, this, [this] {
@@ -354,21 +387,6 @@ void App::openFile(const QString &path)
         return;
     }
     say(QStringLiteral("There is no desktop here to open “%1” on (text files are shown in the terminal)").arg(name));
-}
-
-// F3: a text file, read in the terminal. Never run, whatever it is.
-void App::viewFile(const QString &path)
-{
-    const QFileInfo info(path);
-    if (path.isEmpty() || info.isDir()) {
-        say(QStringLiteral("F3 shows a text file; this is a folder"));
-        return;
-    }
-    if (!Preview::isTextual(ContentType::effectiveMime(typeOf(path)))) {
-        say(QStringLiteral("“%1” isn't a text file").arg(info.fileName()));
-        return;
-    }
-    emit viewRequested(path);
 }
 
 void App::moveCursor(Pane &p, int row)
@@ -789,10 +807,26 @@ void App::key(const Key &key)
     case Mode::Conflict:
         conflictKey(key);
         return;
-    case Mode::Help:
-        m_mode = Mode::Normal;
+    case Mode::Help: {
+        // Longer than the screen: the arrows and the page keys move through
+        // it. Any other key closes it.
+        const int most = qMax(0, m_helpLines - m_helpShown);
+        const int page = qMax(1, m_helpShown - 1);
+        const int to = key.code == Key::Up ? m_helpTop - 1
+                       : key.code == Key::Down ? m_helpTop + 1
+                       : key.code == Key::PageUp ? m_helpTop - page
+                       : key.code == Key::PageDown ? m_helpTop + page
+                       : key.code == Key::Home ? 0
+                       : key.code == Key::End ? most : -1;
+        const bool moves = key.code == Key::Up || key.code == Key::Down || key.code == Key::PageUp || key.code == Key::PageDown
+                           || key.code == Key::Home || key.code == Key::End;
+        if (moves && most > 0)
+            m_helpTop = qBound(0, to, most);
+        else
+            m_mode = Mode::Normal;
         emit changed();
         return;
+    }
     case Mode::Normal:
         // F12, and Ctrl+` as in the window (a terminal sends that as NUL,
         // the same as Ctrl+Space; some terminals keep it for themselves).
@@ -815,6 +849,10 @@ void App::key(const Key &key)
             m_shell->key(key); // everything else is typed into the shell
             return;
         }
+        if (m_inSidebar && sidebarKey(key))
+            return;
+        if (m_inPreview && previewKey(key))
+            return;
         normalKey(key);
         return;
     }
@@ -847,7 +885,7 @@ void App::toggleShell()
     connect(m_shell, &Shell::changed, this, &App::changed);
     connect(m_shell, &Shell::finished, this, &App::closeShell, Qt::QueuedConnection);
     const int paneHeight = m_lastHeight - 3;
-    if (!m_shell->start(folder, qMax(2, qMin(paneHeight / 2, paneHeight - 4)) - 1, m_lastWidth)) {
+    if (!m_shell->start(folder, shellHeightFor(paneHeight) - 1, m_lastWidth - m_sideWidth - m_previewWidth)) {
         delete m_shell;
         m_shell = nullptr;
         say(QStringLiteral("The shell could not be started"));
@@ -872,8 +910,32 @@ void App::closeShell()
     emit changed();
 }
 
+// The first line of items a pane shows. The cursor comes along only when it
+// would be out of sight (as with the wheel).
+void App::scrollTo(Pane &p, int top)
+{
+    const int count = rowCount(p);
+    const int per = perLine(p);
+    const int lines = (count + per - 1) / per;
+    p.top = qBound(0, top, qMax(0, lines - p.rowsShown));
+    if (count > 0) {
+        const int line = qBound(p.top, p.cursor / per, qMin(lines - 1, p.top + p.rowsShown - 1));
+        p.cursor = qMin(count - 1, line * per + p.cursor % per);
+    }
+    p.cursorPath = pathAt(p, p.cursor);
+    emit changed();
+}
+
 void App::mouse(const Mouse &mouse)
 {
+    if (m_mode == Mode::Help) {
+        // The wheel moves through a help longer than the screen.
+        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
+            m_helpTop = qBound(0, m_helpTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, m_helpLines - m_helpShown));
+            emit changed();
+        }
+        return;
+    }
     if (m_mode != Mode::Normal)
         return; // a question is answered with the keyboard, deliberately
     // The key line: a click on "F5 Copy" is F5.
@@ -886,10 +948,54 @@ void App::mouse(const Mouse &mouse)
         }
         return;
     }
+    // The sidebar: a click on a place opens it in the pane you are in (its
+    // ⏏ disconnects, where an extension offers that); the wheel scrolls.
+    if (m_sideWidth > 0 && mouse.x < m_sideWidth && mouse.y >= m_sideY - 1 && mouse.y < m_sideY + m_sideShown
+) {
+        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
+            m_sideTop = qBound(0, m_sideTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_sideRows.size()) - m_sideShown));
+            emit changed();
+            return;
+        }
+        const int row = m_sideTop + (mouse.y - m_sideY);
+        if (mouse.kind != Mouse::Press || mouse.y < m_sideY || row < 0 || row >= m_sideRows.size() || m_sideRows.at(row) < 0)
+            return;
+        const int entry = m_sideRows.at(row);
+        m_inShell = false;
+        m_sideCursor = row;
+        const Places::Entry &place = m_places.at(entry);
+        if (place.eject && !place.extensionPlace.isEmpty() && mouse.x >= m_sideWidth - 4) {
+            Extensions::Host::instance()->activatePlace(place.extensionPlace, QStringLiteral("eject"));
+            emit changed();
+            return;
+        }
+        openPlace(entry);
+        return;
+    }
     // The shell panel: a click goes there to type. (The shell's programs
     // don't get the mouse.)
-    if (m_shell && mouse.y >= m_shellY && mouse.y < m_shellY + m_shellHeight) {
+    // The preview: the wheel scrolls it, a click on its scrollbar goes to
+    // that part, a click elsewhere in it gives it the keys.
+    if (m_previewWidth > 0 && mouse.x >= m_previewX) {
+        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
+            scrollPreview(m_previewTop + (mouse.kind == Mouse::WheelUp ? -3 : 3));
+        } else if (mouse.kind == Mouse::Press) {
+            const int most = qMax(0, m_previewTotal - m_previewShown);
+            if (mouse.x == m_previewX + m_previewWidth - 1 && most > 0 && mouse.y >= m_previewY && mouse.y < m_previewY + m_previewShown) {
+                scrollPreview(m_previewShown > 1 ? int(qint64(mouse.y - m_previewY) * most / (m_previewShown - 1)) : 0);
+            } else {
+                m_inShell = false;
+                m_inSidebar = false;
+                m_inPreview = true;
+                emit changed();
+            }
+        }
+        return;
+    }
+    if (m_shell && mouse.x >= m_shellX && mouse.y >= m_shellY && mouse.y < m_shellY + m_shellHeight) {
         if (mouse.kind == Mouse::Press && !m_inShell) {
+            m_inSidebar = false;
+            m_inPreview = false;
             m_inShell = true;
             emit changed();
         }
@@ -899,6 +1005,10 @@ void App::mouse(const Mouse &mouse)
         Pane &p = m_panes[i];
         if (mouse.x < p.x || mouse.x >= p.x + p.width)
             continue;
+        if (mouse.kind != Mouse::WheelUp && mouse.kind != Mouse::WheelDown) {
+            m_inSidebar = false; // a click in a pane: the keys are the files' again
+            m_inPreview = false;
+        }
         if (m_inShell && mouse.kind != Mouse::WheelUp && mouse.kind != Mouse::WheelDown) {
             // Out of the shell, back to the files.
             m_inShell = false;
@@ -909,17 +1019,21 @@ void App::mouse(const Mouse &mouse)
         if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
             // The list moves under the pointer; the cursor comes along only
             // when it would leave the screen.
-            const int count = rowCount(p);
-            const int per = perLine(p);
-            const int lines = (count + per - 1) / per;
             const int step = p.lineHeight > 1 ? 1 : 3; // a line of big icons is a screenful's third already
-            p.top = qBound(0, p.top + (mouse.kind == Mouse::WheelUp ? -step : step), qMax(0, lines - p.rowsShown));
-            if (count > 0) {
-                const int line = qBound(p.top, p.cursor / per, qMin(lines - 1, p.top + p.rowsShown - 1));
-                p.cursor = qMin(count - 1, line * per + p.cursor % per);
-            }
-            p.cursorPath = pathAt(p, p.cursor);
-            emit changed();
+            scrollTo(p, p.top + (mouse.kind == Mouse::WheelUp ? -step : step));
+            return;
+        }
+        // The scrollbar: a click on it goes to that part of the folder.
+        if (mouse.kind == Mouse::Press && p.barHeight > 0 && mouse.x == p.x + p.width - 1 && mouse.y >= p.barY
+            && mouse.y < p.barY + p.barHeight) {
+            if (m_inShell)
+                m_inShell = false;
+            m_active = i;
+            const int per = perLine(p);
+            const int lines = (rowCount(p) + per - 1) / per;
+            const int most = qMax(0, lines - p.rowsShown);
+            // The top of the bar is the start, its bottom the end.
+            scrollTo(p, p.barHeight > 1 ? int(qint64(mouse.y - p.barY) * most / (p.barHeight - 1)) : 0);
             return;
         }
         const bool wasActive = m_active == i;
@@ -1019,12 +1133,7 @@ void App::normalKey(const Key &key)
         goUp();
         return;
     case Key::Tab:
-        if (!m_split) {
-            say(QStringLiteral("There is one pane. F4 opens a second one."));
-            return;
-        }
-        m_active = 1 - m_active;
-        emit changed();
+        nextArea(key.shift);
         return;
     case Key::F4:
         setSplit(!m_split);
@@ -1052,6 +1161,7 @@ void App::normalKey(const Key &key)
         }
         return;
     case Key::F1:
+        m_helpTop = 0;
         m_mode = Mode::Help;
         emit changed();
         return;
@@ -1059,7 +1169,7 @@ void App::normalKey(const Key &key)
         rename();
         return;
     case Key::F3:
-        viewFile(cursorPath());
+        setPreviewShown(!m_preview);
         return;
     case Key::F5:
         transfer(false);
@@ -1101,6 +1211,8 @@ void App::normalKey(const Key &key)
         emit changed();
     } else if (key.isControl('l') || key.isChar('g')) {
         goTo();
+    } else if (key.isControl('b')) {
+        setSidebarShown(!m_sidebar);
     } else if (key.isControl('r')) {
         p.model->refresh();
         Extensions::Host::instance()->refreshAll();
@@ -1145,38 +1257,510 @@ void App::render(Screen &screen)
     m_lastWidth = w;
     m_lastHeight = h;
     int paneHeight = h - 3; // top bar above; message and key lines below
-    // The shell panel takes the lower half.
-    const int shellHeight = m_shell ? qMax(2, qMin(paneHeight / 2, paneHeight - 4)) : 0;
+    // The shell panel takes the lower third or so.
+    const int shellHeight = m_shell ? shellHeightFor(paneHeight) : 0;
     paneHeight -= shellHeight;
+    // The sidebar at the left, where there is room for it beside the files.
+    m_sideWidth = m_sidebar && w >= 64 ? 22 : 0;
+    if (m_sideWidth > 0)
+        drawSidebar(screen, 1, paneHeight + shellHeight); // its whole height: the terminal is under the files only
+    else
+        m_inSidebar = false;
+    const int x0 = m_sideWidth;
+    // The preview at the right, over the whole height like the places (the
+    // terminal is under the files only), where the files still have room.
+    m_previewWidth = m_preview && w - x0 >= 70 ? qMax(30, (w - x0) * 2 / 5) : 0;
+    if (m_previewWidth == 0)
+        m_inPreview = false;
+    const int right = w - m_previewWidth; // where the files end
     if (!m_split) {
         other().width = 0; // not on screen: the mouse can't reach it
-        drawPane(screen, m_active, 0, w, 1, paneHeight);
+        drawPane(screen, m_active, x0, right - x0, 1, paneHeight);
     } else {
-        const int left = (w - 1) / 2;
-        drawPane(screen, 0, 0, left, 1, paneHeight);
+        const int left = x0 + (right - x0 - 1) / 2;
+        drawPane(screen, 0, x0, left - x0, 1, paneHeight);
         for (int y = 1; y < 1 + paneHeight; ++y)
             screen.put(left, y, QStringLiteral("│"), kDim);
-        drawPane(screen, 1, left + 1, w - left - 1, 1, paneHeight);
+        drawPane(screen, 1, left + 1, right - left - 1, 1, paneHeight);
+    }
+    if (m_previewWidth > 0) {
+        syncPreview();
+        drawPreview(screen, right, m_previewWidth, 1, paneHeight + shellHeight);
     }
     if (m_shell)
-        drawShell(screen, 1 + paneHeight, shellHeight);
+        drawShell(screen, x0, right, 1 + paneHeight, shellHeight);
     drawBottom(screen);
     if (m_shell && m_inShell && m_mode == Mode::Normal) {
         int x = 0, y = 0;
         if (m_shell->cursor(&x, &y) && y < shellHeight - 1)
-            screen.setCursor(x, m_shellY + 1 + y);
+            screen.setCursor(m_shellX + x, m_shellY + 1 + y);
+    }
+}
+
+// ------------------------------------------------------------- sidebar ---
+
+void App::refreshPlaces()
+{
+    if (!m_sidebar)
+        return;
+    const QList<Places::Entry> now = Places::list();
+    bool same = now.size() == m_places.size();
+    for (int i = 0; same && i < now.size(); ++i)
+        same = now.at(i).name == m_places.at(i).name && now.at(i).path == m_places.at(i).path && now.at(i).eject == m_places.at(i).eject;
+    if (same)
+        return;
+    m_places = now;
+    emit changed();
+}
+
+void App::setSidebarShown(bool on)
+{
+    m_sidebar = on;
+    m_inSidebar = false;
+    QSettings().setValue(QStringLiteral("tui/sidebar"), on);
+    if (on)
+        refreshPlaces();
+    emit changed();
+}
+
+// The places, as the window's sidebar has them: a row each, a line between
+// the groups, the open folder's row marked. One column of the screen's left.
+void App::drawSidebar(Screen &screen, int top, int height)
+{
+    if (m_places.isEmpty())
+        m_places = Places::list();
+    const int width = m_sideWidth - 1; // the last column is the line to the files
+    m_sideRows.clear();
+    for (int i = 0; i < m_places.size(); ++i) {
+        if (i > 0 && m_places.at(i).group != m_places.at(i - 1).group)
+            m_sideRows.append(-1);
+        m_sideRows.append(i);
+    }
+    const Style heading{m_inSidebar ? Ink::Accent : Ink::Dim, Paper::Normal, m_inSidebar};
+    screen.put(1, top, QStringLiteral("Places"), heading);
+    for (int y = top; y < top + height; ++y)
+        screen.put(m_sideWidth - 1, y, QStringLiteral("│"), kDim);
+
+    const int rows = qMax(1, height - 1);
+    m_sideY = top + 1;
+    m_sideShown = rows;
+    const int count = int(m_sideRows.size());
+    m_sideCursor = count == 0 ? 0 : qBound(0, m_sideCursor, count - 1);
+    if (m_inSidebar) {
+        if (m_sideCursor < m_sideTop)
+            m_sideTop = m_sideCursor;
+        if (m_sideCursor >= m_sideTop + rows)
+            m_sideTop = m_sideCursor - rows + 1;
+    }
+    m_sideTop = qBound(0, m_sideTop, qMax(0, count - rows));
+    const QString open = pane().current;
+    for (int i = 0; i < rows && m_sideTop + i < count; ++i) {
+        const int y = m_sideY + i;
+        const int entry = m_sideRows.at(m_sideTop + i);
+        if (entry < 0) {
+            screen.put(1, y, QString(width - 2, QChar(0x2500)), kDim);
+            continue;
+        }
+        const Places::Entry &place = m_places.at(entry);
+        const bool here = !open.isEmpty() && place.path == open; // where the pane is
+        const bool cursor = m_inSidebar && m_sideTop + i == m_sideCursor;
+        Style style;
+        style.paper = cursor ? Paper::Cursor : here ? Paper::CursorIdle : Paper::Normal;
+        style.ink = place.group == Places::Group::Standard || place.group == Places::Group::Bookmarks ? Ink::Normal : Ink::Folder;
+        style.bold = here;
+        screen.fill(0, y, width, 1, style);
+        const int room = width - 2 - (place.eject ? 2 : 0);
+        screen.put(1, y, Screen::elided(place.name, room, false), style);
+        if (place.eject)
+            screen.put(width - 2, y, QStringLiteral("⏏"), {cursor ? Ink::Normal : Ink::Dim, style.paper, false});
+    }
+    // More places than fit: a mark at the bottom corner says so.
+    if (count > m_sideTop + rows)
+        screen.put(width - 1, m_sideY + rows - 1, QStringLiteral("↓"), kDim);
+    if (m_sideTop > 0)
+        screen.put(width - 1, m_sideY, QStringLiteral("↑"), kDim);
+}
+
+// A place chosen: the pane you are in goes there. A row of an extension's
+// that isn't a folder (yet) is its extension's to answer.
+void App::openPlace(int entry)
+{
+    if (entry < 0 || entry >= m_places.size())
+        return;
+    const Places::Entry place = m_places.at(entry);
+    m_inSidebar = false;
+    if (Extensions::Host::isPlacePath(place.path)) {
+        Extensions::Host::instance()->activatePlace(place.path, QStringLiteral("open"));
+        emit changed();
+        return;
+    }
+    navigate(pane(), place.path);
+    emit changed();
+}
+
+bool App::sidebarKey(const Key &key)
+{
+    const int count = int(m_sideRows.size());
+    // Up and down, over the lines between the groups.
+    auto move = [&](int to, int step) {
+        to = qBound(0, to, qMax(0, count - 1));
+        while (to >= 0 && to < count && m_sideRows.at(to) < 0)
+            to += step;
+        if (to >= 0 && to < count)
+            m_sideCursor = to;
+        emit changed();
+    };
+    switch (key.code) {
+    case Key::Up: move(m_sideCursor - 1, -1); return true;
+    case Key::Down: move(m_sideCursor + 1, 1); return true;
+    case Key::PageUp: move(m_sideCursor - qMax(1, m_sideShown - 1), 1); return true;
+    case Key::PageDown: move(m_sideCursor + qMax(1, m_sideShown - 1), -1); return true;
+    case Key::Home: move(0, 1); return true;
+    case Key::End: move(count - 1, -1); return true;
+    case Key::Enter:
+    case Key::Right:
+        if (m_sideCursor < count)
+            openPlace(m_sideRows.at(m_sideCursor));
+        return true;
+    case Key::Left:
+    case Key::Escape:
+    case Key::Backspace:
+        m_inSidebar = false; // back to the files
+        emit changed();
+        return true;
+    case Key::Delete: {
+        const int entry = m_sideCursor < count ? m_sideRows.at(m_sideCursor) : -1;
+        if (entry >= 0 && m_places.at(entry).eject && !m_places.at(entry).extensionPlace.isEmpty())
+            Extensions::Host::instance()->activatePlace(m_places.at(entry).extensionPlace, QStringLiteral("eject"));
+        return true;
+    }
+    case Key::Tab:
+    case Key::F1:
+    case Key::F4:
+    case Key::F10:
+        return false; // these mean the same everywhere
+    case Key::Char:
+        // Quitting and the sidebar's own switch; other letters do nothing
+        // here (they would act on files that aren't what the keys are on).
+        return !(key.isChar('q') || key.isControl('q') || key.isControl('b'));
+    default:
+        return true;
+    }
+}
+
+// Tab: the next of the panes and the sidebar (Shift+Tab: the one before).
+void App::nextArea(bool backwards)
+{
+    QList<int> areas; // -1: the sidebar; 0, 1: the panes; 2: the preview
+    if (m_sideWidth > 0)
+        areas << -1;
+    areas << 0;
+    if (m_split)
+        areas << 1;
+    if (m_previewWidth > 0)
+        areas << 2;
+    if (areas.size() == 1) {
+        say(QStringLiteral("There is one pane. F4 opens a second one."));
+        return;
+    }
+    const int now = int(areas.indexOf(m_inSidebar ? -1 : m_inPreview ? 2 : m_active));
+    const int next = areas.at((now + (backwards ? areas.size() - 1 : 1)) % areas.size());
+    m_inSidebar = next < 0;
+    m_inPreview = next == 2;
+    if (m_inPreview) {
+        say(QStringLiteral("Preview: the arrows and PgUp/PgDn scroll it, Tab goes on, F3 closes it"));
+        emit changed();
+        return;
+    }
+    if (m_inSidebar) {
+        // Onto the open folder's row, if it has one.
+        for (int row = 0; row < m_sideRows.size(); ++row) {
+            const int entry = m_sideRows.at(row);
+            if (entry >= 0 && m_places.at(entry).path == pane().current)
+                m_sideCursor = row;
+        }
+        if (m_sideCursor < m_sideRows.size() && m_sideRows.at(m_sideCursor) < 0)
+            ++m_sideCursor;
+        say(QStringLiteral("Places: Enter opens one in the pane, Tab goes on to the files"));
+    } else {
+        m_active = next;
+    }
+    emit changed();
+}
+
+// ------------------------------------------------------------- preview ---
+
+namespace {
+
+// A colour as one of the terminal's 256: the 6×6×6 cube, or a grey.
+qint16 nearest256(QRgb c)
+{
+    const int r = qRed(c), g = qGreen(c), b = qBlue(c);
+    if (qAbs(r - g) < 12 && qAbs(g - b) < 12) {
+        if (r < 8)
+            return 16;
+        if (r > 238)
+            return 231;
+        return qint16(232 + (r - 8) / 10);
+    }
+    auto level = [](int v) { return v < 48 ? 0 : v < 115 ? 1 : (v - 35) / 40; };
+    return qint16(16 + 36 * level(r) + 6 * level(g) + level(b));
+}
+
+// A line of text as the lines it takes in `width` cells (cut where it
+// must be; a tab is four spaces).
+void wrapInto(QStringList *out, QString line, int width)
+{
+    line.replace(QLatin1Char('\t'), QStringLiteral("    "));
+    if (line.isEmpty()) {
+        out->append(QString());
+        return;
+    }
+    while (!line.isEmpty()) {
+        int used = 0;
+        qsizetype at = 0;
+        while (at < line.size()) {
+            const qsizetype step = line.at(at).isHighSurrogate() && at + 1 < line.size() ? 2 : 1;
+            const int cells = Screen::widthOf(line.mid(at, step));
+            if (used + cells > width)
+                break;
+            used += cells;
+            at += step;
+        }
+        if (at == 0)
+            at = 1; // a character wider than the pane: still moves on
+        out->append(line.left(at));
+        line = line.mid(at);
+    }
+}
+
+} // namespace
+
+void App::setPreviewShown(bool on)
+{
+    m_preview = on;
+    m_inPreview = false;
+    if (!on) {
+        ++m_previewRequest; // an answer still on its way is dropped
+        m_previewPath.clear();
+        m_previewLoading = false;
+        m_previewLines.clear();
+        m_previewImage = QImage();
+    }
+    emit changed();
+}
+
+void App::scrollPreview(int top)
+{
+    m_previewTop = qBound(0, top, qMax(0, m_previewTotal - m_previewShown));
+    emit changed();
+}
+
+// The preview is of the item under the cursor of the pane you are in: when
+// that is another item, it is loaded (Preview::load: the same rules as the
+// window's preview; a program in disguise is never opened) on another
+// thread. Nothing is run on the file; without a thumbnailer only what Qt
+// reads itself becomes a picture.
+void App::syncPreview()
+{
+    const Pane &p = pane();
+    const QString path = cursorPath();
+    if (path == m_previewPath)
+        return;
+    m_previewPath = path;
+    const quint64 request = ++m_previewRequest;
+    m_previewTop = 0;
+    m_previewLines.clear();
+    m_previewWrapWidth = -1;
+    m_previewImage = QImage();
+    m_previewWarning = false;
+    m_previewInfo.clear();
+    m_previewLoading = false;
+    if (path.isEmpty()) {
+        m_previewTitle = QStringLiteral("Preview");
+        m_previewLines = {upRows(p) == 1 && p.cursor == 0 ? QStringLiteral("Up to the folder this one is in.") : QStringLiteral("Nothing to preview.")};
+        return;
+    }
+    const QModelIndex index = p.model->indexForPath(path);
+    m_previewTitle = QFileInfo(path).fileName();
+    const bool dir = index.isValid() && p.model->isDir(index);
+    m_previewLoading = true;
+    // A picture has two "pixels" to the cell; asked for a few times that,
+    // so it can be made smaller smoothly.
+    const QSize box(qMax(40, m_previewWidth) * 4, qMax(20, m_lastHeight) * 8);
+    // What it really is, looked up here: the cache of types is this thread's.
+    QString mime = QStringLiteral("inode/directory");
+    ContentType::Verdict verdict = ContentType::Verdict::NotChecked;
+    if (!dir) {
+        const ContentType::Result type = typeOf(path);
+        verdict = type.verdict;
+        mime = ContentType::effectiveMime(type);
+    }
+    QPointer<App> self(this);
+    QThreadPool::globalInstance()->start([self, request, path, dir, box, mime, verdict] {
+        const QFileInfo info(path);
+        const Preview::Result result = Preview::load(path, mime, verdict, box, nullptr);
+        QStringList details;
+        details << (dir ? QStringLiteral("Folder") : QMimeDatabase().mimeTypeForName(mime).comment());
+        if (!dir)
+            details << formatSize(info.size());
+        if (result.kind == Preview::Kind::Image) {
+            const QSize size = QImageReader(path).size();
+            if (size.isValid())
+                details << QStringLiteral("%1 × %2").arg(size.width()).arg(size.height());
+        }
+        details.removeAll(QString());
+        QStringList lines;
+        bool warning = false;
+        switch (result.kind) {
+        case Preview::Kind::Text:
+            lines = result.text.split(QLatin1Char('\n'));
+            if (result.truncated)
+                lines << QString() << QStringLiteral("… (the start of the file; Enter opens all of it)");
+            break;
+        case Preview::Kind::Archive:
+            for (const FileJob::ArchiveEntry &entry : result.entries)
+                lines << (entry.isDir ? entry.path + QLatin1Char('/') : QStringLiteral("%1   %2").arg(entry.path, formatSize(entry.size)));
+            if (result.truncated)
+                lines << QString() << QStringLiteral("… and %1 more").arg(result.total - int(result.entries.size()));
+            details << (result.total == 1 ? QStringLiteral("1 item inside") : QStringLiteral("%1 items inside").arg(result.total));
+            break;
+        case Preview::Kind::Folder:
+            lines << (result.items < 0 ? QStringLiteral("A folder.")
+                                       : result.items == 1 ? QStringLiteral("1 item inside.") : QStringLiteral("%1 items inside.").arg(result.items));
+            break;
+        case Preview::Kind::Blocked:
+            warning = true;
+            lines << QStringLiteral("This is a program disguised as a document.") << QString()
+                  << QStringLiteral("Argonaut doesn't preview it and won't open it.");
+            break;
+        case Preview::Kind::Image:
+            break;
+        case Preview::Kind::Generic:
+            lines << QStringLiteral("No preview for this kind of file.");
+            break;
+        }
+        const QImage image = result.kind == Preview::Kind::Image ? result.image.convertToFormat(QImage::Format_RGB32) : QImage();
+        QMetaObject::invokeMethod(qApp, [self, request, details, lines, warning, image] {
+            if (!self || request != self->m_previewRequest)
+                return; // the cursor has moved on
+            self->m_previewLoading = false;
+            self->m_previewInfo = details.join(QStringLiteral(" · "));
+            self->m_previewLines = lines;
+            self->m_previewWarning = warning;
+            self->m_previewImage = image;
+            self->m_previewWrapWidth = -1;
+            emit self->changed();
+        }, Qt::QueuedConnection);
+    });
+}
+
+// The preview pane: the item's name, what it is, then its content with a
+// scrollbar: text as lines (long ones go on to the next), an archive's
+// entries, or a picture made of half blocks, two "pixels" to the cell.
+void App::drawPreview(Screen &screen, int x, int width, int top, int height)
+{
+    m_previewX = x;
+    for (int y = top; y < top + height; ++y)
+        screen.put(x, y, QStringLiteral("│"), kDim);
+    const int inner = qMax(1, width - 3); // the line at the left, a margin, the scrollbar
+    const Style heading{m_inPreview ? Ink::Accent : Ink::Normal, Paper::Normal, true};
+    screen.put(x + 2, top, Screen::elided(m_previewTitle, inner), heading);
+    screen.put(x + 2, top + 1, Screen::elided(m_previewLoading ? QStringLiteral("Loading…") : m_previewInfo, inner, false), kDim);
+    const int rows = qMax(1, height - 4); // name, details, a gap; a line at the bottom
+    const int contentY = top + 3;
+    m_previewY = contentY;
+    m_previewShown = rows;
+    m_previewTotal = 0;
+
+    if (!m_previewImage.isNull()) {
+        // Every cell is "▀": the upper half in the text colour, the lower
+        // in the background's. Coarse, but it is the picture.
+        const QImage small = m_previewImage.scaled(inner, rows * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        const int offsetX = (inner - small.width()) / 2;
+        for (int cy = 0; cy * 2 < small.height() && cy < rows; ++cy) {
+            for (int cx = 0; cx < small.width(); ++cx) {
+                Cell cell;
+                cell.ch = 0x2580;
+                cell.style.raw = true;
+                cell.style.fg = nearest256(small.pixel(cx, cy * 2));
+                cell.style.bg = cy * 2 + 1 < small.height() ? nearest256(small.pixel(cx, cy * 2 + 1)) : -1;
+                screen.set(x + 2 + offsetX + cx, contentY + cy, cell);
+            }
+        }
+        screen.put(x + 2, top + height - 1, QStringLiteral("a rough picture: Enter opens the real one"), kDim, inner);
+        return;
+    }
+    if (m_previewWrapWidth != inner) {
+        m_previewWrapped.clear();
+        for (const QString &line : std::as_const(m_previewLines))
+            wrapInto(&m_previewWrapped, line, inner);
+        m_previewWrapWidth = inner;
+    }
+    const int count = int(m_previewWrapped.size());
+    m_previewTotal = count;
+    m_previewTop = qBound(0, m_previewTop, qMax(0, count - rows));
+    const Style text{m_previewWarning ? Ink::Bad : Ink::Normal, Paper::Normal, m_previewWarning};
+    for (int i = 0; i < rows && m_previewTop + i < count; ++i)
+        screen.put(x + 2, contentY + i, m_previewWrapped.at(m_previewTop + i), text, inner);
+    if (count > rows) {
+        // The scrollbar, and where we are.
+        const int thumb = qBound(1, rows * rows / count, rows - 1);
+        const int at = (rows - thumb) * m_previewTop / (count - rows);
+        for (int i = 0; i < rows; ++i) {
+            const bool on = i >= at && i < at + thumb;
+            screen.put(x + width - 1, contentY + i, on ? QStringLiteral("█") : QStringLiteral("│"),
+                       {on ? (m_inPreview ? Ink::Accent : Ink::Normal) : Ink::Dim, Paper::Normal, false});
+        }
+        screen.put(x + 2, top + height - 1, QStringLiteral("lines %1–%2 of %3").arg(m_previewTop + 1).arg(qMin(count, m_previewTop + rows)).arg(count),
+                   kDim, inner);
+    }
+}
+
+bool App::previewKey(const Key &key)
+{
+    const int page = qMax(1, m_previewShown - 1);
+    switch (key.code) {
+    case Key::Up: scrollPreview(m_previewTop - 1); return true;
+    case Key::Down: scrollPreview(m_previewTop + 1); return true;
+    case Key::PageUp: scrollPreview(m_previewTop - page); return true;
+    case Key::PageDown: scrollPreview(m_previewTop + page); return true;
+    case Key::Home: scrollPreview(0); return true;
+    case Key::End: scrollPreview(m_previewTotal); return true;
+    case Key::Left:
+    case Key::Escape:
+    case Key::Backspace:
+        m_inPreview = false; // back to the files
+        emit changed();
+        return true;
+    case Key::Tab:
+    case Key::F1:
+    case Key::F3:
+    case Key::F4:
+    case Key::F10:
+        return false; // these mean the same everywhere
+    case Key::Char:
+        if (key.isChar(' ')) { // a page on, as in a pager
+            scrollPreview(m_previewTop + page);
+            return true;
+        }
+        return !(key.isChar('q') || key.isControl('q') || key.isControl('b'));
+    default:
+        return true;
     }
 }
 
 // The shell panel: a title line, then what the shell shows.
-void App::drawShell(Screen &screen, int y, int height)
+void App::drawShell(Screen &screen, int left, int w, int y, int height)
 {
-    const int w = screen.width();
+    // Under the files only, as in the window: the places and the preview
+    // keep their height. `w`: where the files' area ends.
+    m_shellX = left;
     m_shellY = y;
     m_shellHeight = height;
-    screen.fill(0, y, w, height, Style());
-    screen.fill(0, y, w, 1, kBar);
-    int x = 1 + screen.put(1, y, QStringLiteral("Terminal"), {m_inShell ? Ink::Accent : Ink::Dim, Paper::Bar, m_inShell});
+    screen.fill(left, y, w - left, height, Style());
+    screen.fill(left, y, w - left, 1, kBar);
+    int x = left + 1 + screen.put(left + 1, y, QStringLiteral("Terminal"), {m_inShell ? Ink::Accent : Ink::Dim, Paper::Bar, m_inShell});
     const QString hint = m_inShell ? QStringLiteral("F12 back to the files · Ctrl+Up files come here · exit closes")
                                    : QStringLiteral("F12 or a click to type here");
     const int hintWidth = Screen::widthOf(hint);
@@ -1186,14 +1770,14 @@ void App::drawShell(Screen &screen, int y, int height)
         screen.put(x + 1, y, Screen::elided(shown(folder), w - x - 3 - (hintFits ? hintWidth + 2 : 0)), {Ink::Dim, Paper::Bar, false});
     if (hintFits)
         screen.put(w - 1 - hintWidth, y, hint, {Ink::Dim, Paper::Bar, false});
-    m_shell->resize(height - 1, w);
-    m_shell->draw(screen, 0, y + 1);
+    m_shell->resize(height - 1, w - left);
+    m_shell->draw(screen, left, y + 1);
 }
 
 void App::drawPane(Screen &screen, int index, int x, int width, int top, int height)
 {
     Pane &p = m_panes[index];
-    const bool active = index == m_active && !m_inShell;
+    const bool active = index == m_active && !m_inShell && !m_inSidebar && !m_inPreview;
     p.x = x;
     p.width = width;
     p.rowsY = top + 2;
@@ -1298,6 +1882,7 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
     }
     if (items == 0)
         screen.put(x + 2, top + 2 + up, p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
+    drawScrollbar(screen, p, active, x + width - 1, top + 2, rows, count, rows);
 
     QString footer = footerText(p);
     if (count > rows)
@@ -1404,8 +1989,29 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
     }
     if (items == 0)
         screen.put(x + 2, p.rowsY + (up ? 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
+    drawScrollbar(screen, p, active, x + width - 1, p.rowsY, lines, totalLines, lines);
 
     drawGridFooter(screen, p, x, width, top + height - 1, totalLines, lines);
+}
+
+// The scrollbar: a thin line down the right edge with a thick part for what
+// is on screen, only when there is more than fits.
+void App::drawScrollbar(Screen &screen, Pane &p, bool active, int x, int y, int height, int total, int shown)
+{
+    p.barY = y;
+    p.barHeight = 0;
+    if (total <= shown || height < 2 || shown < 1)
+        return;
+    p.barHeight = height;
+    const int thumb = qBound(1, int(qint64(height) * shown / total), height - 1);
+    const int most = total - shown;
+    const int at = most > 0 ? int(qint64(height - thumb) * qBound(0, p.top, most) / most) : 0;
+    const Style track{Ink::Dim, Paper::Normal, false};
+    const Style handle{active ? Ink::Accent : Ink::Dim, Paper::Normal, false};
+    for (int i = 0; i < height; ++i) {
+        const bool on = i >= at && i < at + thumb;
+        screen.put(x, y + i, on ? QStringLiteral("█") : QStringLiteral("│"), on ? handle : track);
+    }
 }
 
 void App::drawGridFooter(Screen &screen, const Pane &p, int x, int width, int y, int totalLines, int lines)
@@ -1623,6 +2229,7 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
     }
     if (items == 0)
         screen.put(x + 2, p.rowsY + (up ? CellHeight + 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
+    drawScrollbar(screen, p, active, x + width - 1, p.rowsY, lines * CellHeight + 1, totalLines, lines);
 
     drawGridFooter(screen, p, x, width, top + height - 1, totalLines, lines);
 }
@@ -1701,9 +2308,11 @@ void App::drawBottom(Screen &screen)
         const char *key;
         const char *what;
         Key::Code code;
-    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "View", Key::F3}, {"F4", "Split", Key::F4},
+    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "Preview", Key::F3}, {"F4", "Split", Key::F4},
                 {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6}, {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8},
-                {"F9", "Grid", Key::F9}, {"F10", "Quit", Key::F10}, {"F12", "Terminal", Key::F12}};
+                {"F9", "Grid", Key::F9}, {"q", "Quit", Key::F10}, {"F12", "Terminal", Key::F12}};
+    // "q", not "F10": GNOME Terminal keeps F10 for its own menu, so there it
+    // never arrives. (F10 and Ctrl+Q quit too, where they get through.)
     bool tight = false; // short words, where the line is too narrow for the usual ones
     auto labelOf = [this, &tight](Key::Code code, const char *what) {
         if (code == Key::F4 && m_split)
@@ -1756,13 +2365,16 @@ void App::drawHelp(Screen &screen)
         "",
         "  Up, Down, PgUp, PgDn, Home, End   move",
         "  Enter, Right                      open the folder, or the file with its app",
-        "  F3                                read a text file here in the terminal",
+        "  F3                                the preview at the right: what is in the file under the cursor",
+        "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
         "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it)",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",
         "  F4                                a second pane beside this one, or back to one",
-        "  Tab                               the other pane",
+        "  Tab, Shift+Tab                    the next of the panes and the places at the left",
+        "  Ctrl+B                            show or hide the places at the left",
+        "                                    (in them: Up, Down, Enter opens one in the pane; a click does too)",
         "  F9                                this pane as a list, a grid of names, or big icons",
         "                                    (in a grid the arrows move four ways; Enter opens, Backspace goes up)",
         "  g  or  Ctrl+L                     go to a folder (\"trash\" for the Trash)",
@@ -1780,7 +2392,7 @@ void App::drawHelp(Screen &screen)
         "  D, Shift+Delete                   delete forever (asks first)",
         "  Ctrl+Z / Ctrl+Y                   undo / redo",
         "",
-        "  F10, q                            quit",
+        "  q, Ctrl+Q, F10                    quit (some terminals keep F10 for their own menu)",
         "",
         "  Mouse: click a row to go to it, double-click to open it (.. or the folder's",
         "  name at the top: up), right-click to select, wheel to scroll, click a word on the",
@@ -1790,12 +2402,26 @@ void App::drawHelp(Screen &screen)
         "",
         "Press any key.",
     };
-    int y = 1;
-    for (const char *line : lines) {
-        if (y >= screen.height())
-            break;
-        screen.put(2, y, QString::fromUtf8(line), y == 1 ? Style{Ink::Accent, Paper::Normal, true} : Style());
-        ++y;
+    // More lines than the screen has: it scrolls, with a scrollbar, and the
+    // last line says how.
+    const int count = int(std::size(lines));
+    const int room = qMax(1, screen.height() - 2);
+    m_helpLines = count;
+    m_helpShown = qMin(room, count);
+    m_helpTop = qBound(0, m_helpTop, qMax(0, count - room));
+    for (int i = 0; i < room && m_helpTop + i < count; ++i) {
+        const int line = m_helpTop + i;
+        screen.put(2, 1 + i, QString::fromUtf8(lines[line]), line == 0 ? Style{Ink::Accent, Paper::Normal, true} : Style());
+    }
+    if (count > room) {
+        const int x = screen.width() - 1;
+        const int thumb = qBound(1, room * room / count, room - 1);
+        const int at = (room - thumb) * m_helpTop / (count - room);
+        for (int i = 0; i < room; ++i) {
+            const bool on = i >= at && i < at + thumb;
+            screen.put(x, 1 + i, on ? QStringLiteral("█") : QStringLiteral("│"), {on ? Ink::Accent : Ink::Dim, Paper::Normal, false});
+        }
+        screen.put(2, screen.height() - 1, QStringLiteral("Up, Down, PgUp, PgDn or the wheel: more · any other key: back"), kDim);
     }
 }
 

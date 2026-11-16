@@ -1,6 +1,7 @@
 #include "Sidebar.h"
 
 #include "Extensions.h"
+#include "Places.h"
 
 #include "Bookmarks.h"
 #include "DirectoryModel.h"
@@ -171,105 +172,47 @@ void Sidebar::refresh()
     const int scroll = verticalScrollBar()->value();
     clear();
 
-    const struct {
-        QStandardPaths::StandardLocation loc;
-        const char *name;
-        Glyph glyph;
-    } places[] = {
-        {QStandardPaths::HomeLocation, QT_TR_NOOP("Home"), Glyph::Home},
-        {QStandardPaths::DesktopLocation, QT_TR_NOOP("Desktop"), Glyph::Desktop},
-        {QStandardPaths::DocumentsLocation, QT_TR_NOOP("Documents"), Glyph::Documents},
-        {QStandardPaths::DownloadLocation, QT_TR_NOOP("Downloads"), Glyph::Downloads},
-        {QStandardPaths::MusicLocation, QT_TR_NOOP("Music"), Glyph::Music},
-        {QStandardPaths::PicturesLocation, QT_TR_NOOP("Pictures"), Glyph::Pictures},
-        {QStandardPaths::MoviesLocation, QT_TR_NOOP("Videos"), Glyph::Videos},
-    };
-    addRow(tr("Recent"), DirectoryModel::recentPath(), Glyph::Recent, PlaceItem)->setToolTip(tr("Recently used files"));
-    addRow(tr("Starred"), DirectoryModel::starredPath(), Glyph::Star, PlaceItem)->setToolTip(tr("Starred files and folders"));
-    QStringList shown;
-    for (const auto &p : places) {
-        const QString path = QDir::cleanPath(QStandardPaths::writableLocation(p.loc));
-        if (path.isEmpty() || shown.contains(path) || !QFileInfo(path).isDir())
-            continue;
-        shown << path;
-        addRow(tr(p.name), path, p.glyph, PlaceItem);
-    }
-
-    if (Trash::isSupported()) {
-        // Shows every trash folder merged (home and removable drives).
-        const QString trash = Trash::homeFilesDir();
-        QDir().mkpath(trash);
-        QDir().mkpath(QFileInfo(trash).absolutePath() + QStringLiteral("/info"));
-        addRow(tr("Trash"), trash, Glyph::Trash, PlaceItem);
-    }
-
-    // Bookmarks (shared with Nautilus). Ones that duplicate a place above,
-    // or whose folder is gone, aren't shown (but stay in the file).
-    bool bookmarkSection = false;
-    for (const Bookmarks::Bookmark &b : Bookmarks::load()) {
-        if (shown.contains(b.path) || !QFileInfo(b.path).isDir())
-            continue;
-        if (!bookmarkSection) {
-            addSeparator();
-            bookmarkSection = true;
-        }
-        shown << b.path;
-        addRow(b.displayName(), b.path, Glyph::Folder, BookmarkItem);
-    }
-
-    addSeparator();
-
+    // What the places are is Places' business (shared with the terminal
+    // interface); here they become rows, with a line between the groups.
     m_lastMounts.clear();
-    for (const QStorageInfo &vol : QStorageInfo::mountedVolumes()) {
-        if (!vol.isValid() || !vol.isReady())
-            continue;
-        const QString root = vol.rootPath();
-        m_lastMounts << root;
-#if defined(Q_OS_LINUX)
-        // Skip system/snap mounts; keep "/" and user-visible drives.
-        if (root != "/" && !root.startsWith("/media/") && !root.startsWith("/mnt/")
-            && !root.startsWith("/run/media/"))
-            continue;
-#elif defined(Q_OS_MACOS)
-        if (root.startsWith("/System/Volumes"))
-            continue;
-#endif
-        const bool system = root == QDir::rootPath();
-        QListWidgetItem *item = addRow(system ? tr("Computer") : vol.displayName(), root,
-                                        system ? Glyph::Drive : Glyph::Removable, DriveItem);
-#if defined(Q_OS_LINUX)
-        // Drives mounted by the desktop (udisks) can be ejected.
-        if (root.startsWith("/media/") || root.startsWith("/run/media/")) {
-            item->setData(EjectRole, true);
-            item->setToolTip(QDir::toNativeSeparators(root) + QLatin1Char('\n') + tr("Eject: click ⏏"));
+    const QList<Places::Entry> entries = Places::list(&m_lastMounts);
+    bool first = true;
+    Places::Group group = Places::Group::Standard;
+    for (const Places::Entry &entry : entries) {
+        // Always a line before the drives, as there always was (the
+        // bookmarks may be none).
+        if (!first && entry.group != group)
+            addSeparator();
+        first = false;
+        group = entry.group;
+        Glyph glyph = Glyph::Folder;
+        switch (entry.icon) {
+        case Places::Icon::Recent: glyph = Glyph::Recent; break;
+        case Places::Icon::Star: glyph = Glyph::Star; break;
+        case Places::Icon::Home: glyph = Glyph::Home; break;
+        case Places::Icon::Desktop: glyph = Glyph::Desktop; break;
+        case Places::Icon::Documents: glyph = Glyph::Documents; break;
+        case Places::Icon::Downloads: glyph = Glyph::Downloads; break;
+        case Places::Icon::Music: glyph = Glyph::Music; break;
+        case Places::Icon::Pictures: glyph = Glyph::Pictures; break;
+        case Places::Icon::Videos: glyph = Glyph::Videos; break;
+        case Places::Icon::Trash: glyph = Glyph::Trash; break;
+        case Places::Icon::Folder: glyph = Glyph::Folder; break;
+        case Places::Icon::Drive: glyph = Glyph::Drive; break;
+        case Places::Icon::Removable: glyph = Glyph::Removable; break;
+        case Places::Icon::Network: glyph = Glyph::Network; break;
+        case Places::Icon::Cloud: glyph = Glyph::Cloud; break;
         }
-#else
-        Q_UNUSED(item)
-#endif
-    }
-
-    // Rows from extensions: a group of their own at the end. Connected
-    // servers, network bookmarks and "Connect to Server…" are the Connect
-    // to Server extension's; a cloud drive would be another's.
-    const QList<Extensions::Place> added = Extensions::Host::instance()->places();
-    if (!added.isEmpty())
-        addSeparator();
-    for (const Extensions::Place &place : added) {
-        const Glyph glyph = place.icon == QLatin1String("network") ? Glyph::Network
-                            : place.icon == QLatin1String("cloud") ? Glyph::Cloud
-                            : place.icon == QLatin1String("drive") ? Glyph::Drive
-                            : place.icon == QLatin1String("removable") ? Glyph::Removable : Glyph::Folder;
-        const QString address = Extensions::Host::placePath(place.extension, place.id);
-        QListWidgetItem *item = addRow(place.label, place.folder.isEmpty() ? address : place.folder, glyph, ExtensionItem);
-        item->setData(ExtensionRole, address);
-        item->setData(EjectRole, place.eject);
-        const QString from = Extensions::Host::instance()->nameOf(place.extension);
-        QString tip = place.tooltip.isEmpty() ? (place.folder.isEmpty() ? place.label : QDir::toNativeSeparators(place.folder)) : place.tooltip;
-        if (!from.isEmpty())
-            tip += QLatin1Char('\n') + tr("From the extension “%1”").arg(from);
-        if (place.eject)
-            tip += QLatin1Char('\n') + tr("Disconnect: click ⏏");
-        item->setToolTip(tip);
+        const Kind kind = entry.group == Places::Group::Bookmarks ? BookmarkItem
+                          : entry.group == Places::Group::Drives ? DriveItem
+                          : entry.group == Places::Group::Extensions ? ExtensionItem : PlaceItem;
+        QListWidgetItem *item = addRow(entry.name, entry.path, glyph, kind);
+        if (!entry.tooltip.isEmpty())
+            item->setToolTip(entry.tooltip);
+        if (entry.eject)
+            item->setData(EjectRole, true);
+        if (!entry.extensionPlace.isEmpty())
+            item->setData(ExtensionRole, entry.extensionPlace);
     }
     verticalScrollBar()->setValue(scroll);
     emit refreshed();

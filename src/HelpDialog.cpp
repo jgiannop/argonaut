@@ -631,19 +631,25 @@ repositories show their marks and branch.</p>
 <li><b>Moving:</b> the arrow keys, [[PgUp]] / [[PgDn]], [[Home]] / [[End]]. [[Enter]] opens a folder or a file
 (with its app; where there is no desktop, a text file is shown in the terminal). [[Backspace]], or Enter on
 <code>..</code>, goes up. [[g]] goes to a folder you type.</li>
+<li><b>Places:</b> the same list as this window's sidebar is at the left (Recent, Starred, Home and the other
+standard folders, the Trash, bookmarks, drives). Click one, or go to the list with [[Tab]], choose with the arrows and
+press [[Enter]]; it opens in the pane you were in. [[Ctrl+B]] hides or shows the list.</li>
 <li><b>Two panes:</b> [[F4]] shows a second pane beside the first, or goes back to one. [[Tab]] changes pane;
 [[F5]] copies and [[F6]] moves to the other pane.</li>
 <li><b>List, grid or big icons:</b> [[F9]] goes round three views of the pane: a list with sizes and dates, a
 grid of names, and big icons (a picture made of characters for every item, with its name under it and a frame
 round the one you are on).</li>
-<li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell in the lower half, in the pane's
+<li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell under the files (about a third of the height), in the pane's
 folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
 files to its folder and <code>exit</code> closes it.</li>
 <li><b>Files:</b> [[Space]] or [[Insert]] selects, [[F7]] makes a folder, [[F2]] renames, [[F8]] or [[Delete]]
 moves to the Trash, [[Shift+Delete]] deletes for good (it asks, and only <b>y</b> means yes), [[Ctrl+Z]] and
-[[Ctrl+Y]] undo and redo, [[F3]] reads a text file.</li>
+[[Ctrl+Y]] undo and redo.</li>
+<li><b>Preview:</b> [[F3]] opens a pane at the right that shows what is in the item under the cursor: the lines of a
+text file, what is inside an archive, a rough picture of an image. It follows the cursor. [[Tab]] goes to it, where
+the arrows and [[PgUp]] / [[PgDn]] scroll; the wheel and its scrollbar work too.</li>
 <li><b>Mouse:</b> click, double-click, right-click to select, the wheel, and the words on the bottom line.</li>
-<li>[[F1]] lists every key; [[F10]] or [[q]] quits.</li>
+<li>[[F1]] lists every key; [[q]] or [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>
 <p>Menus, search, tabs and the preview pane are not in the terminal version yet.</p>
 )"));

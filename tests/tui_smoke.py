@@ -37,9 +37,10 @@ os.write(fd, b"\x1bOP")      # F1: the help
 pump(0.6)
 os.write(fd, b"x")            # any key closes it
 pump(0.4)
-# A double click on the first item ("inside/": screen row 5, under "..", column 6): into the folder.
+# A double click on the first item ("inside/": screen row 5, under "..", column 30, right of the
+# places at the left, which take 22 columns): into the folder.
 for _ in range(2):
-    os.write(fd, b"\x1b[<0;6;5M\x1b[<0;6;5m")
+    os.write(fd, b"\x1b[<0;30;5M\x1b[<0;30;5m")
     pump(0.15)
 pump(0.6)
 os.write(fd, b"\x1b[21~")    # F10
@@ -57,7 +58,7 @@ if status is None:
     problems.append("it did not quit on F10")
 elif status != 0:
     problems.append("exit status %d" % status)
-for needle in ("Argonaut", "a-file.txt", "inside/", "F10", "copy / move to the other pane", "deep-file.txt"):
+for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "copy / move to the other pane", "deep-file.txt"):
     if needle not in text:
         problems.append("never drew %r" % needle)
 if "\x1b[?1049l" not in text and "\x1b[?47l" not in text:
