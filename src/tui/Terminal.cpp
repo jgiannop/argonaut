@@ -7,6 +7,7 @@
 #include <cwchar>
 
 #define NCURSES_WIDECHAR 1
+#include <unistd.h>
 #include <curses.h>
 
 namespace Tui {
@@ -199,6 +200,35 @@ void Terminal::show(const Screen &screen)
     ::erase();
     const int rows = qMin(screen.height(), LINES);
     const int columns = qMin(screen.width(), COLS);
+    // A list that scrolled: most lines of this frame are lines of the last
+    // one, moved up or down. ncurses then saves writing by having the
+    // terminal scroll those lines, and a terminal scrolls whole lines: the
+    // places at the left, the other pane and the preview moved with the list
+    // and were painted again where they belong, which was seen as a flash.
+    // (ncurses does that whenever the terminal can; idlok() doesn't switch
+    // it off.) So when several lines changed at once, ncurses is told to
+    // forget what it thinks is on them: it has nothing to scroll then, and
+    // writes them as they are now. A cell written again with what it
+    // already shows doesn't flicker.
+    {
+        QList<int> changed;
+        const bool comparable = m_shown.width() == screen.width() && m_shown.height() == screen.height();
+        for (int y = 0; y < rows && comparable; ++y) {
+            for (int x = 0; x < columns; ++x) {
+                const Cell &now = screen.at(x, y);
+                const Cell &before = m_shown.at(x, y);
+                if (now.ch != before.ch || now.tail != before.tail || !(now.style == before.style)) {
+                    changed.append(y);
+                    break;
+                }
+            }
+        }
+        if (changed.size() >= 3) {
+            for (int y : std::as_const(changed))
+                ::wredrawln(stdscr, y, 1);
+        }
+        m_shown = screen;
+    }
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < columns; ++x) {
             const Cell &cell = screen.at(x, y);
@@ -236,7 +266,12 @@ void Terminal::show(const Screen &screen)
     } else {
         ::curs_set(0);
     }
+    // The frame at once, where the terminal can hold its drawing back until
+    // it is whole ("synchronized output"; others take no notice of this).
+    static const char hold[] = "\033[?2026h", release[] = "\033[?2026l";
+    (void)!::write(STDOUT_FILENO, hold, sizeof hold - 1);
     ::refresh();
+    (void)!::write(STDOUT_FILENO, release, sizeof release - 1);
 }
 
 void Terminal::suspend()

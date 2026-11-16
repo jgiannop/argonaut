@@ -34,6 +34,7 @@ private:
 
     int m_pairs[8][6] = {};
     Palette m_palette; // the colours the pairs were made for
+    Screen m_shown;    // the last frame, to tell when many lines changed at once
     int m_nextPair = 1;
     bool m_colors = false;
     QHash<int, int> m_rawPairs;
