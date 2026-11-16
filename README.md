@@ -150,7 +150,7 @@ For an optimized build, use `release` instead of `debug`.
 The [releases page](https://github.com/jgiannop/argonaut/releases) has a package for each system, named after it: `argonaut-files_<version>_ubuntu24.04_amd64.deb`, `…_ubuntu26.04_amd64.deb`, `…_debian13_amd64.deb`. Take the one for yours (`lsb_release -ds` says which it is): a package only installs on the system it was built for, because the libraries it needs are named differently on each. Then:
 
 ```bash
-sudo apt install ./argonaut-files_0.11.1_ubuntu24.04_amd64.deb
+sudo apt install ./argonaut-files_0.11.2_ubuntu24.04_amd64.deb
 ```
 
 On a server without a desktop, add `--no-install-recommends` and run `argonaut-tui`: the terminal version needs no display.
