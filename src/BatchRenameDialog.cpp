@@ -162,10 +162,10 @@ BatchRenameDialog::BatchRenameDialog(const QStringList &paths, QWidget *parent) 
         updatePreview();
     });
     connect(this, &QDialog::accepted, this, [this] {
-        QSettings settings;
-        settings.setValue(QStringLiteral("rename/mode"), m_mode->checkedId());
-        settings.setValue(QStringLiteral("rename/template"), m_template->text());
-        settings.setValue(QStringLiteral("rename/order"), m_order->currentIndex());
+        QSettings remembered;
+        remembered.setValue(QStringLiteral("rename/mode"), m_mode->checkedId());
+        remembered.setValue(QStringLiteral("rename/template"), m_template->text());
+        remembered.setValue(QStringLiteral("rename/order"), m_order->currentIndex());
     });
 
     sortSources();

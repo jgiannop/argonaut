@@ -1521,10 +1521,10 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
         PaneScope scope(this, index);
         QString path = gone;
         while (!QFileInfo(path).isDir()) {
-            const QString parent = QFileInfo(path).absolutePath();
-            if (parent == path)
+            const QString above = QFileInfo(path).absolutePath();
+            if (above == path)
                 break;
-            path = parent;
+            path = above;
         }
         navigateTo(path);
         showMessage(tr("“%1” no longer exists").arg(QFileInfo(gone).fileName()));
@@ -1992,6 +1992,17 @@ void MainWindow::ejectExtensionPlace(const QString &place, const QString &path, 
 
 // An extension asks the user something while it works (a login). Shown by
 // one window only; the answer goes back to the extension.
+// What an extension asks for or proposes is shown in one window: the one in
+// front (or whose dialog is). With no window in front at all (the desktop
+// has the focus), any window will do; the extension host lets one take it.
+bool MainWindow::isWhereTheUserIs() const
+{
+    const QWidget *active = QApplication::activeWindow();
+    while (active && active != this && active->parentWidget())
+        active = active->parentWidget()->window();
+    return !active || active == this;
+}
+
 // Claude is being asked something for an extension, which takes a while: the
 // preview pane of the window in front says so until the answer is there.
 void MainWindow::showClaudeWaiting(const QString &extension, const QString &name, int waiting)
@@ -2003,10 +2014,7 @@ void MainWindow::showClaudeWaiting(const QString &extension, const QString &name
     }
     if (m_analyzing || m_chooser)
         return;
-    QWidget *active = QApplication::activeWindow();
-    while (active && active != this && active->parentWidget())
-        active = active->parentWidget()->window();
-    if (active && active != this)
+    if (!isWhereTheUserIs())
         return;
     if (!quickLookVisible())
         toggleQuickLook();
@@ -2020,10 +2028,7 @@ void MainWindow::showExtensionPlan(const Extensions::Plan &plan)
 {
     if (m_analyzing || m_chooser)
         return;
-    QWidget *active = QApplication::activeWindow();
-    while (active && active != this && active->parentWidget())
-        active = active->parentWidget()->window();
-    if (active && active != this)
+    if (!isWhereTheUserIs())
         return;
     Extensions::Host *host = Extensions::Host::instance();
     if (m_quickLook && m_quickLook->hasPlan())
@@ -2065,11 +2070,7 @@ void MainWindow::applyExtensionPlan(const Extensions::Plan &plan, const QList<Ex
 
 void MainWindow::showExtensionForm(const Extensions::Form &form)
 {
-    // The window in front (or a dialog of its): the user is there.
-    QWidget *active = QApplication::activeWindow();
-    while (active && active != this && active->parentWidget())
-        active = active->parentWidget()->window();
-    if (active && active != this)
+    if (!isWhereTheUserIs())
         return;
     Extensions::Host *host = Extensions::Host::instance();
     if (!host->takeForm(form.extension, form.id))

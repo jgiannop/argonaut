@@ -14,7 +14,12 @@
 namespace {
 
 const QLatin1String kScheme("volume://");
-constexpr int kStaleMs = 15000;      // asked again after this long, when someone looks
+// Asked again after this long, when someone looks. A disk that comes or goes
+// and a mount that changes are noticed at once (the watcher, the mounted
+// devices); this is only for what neither shows (a label that was changed),
+// so it needn't be often: the terminal interface looks every three seconds,
+// and each asking starts a program.
+constexpr int kStaleMs = 60000;
 constexpr int kMountTimeoutMs = 180000; // the desktop may be asking for a password meanwhile
 
 QProcessEnvironment plainEnvironment()

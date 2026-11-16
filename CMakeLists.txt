@@ -235,6 +235,10 @@ qt_add_library(argonaut_tui STATIC
     src/tui/Screen.cpp
     src/tui/App.h
     src/tui/App.cpp
+    src/tui/AppMenus.cpp
+    src/tui/AppPreview.cpp
+    src/tui/AppInternal.h
+    src/tui/Frames.h
     src/tui/Shell.h
     src/tui/Shell.cpp
 )

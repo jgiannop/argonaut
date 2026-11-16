@@ -36,6 +36,7 @@ constexpr int MaxListingFiles = 20000;
 constexpr int MaxListings = 20;   // per extension
 constexpr int MaxPlaces = 20;     // sidebar rows per extension
 constexpr int MaxClaudePerAction = 12;      // questions to Claude for one thing the user chose
+constexpr int MaxClaudeTokens = 16000;      // the most an extension may ask Claude to write in one answer
 constexpr int OpenWithinMs = 5 * 60 * 1000; // "open" is an answer: only this long after the user chose something
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
@@ -723,6 +724,15 @@ void Host::checkPlan(const QString &folder, QList<PlanMove> *moves)
     }
 }
 
+// An extension may open a folder, ask the user something, propose changes or
+// have Claude asked only as part of something the user chose from it (a
+// command, a sidebar row, an address, an answered form), and not long after:
+// nothing of this kind comes out of the blue.
+bool Host::isActingForUser(const Running *ext)
+{
+    return ext->userActed != 0 && QDateTime::currentMSecsSinceEpoch() - ext->userActed <= OpenWithinMs;
+}
+
 void Host::stopWaitingForClaude(const QString &extension)
 {
     for (Running *ext : std::as_const(m_running)) {
@@ -742,6 +752,16 @@ void Host::stopWaitingForClaude(const QString &extension)
 double Host::claudeSpent(const QString &extension)
 {
     return QSettings().value(QStringLiteral("extensions/%1/claudeSpent").arg(extension)).toDouble();
+}
+
+// What an extension asks Claude is its own; which model answers, how much
+// it may write and how the request is carried are the user's and Argonaut's.
+static void keepToWhatIsTheExtensions(QJsonObject *request)
+{
+    for (const char *key : {"model", "stream", "fallbacks", "service_tier", "metadata", "container", "mcp_servers"})
+        request->remove(QLatin1String(key));
+    if (request->contains(QLatin1String("max_tokens")))
+        request->insert(QStringLiteral("max_tokens"), qBound(1, request->value(QLatin1String("max_tokens")).toInt(), MaxClaudeTokens));
 }
 
 // An extension never has the user's API key. It sends the request it wants
@@ -782,7 +802,7 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
         return;
     }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (ext->userActed == 0 || now - ext->userActed > OpenWithinMs) {
+    if (!isActingForUser(ext)) {
         refuse(QStringLiteral("Claude is asked only while the extension is doing what the user chose"));
         return;
     }
@@ -800,10 +820,7 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
         refuse(QStringLiteral("No request (\"request\": {\"messages\": […]})"));
         return;
     }
-    for (const char *key : {"model", "stream", "fallbacks", "service_tier", "metadata", "container", "mcp_servers"})
-        request.remove(QLatin1String(key));
-    if (request.contains(QLatin1String("max_tokens")))
-        request.insert(QStringLiteral("max_tokens"), qBound(1, request.value(QLatin1String("max_tokens")).toInt(), 16000));
+    keepToWhatIsTheExtensions(&request);
     auto running = [this, extension]() -> Running * { // it may be gone when the answer comes
         for (Running *each : std::as_const(m_running)) {
             if (each->manifest.id == extension && each->process)
@@ -816,10 +833,10 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
         request.insert(QStringLiteral("model"), Claude::model());
         ++ext->claudePending;
         m_claude->countTokens(request, [this, running, id](qint64 tokens, const Claude::Error &error) {
-            Running *ext = running();
-            if (!ext)
+            Running *asker = running();
+            if (!asker)
                 return;
-            ext->claudePending = qMax(0, ext->claudePending - 1);
+            asker->claudePending = qMax(0, asker->claudePending - 1);
             QJsonObject answer{{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), id}};
             if (!error.message.isEmpty()) {
                 answer.insert(QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), error.message}, {QStringLiteral("status"), error.status}});
@@ -827,7 +844,7 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
                 answer.insert(QStringLiteral("tokens"), double(tokens));
                 answer.insert(QStringLiteral("dollars"), Claude::cost(Claude::model(), tokens, 0));
             }
-            send(ext, answer);
+            send(asker, answer);
         });
         return;
     }
@@ -846,14 +863,14 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
             const QString key = QStringLiteral("extensions/%1/claudeSpent").arg(extension);
             settings.setValue(key, settings.value(key).toDouble() + response.dollars);
         }
-        Running *ext = running();
-        if (!ext)
+        Running *asker = running();
+        if (!asker)
             return;
-        ext->claudePending = qMax(0, ext->claudePending - 1);
-        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
-        if (!ext->claudeWaiting.removeOne(id))
+        asker->claudePending = qMax(0, asker->claudePending - 1);
+        asker->lastActive = QDateTime::currentMSecsSinceEpoch();
+        if (!asker->claudeWaiting.removeOne(id))
             return; // the user stopped waiting for this one: it was answered then
-        emit claudeWaiting(extension, ext->manifest.name, int(ext->claudeWaiting.size()));
+        emit claudeWaiting(extension, asker->manifest.name, int(asker->claudeWaiting.size()));
         QJsonObject answer{{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), id}};
         if (!error.message.isEmpty()) {
             answer.insert(QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), error.message}, {QStringLiteral("status"), error.status}});
@@ -863,7 +880,7 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
             answer.insert(QStringLiteral("stop_reason"), response.stopReason);
             answer.insert(QStringLiteral("dollars"), response.dollars);
         }
-        send(ext, answer);
+        send(asker, answer);
     });
 }
 
@@ -1299,7 +1316,7 @@ void Host::handle(Running *ext, const QByteArray &line)
         // Like "open": only while it is doing what the user asked of it. A
         // dialog out of the blue asking for a password is not something an
         // extension gets to show. And one at a time.
-        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs || !ext->formPending.isEmpty()) {
+        if (!isActingForUser(ext) || !ext->formPending.isEmpty()) {
             refuse();
             return;
         }
@@ -1356,7 +1373,7 @@ void Host::handle(Running *ext, const QByteArray &line)
     if (type == QLatin1String("open")) { // show this folder: the answer to what the user chose
         const QString folder = message.value(QLatin1String("folder")).toString();
         // Never out of the blue: an extension can't move the user about.
-        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs)
+        if (!isActingForUser(ext))
             return;
         if (!QDir::isAbsolutePath(folder) || !QFileInfo(folder).isDir())
             return;
@@ -1428,7 +1445,7 @@ void Host::handle(Running *ext, const QByteArray &line)
         // Like a form: only while it is doing what the user asked of it, and one at a time.
         Plan plan;
         plan.folder = QDir::cleanPath(message.value(QLatin1String("folder")).toString());
-        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs || !ext->planPending.isEmpty()
+        if (!isActingForUser(ext) || !ext->planPending.isEmpty()
             || !QDir::isAbsolutePath(plan.folder) || !QFileInfo(plan.folder).isDir()) {
             refuse();
             return;

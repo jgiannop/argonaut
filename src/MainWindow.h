@@ -292,6 +292,7 @@ private:
     void addExtensionCommands(QMenu *menu, const QStringList &selection);
     void showExtensionInfoMenu(const QPoint &globalPos);
     void refreshExtensionMenus(); // the commands extensions put in File, Edit, View and Go
+    bool isWhereTheUserIs() const; // this window, or a dialog of its, is in front (or none is)
     void showExtensionForm(const Extensions::Form &form);
     void showExtensionPlan(const Extensions::Plan &plan);
     void showClaudeWaiting(const QString &extension, const QString &name, int waiting);

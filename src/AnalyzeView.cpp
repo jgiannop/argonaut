@@ -38,8 +38,8 @@ AnalyzeView::AnalyzeView(QWidget *parent) : QTreeView(parent), m_model(new DiskU
     connect(m_model, &DiskUsageModel::finished, this, &AnalyzeView::statusChanged);
     // The analysed folder is the top row: keep it open.
     connect(m_model, &QAbstractItemModel::modelReset, this, &AnalyzeView::keepTopRowOpen);
-    connect(m_model, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex &parent) {
-        if (!parent.parent().isValid())
+    connect(m_model, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex &under) {
+        if (!under.parent().isValid())
             keepTopRowOpen();
     });
 

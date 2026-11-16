@@ -63,6 +63,8 @@ public:
     void showWorking(const QString &extension, const QString &title, const QString &text);
     void endWorking(const QString &extension);
     bool isWorking() const { return !m_workingFor.isEmpty(); }
+    // A plan or "working" has the pane: files and other results don't take it.
+    bool isHeld() const { return hasPlan() || isWorking(); }
     QString workingText() const; // what it says (tests)
     QPushButton *stopWaitingButton() const { return m_stopWaiting; } // (tests)
     class PlanView *planView() const { return m_plan; } // (tests)
@@ -121,6 +123,7 @@ private:
     QTimer *m_workingTimer = nullptr;      // moves the dots and counts the seconds
     QPushButton *m_stopWaiting = nullptr;
     void updateWorking();
+    void forgetWorking(); // the pane no longer says "working" (the waiting itself may go on)
     PdfView *m_pdf = nullptr;        // the PDF reader: every page, in the sandbox (PdfView)
     class QScrollArea *m_scroll = nullptr; // an extension's picture that is taller than the pane ("scroll")
     QLabel *m_scrollPicture = nullptr;

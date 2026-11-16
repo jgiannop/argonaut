@@ -7,6 +7,7 @@
 // (`--table FILE`, see Sandbox::run), which reads the one file and prints the
 // table. Without a sandbox, spreadsheets aren't previewed at all.
 
+#include "../shared/Conversation.h"
 #include "Sandbox.h"
 
 #include <QCoreApplication>
@@ -365,13 +366,6 @@ int printTable(const QString &path)
 
 // -------------------------------------------------------------- protocol ---
 
-void send(const QJsonObject &message)
-{
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
-}
-
 QString tableNote(bool more, int rows, int sheets)
 {
     QStringList parts;
@@ -435,43 +429,30 @@ int main(int argc, char **argv)
     if (app.arguments().value(1) == QLatin1String("--table"))
         return printTable(app.arguments().value(2));
 
-    QByteArray buffer;
-    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
-    QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
-        char chunk[65536];
-        const ssize_t n = ::read(STDIN_FILENO, chunk, sizeof chunk);
-        if (n <= 0) { // Argonaut closed the pipe (or is gone): leave
-            input.setEnabled(false);
-            QCoreApplication::quit();
+    // Of several previews asked for in a row (arrow keys held down), only
+    // the last one is still wanted.
+    QJsonObject wanted;
+    Conversation conversation([&](const QJsonObject &message) {
+        const QString type = message.value(QLatin1String("type")).toString();
+        if (type == QLatin1String("hello")) {
+            send({{QStringLiteral("type"), QStringLiteral("previews")},
+                  {QStringLiteral("types"),
+                   QJsonArray{QStringLiteral("text/markdown"), QStringLiteral("text/csv"),
+                              QStringLiteral("text/tab-separated-values"),
+                              QStringLiteral("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                              QStringLiteral("application/vnd.oasis.opendocument.spreadsheet")}}});
+        } else if (type == QLatin1String("preview")) {
+            wanted = message;
+        }
+    }, [&] {
+        if (wanted.isEmpty())
             return;
-        }
-        buffer.append(chunk, n);
-        // Of several previews asked for in a row (arrow keys held down),
-        // only the last one is still wanted.
-        QJsonObject wanted;
-        qsizetype end;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-            const QJsonObject message = QJsonDocument::fromJson(buffer.left(end)).object();
-            buffer.remove(0, end + 1);
-            const QString type = message.value(QLatin1String("type")).toString();
-            if (type == QLatin1String("hello")) {
-                send({{QStringLiteral("type"), QStringLiteral("previews")},
-                      {QStringLiteral("types"),
-                       QJsonArray{QStringLiteral("text/markdown"), QStringLiteral("text/csv"),
-                                  QStringLiteral("text/tab-separated-values"),
-                                  QStringLiteral("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-                                  QStringLiteral("application/vnd.oasis.opendocument.spreadsheet")}}});
-            } else if (type == QLatin1String("preview")) {
-                wanted = message;
-            }
-        }
-        if (!wanted.isEmpty()) {
-            QJsonObject reply = preview(wanted.value(QLatin1String("path")).toString(),
-                                        wanted.value(QLatin1String("mime")).toString());
-            reply.insert(QStringLiteral("type"), QStringLiteral("preview"));
-            reply.insert(QStringLiteral("id"), wanted.value(QLatin1String("id")));
-            send(reply);
-        }
+        QJsonObject reply = preview(wanted.value(QLatin1String("path")).toString(),
+                                    wanted.value(QLatin1String("mime")).toString());
+        reply.insert(QStringLiteral("type"), QStringLiteral("preview"));
+        reply.insert(QStringLiteral("id"), wanted.value(QLatin1String("id")));
+        send(reply);
+        wanted = QJsonObject();
     });
     return app.exec();
 }

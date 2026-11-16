@@ -79,14 +79,6 @@ public:
     }
 };
 
-QString plainText(const QString &menuText)
-{
-    QString text = menuText;
-    text.remove(QLatin1Char('&'));
-    text.remove(QChar(0x2026)); // "Rename…" -> "Rename"
-    return text.trimmed();
-}
-
 } // namespace
 
 CommandPalette::CommandPalette(QWidget *parent) : QFrame(parent)

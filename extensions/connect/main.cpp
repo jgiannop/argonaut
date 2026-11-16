@@ -8,6 +8,7 @@
 // login, an unknown host key, which shared folder) is asked with forms;
 // when the server's folder is there, Argonaut is asked to open it.
 
+#include "../shared/Conversation.h"
 #include "Bookmarks.h"
 #include "Remote.h"
 #include "Tools.h"
@@ -30,13 +31,6 @@
 #include <unistd.h>
 
 namespace {
-
-void send(const QJsonObject &message)
-{
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
-}
 
 void say(const QString &text)
 {
@@ -360,23 +354,8 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName(QStringLiteral("Argonaut"));
 
     Connector connector;
-    QByteArray buffer;
-    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
-    QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
-        char chunk[8192];
-        const ssize_t got = ::read(STDIN_FILENO, chunk, sizeof chunk);
-        if (got <= 0) { // Argonaut closed the pipe
-            input.setEnabled(false);
-            app.quit();
-            return;
-        }
-        buffer.append(chunk, qsizetype(got));
-        qsizetype end;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-            const QJsonObject message = QJsonDocument::fromJson(buffer.left(end)).object();
-            buffer.remove(0, end + 1);
-            connector.handle(message);
-        }
+    Conversation conversation([&](const QJsonObject &message) {
+        connector.handle(message);
     });
     return app.exec();
 }

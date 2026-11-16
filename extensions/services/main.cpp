@@ -325,15 +325,10 @@ int main(int argc, char **argv)
     }
 
     const QString id = QStringLiteral("services");
-    QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    if (runtime.isEmpty() || !QFileInfo(runtime).isWritable())
-        runtime = QDir::tempPath();
-    const QString picture = QStringLiteral("%1/argonaut-services-%2.png").arg(runtime).arg(::getpid());
-    int width = 560;
-    Look look = lookFor(true);
+    const QString picture = pictureFile("services");
+    Room room;             // what Argonaut says there is room for, and how the window looks
     bool shown = false;      // Argonaut has it on screen
     bool terminal = false;   // it is Argonaut's terminal interface: text, not a picture
-    int columns = 44;        // …with room for this many characters
     bool known = false;      // systemd has answered once
     bool asked = false;      // the command was chosen, and its first answer is still to be shown
     Services services;
@@ -347,9 +342,9 @@ int main(int argc, char **argv)
                             {QStringLiteral("search"), QStringLiteral("Search services")}}; // Argonaut shows a field; what is typed comes as "search"
         if (terminal) {
             message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
-            message.insert(QStringLiteral("text"), drawAnsi(services, columns, search));
+            message.insert(QStringLiteral("text"), drawAnsi(services, room.columns, search));
         } else {
-            if (!save(draw(services, width, look, search), picture))
+            if (!save(draw(services, room.width, room.look, search), picture))
                 return;
             message.insert(QStringLiteral("kind"), QStringLiteral("image"));
             message.insert(QStringLiteral("image"), picture);
@@ -380,52 +375,30 @@ int main(int argc, char **argv)
             timer.stop();
     });
 
-    // Argonaut's messages, a line each, as they come.
-    QByteArray buffer;
-    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
-    QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
-        char chunk[8192];
-        const ssize_t got = ::read(STDIN_FILENO, chunk, sizeof chunk);
-        if (got <= 0) { // Argonaut closed the pipe
-            input.setEnabled(false);
-            app.quit();
-            return;
-        }
-        buffer.append(chunk, qsizetype(got));
-        qsizetype end;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-            const QJsonObject message = QJsonDocument::fromJson(buffer.left(end)).object();
-            buffer.remove(0, end + 1);
-            const QString type = message.value(QLatin1String("type")).toString();
-            if (type == QLatin1String("hello")) {
-                terminal = message.value(QLatin1String("interface")).toString() == QLatin1String("terminal");
-                send({{QStringLiteral("type"), QStringLiteral("commands")},
-                      {QStringLiteral("commands"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("services")},
-                                                                          {QStringLiteral("label"), QStringLiteral("Running Services")},
-                                                                          {QStringLiteral("menu"), QStringLiteral("view")}}}}});
-            } else if (type == QLatin1String("invoke")) {
-                asked = true; // shown when systemd has answered
-                asker.ask();
-            } else if (type == QLatin1String("search") && message.value(QLatin1String("id")).toString() == id) {
-                search = message.value(QLatin1String("text")).toString().left(200);
-                if (known)
-                    show(true);
-            } else if (type == QLatin1String("result") && message.value(QLatin1String("id")).toString() == id) {
-                shown = message.value(QLatin1String("shown")).toBool();
-                if (!shown) {
-                    timer.stop();
-                    search.clear(); // the field went with the result
-                    continue;
-                }
-                width = message.value(QLatin1String("width")).toInt();
-                if (message.value(QLatin1String("columns")).toInt() > 0)
-                    columns = message.value(QLatin1String("columns")).toInt();
-                look = lookFor(message.value(QLatin1String("dark")).toBool(), message.value(QLatin1String("colors")).toObject(),
-                               message.value(QLatin1String("font")).toString().left(100));
-                if (known)
-                    show(true); // drawn for this room, in this theme
-                timer.start();
+    // Argonaut's messages, each as it comes.
+    Conversation conversation([&](const QJsonObject &message) {
+        const QString type = message.value(QLatin1String("type")).toString();
+        if (type == QLatin1String("hello")) {
+            terminal = message.value(QLatin1String("interface")).toString() == QLatin1String("terminal");
+            offerViewCommand(QStringLiteral("services"), QStringLiteral("Running Services"));
+        } else if (type == QLatin1String("invoke")) {
+            asked = true; // shown when systemd has answered
+            asker.ask();
+        } else if (type == QLatin1String("search") && message.value(QLatin1String("id")).toString() == id) {
+            search = message.value(QLatin1String("text")).toString().left(200);
+            if (known)
+                show(true);
+        } else if (type == QLatin1String("result") && message.value(QLatin1String("id")).toString() == id) {
+            shown = message.value(QLatin1String("shown")).toBool();
+            if (!shown) {
+                timer.stop();
+                search.clear(); // the field went with the result
+                return;
             }
+            room.read(message);
+            if (known)
+                show(true); // drawn for this room, in this theme
+            timer.start();
         }
     });
 

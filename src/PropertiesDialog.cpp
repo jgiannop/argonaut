@@ -273,7 +273,7 @@ void PropertiesDialog::measure()
     const bool singleFolder = m_isDir;
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     QThreadPool::globalInstance()->start([label, paths, singleFolder, cancel] {
-        qint64 bytes = 0;
+        qint64 measured = 0;
         qint64 items = 0;
         QElapsedTimer sinceUpdate;
         sinceUpdate.start();
@@ -281,10 +281,10 @@ void PropertiesDialog::measure()
             const QString text =
                 QStringLiteral("%1%2")
                     .arg(items == 1 ? PropertiesDialog::tr("1 item, totalling %1")
-                                          .arg(formatSize(bytes))
+                                          .arg(formatSize(measured))
                                     : PropertiesDialog::tr("%1 items, totalling %2")
                                           .arg(items)
-                                          .arg(formatSize(bytes)),
+                                          .arg(formatSize(measured)),
                          done ? QString() : QStringLiteral(" …"));
             QMetaObject::invokeMethod(qApp, [label, text] {
                 if (label)
@@ -296,7 +296,7 @@ void PropertiesDialog::measure()
             if (!singleFolder)
                 ++items; // the selected items themselves
             if (!info.isDir() || info.isSymLink()) {
-                bytes += info.size();
+                measured += info.size();
                 continue;
             }
             QDirIterator it(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
@@ -309,7 +309,7 @@ void PropertiesDialog::measure()
                 if (singleFolder)
                     ++items;
                 if (entry.isFile() && !entry.isSymLink())
-                    bytes += entry.size();
+                    measured += entry.size();
                 if (sinceUpdate.elapsed() > 150) {
                     show(false);
                     sinceUpdate.restart();

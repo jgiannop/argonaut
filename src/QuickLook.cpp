@@ -285,10 +285,15 @@ void QuickLook::endWorking(const QString &extension)
 {
     if (m_workingFor.isEmpty() || m_workingFor != extension)
         return;
+    forgetWorking();
+    clear();
+}
+
+void QuickLook::forgetWorking()
+{
     m_workingFor.clear();
     m_workingTimer->stop();
     m_stopWaiting->hide();
-    clear();
 }
 
 void QuickLook::updateWorking()
@@ -343,7 +348,7 @@ void QuickLook::closePlan(bool dismissed)
 
 void QuickLook::showItem(const Item &item)
 {
-    if (hasPlan() || isWorking())
+    if (isHeld())
         return; // the plan stays (it is answered with Apply or Dismiss), and so does "working"
     closeResult(); // a file takes the pane back
     m_pdf->clear();
@@ -510,7 +515,7 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
 
 bool QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
 {
-    if (hasPlan() || isWorking())
+    if (isHeld())
         return false; // not over a plan that waits for its answer, or over "working"
     const bool same = !content.resultId.isEmpty() && isVisible() && content.resultId == m_resultId
                       && content.extension == m_resultExtension;
@@ -655,7 +660,7 @@ QString QuickLook::shownText() const
 
 void QuickLook::clear()
 {
-    if (hasPlan() || isWorking())
+    if (isHeld())
         return; // a plan waits for its answer, or something is waited for: nothing else takes the pane
     closeResult();
     m_pdf->clear();
@@ -758,11 +763,7 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 void QuickLook::hideEvent(QHideEvent *event)
 {
     closePlan(true); // the pane was closed: the plan is not applied
-    if (isWorking()) { // nor is the waiting shown any more (it goes on: the plan will open the pane)
-        m_workingFor.clear();
-        m_workingTimer->stop();
-        m_stopWaiting->hide();
-    }
+    forgetWorking(); // nor is the waiting shown any more (it goes on: the plan will open the pane)
     closeResult();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();

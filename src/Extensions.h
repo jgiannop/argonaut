@@ -432,6 +432,7 @@ private:
     void stop(Running *ext);
     void send(Running *ext, const QJsonObject &message);
     void askClaude(Running *ext, const QJsonObject &message); // its "claude" message: Argonaut makes the call
+    static bool isActingForUser(const Running *ext);          // the user chose something of its, not long ago
     Claude::Client *m_claude = nullptr;
     void readFrom(Running *ext);
     void handle(Running *ext, const QByteArray &line);

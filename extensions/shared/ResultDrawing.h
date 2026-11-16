@@ -6,7 +6,12 @@
 // colour codes of the same thing drawn with characters for the terminal
 // interface.
 
+#include "Conversation.h"
+
 #include <QColor>
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QFont>
 #include <QImage>
 #include <QJsonDocument>
@@ -16,13 +21,6 @@
 #include <QString>
 
 #include <cstdio>
-
-inline void send(const QJsonObject &message)
-{
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
-}
 
 // ------------------------------------------------------------ picture ---
 
@@ -101,6 +99,50 @@ inline bool save(const QImage &image, const QString &path)
         return false;
     return image.save(&file, "PNG", 80) && file.commit(); // 80: little compression, quick
 }
+
+// ------------------------------------------- a result that is kept up ---
+// What the extensions that keep a result up to date in the preview pane
+// share besides the drawing.
+
+// Where the picture is written for Argonaut to read: the user's runtime
+// folder (gone at logout), a name of this program's own.
+inline QString pictureFile(const char *name)
+{
+    QString folder = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (folder.isEmpty() || !QFileInfo(folder).isWritable())
+        folder = QDir::tempPath();
+    return QStringLiteral("%1/argonaut-%2-%3.png").arg(folder, QString::fromLatin1(name)).arg(::getpid());
+}
+
+// The one command these extensions offer: in the View menu, and so in the
+// command palette, not in the right-click menu.
+inline void offerViewCommand(const QString &id, const QString &label)
+{
+    send({{QStringLiteral("type"), QStringLiteral("commands")},
+          {QStringLiteral("commands"), QJsonArray{QJsonObject{{QStringLiteral("id"), id},
+                                                              {QStringLiteral("label"), label},
+                                                              {QStringLiteral("menu"), QStringLiteral("view")}}}}});
+}
+
+// The room a result has on screen and how the window looks, as Argonaut
+// says in a "result" message: pixels for a picture, characters for the
+// terminal interface's text.
+struct Room
+{
+    int width = 560, height = 760;
+    int columns = 44;
+    Look look = lookFor(true);
+
+    void read(const QJsonObject &message)
+    {
+        width = message.value(QLatin1String("width")).toInt();
+        height = message.value(QLatin1String("height")).toInt();
+        if (message.value(QLatin1String("columns")).toInt() > 0)
+            columns = message.value(QLatin1String("columns")).toInt();
+        look = lookFor(message.value(QLatin1String("dark")).toBool(), message.value(QLatin1String("colors")).toObject(),
+                       message.value(QLatin1String("font")).toString().left(100));
+    }
+};
 
 // ---------------------------------------------- the same, in a terminal ---
 
@@ -342,10 +384,10 @@ inline QString drawListAnsi(const ListHead &head, const QList<ListRow> &given, i
     if (rest.size() <= columns)
         rest.replace(QLatin1Char('\n'), QLatin1Char(' '));
     while (!rest.isEmpty()) {
-        const qsizetype given = rest.indexOf(QLatin1Char('\n'));
-        if (given >= 0 && given <= columns) { // cut where it was meant to be
-            out << kDim + rest.left(given) + kReset;
-            rest = rest.mid(given + 1);
+        const qsizetype meant = rest.indexOf(QLatin1Char('\n'));
+        if (meant >= 0 && meant <= columns) { // cut where it was meant to be
+            out << kDim + rest.left(meant) + kReset;
+            rest = rest.mid(meant + 1);
             continue;
         }
         qsizetype cut = rest.size() <= columns ? rest.size() : rest.lastIndexOf(QLatin1Char(' '), columns);

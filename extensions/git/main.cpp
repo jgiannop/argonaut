@@ -3,6 +3,7 @@
 // input, one JSON object per line, keeps a GitStatus for every folder a view
 // shows, and writes that folder's marks and branch back on standard output.
 
+#include "../shared/Conversation.h"
 #include "GitStatus.h"
 
 #include <QCoreApplication>
@@ -390,9 +391,8 @@ void previewInListing(const QJsonObject &message)
     write(reply);
 }
 
-void handle(const QByteArray &line)
+void handle(const QJsonObject &message)
 {
-    const QJsonObject message = QJsonDocument::fromJson(line).object();
     const QString type = message.value(QLatin1String("type")).toString();
     const QString folder = message.value(QLatin1String("folder")).toString();
     if (type == QLatin1String("watch")) {
@@ -422,23 +422,6 @@ void handle(const QByteArray &line)
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    QByteArray buffer;
-    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
-    QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
-        char chunk[65536];
-        const ssize_t n = ::read(STDIN_FILENO, chunk, sizeof chunk);
-        if (n <= 0) { // Argonaut closed the pipe (or is gone): leave
-            input.setEnabled(false);
-            QCoreApplication::quit();
-            return;
-        }
-        buffer.append(chunk, n);
-        qsizetype end;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-            const QByteArray line = buffer.left(end);
-            buffer.remove(0, end + 1);
-            handle(line);
-        }
-    });
+    Conversation conversation(handle);
     return app.exec();
 }

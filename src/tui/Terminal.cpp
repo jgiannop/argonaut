@@ -60,6 +60,16 @@ short colorOf(Paper paper)
     return -1;
 }
 
+// Something for the terminal itself that ncurses has no call for (a mode to
+// switch, palette entries to give back): written straight to it. ncurses'
+// own output is flushed with every refresh(), so the order is kept.
+void tell(const QByteArray &sequence)
+{
+    if (::write(STDOUT_FILENO, sequence.constData(), size_t(sequence.size())) < 0) {
+        // The terminal is gone: nothing to do about it here.
+    }
+}
+
 // Sixteen entries of the terminal's palette are ours while a theme is shown
 // exactly: its eight inks and eight papers. They are the light end of the
 // grey ramp (240…255), the entries programs use least; what a shell or a
@@ -234,7 +244,7 @@ void Terminal::setExactColors(bool on)
         for (int slot = kInkSlot; slot <= 255; ++slot)
             reset += ';' + QByteArray::number(slot);
         reset += "\007";
-        (void)!::write(STDOUT_FILENO, reset.constData(), size_t(reset.size()));
+        tell(reset);
     }
     m_exact = on;
 }
@@ -245,8 +255,7 @@ void Terminal::setMotion(bool on)
         return;
     m_motion = on;
     // "Any event" tracking: where the mouse is, as it moves.
-    static const char start[] = "\033[?1003h", stop[] = "\033[?1003l";
-    (void)!::write(STDOUT_FILENO, on ? start : stop, sizeof start - 1);
+    tell(on ? "\033[?1003h" : "\033[?1003l");
 }
 
 void Terminal::show(const Screen &screen)
@@ -343,10 +352,9 @@ void Terminal::show(const Screen &screen)
     }
     // The frame at once, where the terminal can hold its drawing back until
     // it is whole ("synchronized output"; others take no notice of this).
-    static const char hold[] = "\033[?2026h", release[] = "\033[?2026l";
-    (void)!::write(STDOUT_FILENO, hold, sizeof hold - 1);
+    tell("\033[?2026h");
     ::refresh();
-    (void)!::write(STDOUT_FILENO, release, sizeof release - 1);
+    tell("\033[?2026l");
 }
 
 void Terminal::suspend()

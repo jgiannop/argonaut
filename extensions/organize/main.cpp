@@ -14,6 +14,7 @@
 //
 //   argonaut-organize-extension              the extension (talks on stdin/stdout)
 
+#include "../shared/Conversation.h"
 #include "Claude.h"
 #include "Format.h"
 #include "Organizer.h"
@@ -32,11 +33,10 @@
 
 namespace {
 
+// (Argonaut is told things with send(); "say" reads better here, where Claude is asked things too.)
 void say(const QJsonObject &message)
 {
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
+    ::send(message);
 }
 
 void tell(const QString &text)
@@ -242,76 +242,61 @@ int main(int argc, char **argv)
         say({{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), QStringLiteral("info")}, {QStringLiteral("ask"), QStringLiteral("info")}});
     };
 
-    // Argonaut's messages, a line each, as they come.
-    QByteArray buffer;
-    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
-    QObject::connect(&input, &QSocketNotifier::activated, &app, [&] {
-        char chunk[65536];
-        const ssize_t got = ::read(STDIN_FILENO, chunk, sizeof chunk);
-        if (got <= 0) { // Argonaut closed the pipe
-            input.setEnabled(false);
-            app.quit();
-            return;
-        }
-        buffer.append(chunk, qsizetype(got));
-        qsizetype end;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-            const QJsonObject message = QJsonDocument::fromJson(buffer.left(end)).object();
-            buffer.remove(0, end + 1);
-            const QString type = message.value(QLatin1String("type")).toString();
-            const QString id = message.value(QLatin1String("id")).toString();
-            if (type == QLatin1String("hello")) {
-                say({{QStringLiteral("type"), QStringLiteral("commands")}, {QStringLiteral("commands"), commands()}});
-            } else if (type == QLatin1String("invoke")) {
-                begin(message.value(QLatin1String("folder")).toString());
-            } else if (type == QLatin1String("claude")) {
-                if (id == QLatin1String("info")) {
-                    if (!organizer)
-                        continue;
-                    if (message.contains(QLatin1String("error"))) {
-                        tell(QStringLiteral("Organize: %1").arg(message.value(QLatin1String("error")).toObject().value(QLatin1String("message")).toString()));
-                        finish();
-                    } else if (!message.value(QLatin1String("hasKey")).toBool()) {
-                        tell(QStringLiteral("Organize with Claude needs your Claude API key: Preferences → Claude"));
-                        finish();
-                    } else {
-                        // About what it will cost (counting is free), then the question.
-                        organizer->setMode(Claude::mode());
-                        organizer->estimate([&](qint64 tokens, double dollars, const QString &error) {
-                            if (!organizer)
-                                return;
-                            askToStart(error.isEmpty() && tokens > 0
-                                           ? QStringLiteral("About %1 tokens to send: roughly $%2 on %3.")
-                                                 .arg(QLocale().toString(tokens), QString::number(dollars, 'f', 2), Claude::modelInfo(Claude::model()).name)
-                                           : QString());
-                        });
-                    }
-                    continue;
-                }
-                client.answered(message);
-            } else if (type == QLatin1String("form")) {
+    // Argonaut's messages, each as it comes.
+    Conversation conversation([&](const QJsonObject &message) {
+        const QString type = message.value(QLatin1String("type")).toString();
+        const QString id = message.value(QLatin1String("id")).toString();
+        if (type == QLatin1String("hello")) {
+            say({{QStringLiteral("type"), QStringLiteral("commands")}, {QStringLiteral("commands"), commands()}});
+        } else if (type == QLatin1String("invoke")) {
+            begin(message.value(QLatin1String("folder")).toString());
+        } else if (type == QLatin1String("claude")) {
+            if (id == QLatin1String("info")) {
                 if (!organizer)
-                    continue;
-                if (message.value(QLatin1String("cancelled")).toBool()) {
-                    organizer->cancel();
-                    if (id == QLatin1String("read"))
-                        tell(QStringLiteral("Organize: cancelled"));
+                    return;
+                if (message.contains(QLatin1String("error"))) {
+                    tell(QStringLiteral("Organize: %1").arg(message.value(QLatin1String("error")).toObject().value(QLatin1String("message")).toString()));
                     finish();
-                } else if (id == QLatin1String("start")) {
-                    const QJsonObject values = message.value(QLatin1String("values")).toObject();
-                    organizer->setWishes(values.value(QLatin1String("wishes")).toString());
-                    for (Claude::Mode mode : modes) {
-                        if (Claude::modeName(mode) == values.value(QLatin1String("mode")).toString())
-                            organizer->setMode(mode);
-                    }
-                    tell(QStringLiteral("Organize: asking Claude…"));
-                    organizer->start();
-                } else if (id == QLatin1String("read")) {
-                    organizer->allowReading(message.value(QLatin1String("button")).toInt() == 0);
+                } else if (!message.value(QLatin1String("hasKey")).toBool()) {
+                    tell(QStringLiteral("Organize with Claude needs your Claude API key: Preferences → Claude"));
+                    finish();
+                } else {
+                    // About what it will cost (counting is free), then the question.
+                    organizer->setMode(Claude::mode());
+                    organizer->estimate([&](qint64 tokens, double dollars, const QString &error) {
+                        if (!organizer)
+                            return;
+                        askToStart(error.isEmpty() && tokens > 0
+                                       ? QStringLiteral("About %1 tokens to send: roughly $%2 on %3.")
+                                             .arg(QLocale().toString(tokens), QString::number(dollars, 'f', 2), Claude::modelInfo(Claude::model()).name)
+                                       : QString());
+                    });
                 }
-            } else if (type == QLatin1String("plan")) {
-                finish(); // applied or dismissed: Argonaut has said what happened
+                return;
             }
+            client.answered(message);
+        } else if (type == QLatin1String("form")) {
+            if (!organizer)
+                return;
+            if (message.value(QLatin1String("cancelled")).toBool()) {
+                organizer->cancel();
+                if (id == QLatin1String("read"))
+                    tell(QStringLiteral("Organize: cancelled"));
+                finish();
+            } else if (id == QLatin1String("start")) {
+                const QJsonObject values = message.value(QLatin1String("values")).toObject();
+                organizer->setWishes(values.value(QLatin1String("wishes")).toString());
+                for (Claude::Mode mode : modes) {
+                    if (Claude::modeName(mode) == values.value(QLatin1String("mode")).toString())
+                        organizer->setMode(mode);
+                }
+                tell(QStringLiteral("Organize: asking Claude…"));
+                organizer->start();
+            } else if (id == QLatin1String("read")) {
+                organizer->allowReading(message.value(QLatin1String("button")).toInt() == 0);
+            }
+        } else if (type == QLatin1String("plan")) {
+            finish(); // applied or dismissed: Argonaut has said what happened
         }
     });
     return app.exec();
