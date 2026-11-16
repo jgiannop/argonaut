@@ -150,7 +150,7 @@ For an optimized build, use `release` instead of `debug`.
 The [releases page](https://github.com/jgiannop/argonaut/releases) has a package for each system, named after it: `argonaut-files_<version>_ubuntu24.04_amd64.deb`, `…_ubuntu26.04_amd64.deb`, `…_debian13_amd64.deb`. Take the one for yours (`lsb_release -ds` says which it is): a package only installs on the system it was built for, because the libraries it needs are named differently on each. Then:
 
 ```bash
-sudo apt install ./argonaut-files_0.12.0_ubuntu24.04_amd64.deb
+sudo apt install ./argonaut-files_0.12.1_ubuntu24.04_amd64.deb
 ```
 
 The package also brings a small AppArmor profile (`/etc/apparmor.d/argonaut-files`): Ubuntu 24.04 and later let a program make a sandbox only if a profile says it may, and Argonaut reads files it doesn't trust (for thumbnails, previews and details) only inside one. An Argonaut built from source and started from the desktop has no such profile there, and those features show nothing; **Help → About → System** says whether the sandbox works.
