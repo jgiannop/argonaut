@@ -1222,14 +1222,71 @@ void TestTui::mouseClicksAndDoubleClicks()
     QCOMPARE(app->folder(0), m_left);
     QTest::qWait(500);
 
-    // The right button selects, without opening; ".." can't be selected.
+    // The right button, as in the window: the item becomes the selection
+    // and its menu opens at the pointer, without opening the item.
     app->mouse({Mouse::RightPress, 10, 5});
+    QVERIFY(app->isContextMenuOpen());
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    QCOMPARE(app->menuNames().mid(0, 2), (QStringList{"Open", "Rename…"}));
+    QVERIFY(app->menuNames().contains("Move to Trash") && app->menuNames().contains("Delete Permanently…"));
+    QVERIFY(!app->menuNames().contains("New Folder…"));
+    QString menuText = screen(100, 30);
+    QVERIFY2(menuText.section('\n', 6, 6).contains("┌──") && menuText.section('\n', 7, 7).contains("Open"), qPrintable(menuText));
+    // A right click elsewhere while it is open only closes it; so does Esc.
     app->mouse({Mouse::RightPress, 10, 6});
-    app->mouse({Mouse::RightPress, 10, 3});
-    QCOMPARE(app->selectedPaths(), (QStringList{m_left + "/alpha.txt", m_left + "/beta.txt"}));
-    app->mouse({Mouse::RightPress, 10, 5});
+    QVERIFY(!app->isContextMenuOpen());
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    // On another item: that one is the selection now.
+    app->mouse({Mouse::RightPress, 10, 6});
     QCOMPARE(app->selectedPaths(), QStringList{m_left + "/beta.txt"});
     keys({Key::of(Key::Escape)});
+    QVERIFY(!app->isAsking());
+    // On one of several selected items: they all stay, and the menu is about them all.
+    keys({Key::control('a')});
+    const int all = int(app->selectedPaths().size());
+    QVERIFY(all >= 3);
+    app->mouse({Mouse::RightPress, 10, 5});
+    QCOMPARE(int(app->selectedPaths().size()), all);
+    keys({Key::of(Key::Escape)});
+    // A command of the menu is the same as its key: deleting for good asks, and only "y" goes on.
+    app->mouse({Mouse::RightPress, 10, 5}); // alpha is selected with the rest: they stay
+    keys({Key::of(Key::Escape), Key::of(Key::Escape)}); // the menu, then the selection
+    QVERIFY(app->selectedPaths().isEmpty());
+    app->mouse({Mouse::RightPress, 10, 5});
+    keys({Key::character('d'), Key::of(Key::Enter)});
+    QVERIFY(!app->isContextMenuOpen());
+    QVERIFY(app->isAsking());
+    keys({Key::of(Key::Enter)}); // not "y"
+    settle();
+    QVERIFY(exists(m_left + "/alpha.txt"));
+    // Trash from the menu, with the mouse on its line; undo brings it back.
+    app->mouse({Mouse::RightPress, 10, 5});
+    menuText = screen(100, 30);
+    int trashY = -1;
+    for (int y = 0; y < 30 && trashY < 0; ++y) {
+        if (menuText.section('\n', y, y).contains("Move to Trash"))
+            trashY = y;
+    }
+    QVERIFY(trashY > 5);
+    runJob([&] { app->mouse({Mouse::Press, 14, trashY}); });
+    QVERIFY(!exists(m_left + "/alpha.txt"));
+    runJob([this] { keys({Key::control('z')}); });
+    QVERIFY(exists(m_left + "/alpha.txt"));
+    keys({Key::of(Key::Escape)});
+    // On ".." or on empty space: nothing is selected, and the menu is the folder's.
+    app->mouse({Mouse::RightPress, 10, 5});
+    keys({Key::of(Key::Escape)});
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    app->mouse({Mouse::RightPress, 10, 3});
+    QVERIFY(app->isContextMenuOpen());
+    QVERIFY(app->selectedPaths().isEmpty());
+    QVERIFY(app->menuNames().contains("New Folder…") && !app->menuNames().contains("Move to Trash"));
+    keys({Key::of(Key::Escape)});
+    app->mouse({Mouse::RightPress, 10, 15});
+    QVERIFY(app->isContextMenuOpen());
+    QVERIFY(app->menuNames().contains("Select All"));
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->selectedPaths().isEmpty());
     // ".." is no target: with the cursor on it the commands do nothing.
     app->mouse({Mouse::Press, 10, 3});
     keys({Key::of(Key::F8), Key::character('D'), Key::of(Key::F5), Key::of(Key::F2)});
@@ -1499,6 +1556,31 @@ void TestTui::extensionResultInThePreview()
         keys({Key::of(Key::Escape)});
         return there;
     }(), 10000);
+    // Its commands for a right click are in the right click's menu, those
+    // that fit the item, and go out with it; one that asks first, asks.
+    screen(100, 30);
+    app->mouse({Tui::Mouse::RightPress, 10, 5});
+    QVERIFY(app->isContextMenuOpen());
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    QStringList offered = app->menuNames();
+    QVERIFY2(offered.contains("Fake: Say Hello") && offered.contains("Risky…"), qPrintable(offered.join('|')));
+    QVERIFY2(!offered.contains("Folders Only") && !offered.contains("Here") && !offered.contains("In The & Menu"), qPrintable(offered.join('|')));
+    keys({Key::character('r'), Key::character('r'), Key::of(Key::Enter)}); // Rename…, then Risky…
+    QVERIFY(app->isAsking() && !app->isContextMenuOpen());
+    QVERIFY(screen(100, 30).contains("Really do the risky thing?"));
+    keys({Key::of(Key::Enter)}); // not "y"
+    QTest::qWait(400);
+    QVERIFY(!app->message().contains("invoked"));
+    app->mouse({Tui::Mouse::RightPress, 10, 5});
+    keys({Key::character('f'), Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(app->message().contains("invoked hello on 1: alpha.txt"), 10000);
+    // On empty space: the folder's commands, each with the group it is of.
+    app->mouse({Tui::Mouse::RightPress, 10, 15});
+    offered = app->menuNames();
+    QVERIFY2(offered.contains("Here") && offered.contains("Fake: Show Me") && !offered.contains("Risky…"), qPrintable(offered.join('|')));
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->selectedPaths().isEmpty());
+
     QVERIFY(!app->isPreviewShown());
     keys({Key::control('p')});
     type("in the");

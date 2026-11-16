@@ -219,7 +219,7 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | F1 | all keys |
 | q, Ctrl+Q or F10 | quit (GNOME Terminal keeps F10 for its own menu, so use q there) |
 
-A scrollbar at a pane's right edge shows where you are in a long folder; a click on it goes to that part. The mouse works too: click a row to go to it, double-click a folder or a file to open it (`..` or the folder's name at the top of the pane: up), right-click to select, scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
+A scrollbar at a pane's right edge shows where you are in a long folder; a click on it goes to that part. The mouse works too: click a row to go to it, double-click a folder or a file to open it (`..` or the folder's name at the top of the pane: up), right-click for a menu of what can be done with the item (it becomes the selection, as in the window; Space selects several), scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
 
 Opening a file starts the app that is the default for what the file really is, as the window does; a program disguised as a document is never opened. Where there is no desktop (a server over SSH), a text file is shown in the terminal with `less` and other files can't be opened.
 

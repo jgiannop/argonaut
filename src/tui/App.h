@@ -69,7 +69,8 @@ public:
     void key(const Key &key);
     // A click puts the cursor on a row (and makes its pane the active one);
     // a second click on the same row soon after opens it. The right button
-    // selects, the wheel scrolls, and the key line at the bottom can be clicked.
+    // selects the item and opens its menu, as in the window; the wheel
+    // scrolls, and the key line at the bottom can be clicked.
     void mouse(const Mouse &mouse);
     void render(Screen &screen);
 
@@ -78,7 +79,8 @@ public:
     int activePane() const { return m_active; }
     bool isSplit() const { return m_split; }
     bool isPaletteOpen() const { return m_mode == Mode::Palette; } // the command palette (Ctrl+P)
-    QString menuTitle() const;      // the menu that is open ("" : none)
+    QString menuTitle() const;      // the menu of the top line that is open ("" : none)
+    bool isContextMenuOpen() const { return m_mode == Mode::Menu && m_popup; } // a right click's menu
     QStringList menuNames() const;  // its items; one that can't be chosen now is in brackets (tests)
     QStringList paletteNames() const;                               // what it lists now, best first (tests)
     bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
@@ -176,6 +178,7 @@ private:
     };
     QList<Menu> menus();
     void openMenu(int index);
+    void openContextMenu(int x, int y, bool onItems); // a right click's menu, at the pointer
     void closeMenu();
     void moveInMenu(int step);
     void runMenuRow(int row);
@@ -226,7 +229,7 @@ private:
     void showResult(const QString &title, const Extensions::PreviewReply &content);
     void closeResult();
     void reportResult();
-    void runExtensionCommand(const Extensions::Command &command);
+    void runExtensionCommand(const Extensions::Command &command, const QStringList &selection = {});
     void syncPreview();              // the preview is of the item under the cursor
     void drawPreview(Screen &screen, int x, int width, int top, int height);
     bool previewKey(const Key &key); // false: not the preview's key
@@ -328,6 +331,8 @@ private:
     QList<Menu> m_menus;
     int m_menuOpen = -1, m_menuCursor = 0, m_menuTop = 0;
     int m_menuX = 0, m_menuY = 0, m_menuWidth = 0, m_menuShown = 0;
+    bool m_popup = false;          // it is a right click's menu…
+    int m_popupX = 0, m_popupY = 0; // …opened here
     QString m_themeKey = QStringLiteral("terminal");
     Palette m_palette;           // its colours, for every frame
     int m_helpTop = 0;           // the help's first line shown

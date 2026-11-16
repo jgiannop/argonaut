@@ -663,7 +663,10 @@ extensions add to this window's menus are there too, and so are the themes ("the
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
 drawn with characters, and updates as it does here, and <b>Space Overview</b> shows how big the folder is and
 the biggest things inside it.</li>
-<li><b>Mouse:</b> click, double-click, right-click to select, the wheel, and the words on the bottom line.</li>
+<li><b>Mouse:</b> click, double-click, the wheel, and the words on the bottom line. A right-click works as it does
+here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
+pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is
+the folder's. [[Space]] or [[Insert]] select several.</li>
 <li>[[F1]] lists every key; [[q]] or [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>
 <p>Menus, search, tabs and the preview pane are not in the terminal version yet.</p>

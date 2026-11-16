@@ -999,7 +999,7 @@ void App::mouse(const Mouse &mouse)
         if (mouse.y == 0) {
             for (int i = 0; i < m_menuSpots.size(); ++i) {
                 if (mouse.x >= m_menuSpots.at(i).from && mouse.x < m_menuSpots.at(i).to) {
-                    if (m_mode == Mode::Menu && m_menuOpen == i)
+                    if (m_mode == Mode::Menu && m_menuOpen == i && !m_popup)
                         closeMenu();
                     else
                         openMenu(i);
@@ -1137,18 +1137,27 @@ void App::mouse(const Mouse &mouse)
             row = row * p.cols + col;
         }
         if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown * height || row >= rowCount(p)) {
+            if (mouse.kind == Mouse::RightPress && mouse.y >= p.rowsY) {
+                // Empty space, as in the window: nothing is selected, and the menu is the folder's.
+                p.selected.clear();
+                openContextMenu(mouse.x, mouse.y, false);
+            }
             emit changed(); // empty space: only the pane changes
             return;
         }
         moveCursor(p, row);
         const bool upRow = upRows(p) == 1 && row == 0;
         const QString path = upRow ? QStringLiteral("..") : pathAt(p, row);
-        if (upRow && mouse.kind == Mouse::RightPress)
-            return; // ".." is not something to select
         if (mouse.kind == Mouse::RightPress) {
-            if (!p.selected.remove(path))
-                p.selected.insert(path);
-            emit changed();
+            // As in the window: an item that isn't selected becomes the
+            // selection, one that is keeps the others with it; then the menu
+            // of what can be done with them. ".." is not something to
+            // select: there the menu is the folder's.
+            if (upRow)
+                p.selected.clear();
+            else if (!p.selected.contains(path))
+                p.selected = {path};
+            openContextMenu(mouse.x, mouse.y, !upRow);
             return;
         }
         // The second click on the same item within the usual time opens it.
@@ -1818,8 +1827,89 @@ QList<App::Command> App::commands()
 
 // ---------------------------------------------------------------- menus ---
 
+// The menu a right click opens, at the pointer: what can be done with the
+// selection (`onItems`), or with the folder. The items are the menus' own,
+// so each is still the same as its key; then what extensions offer for
+// exactly these items (Git's Stage, Send by Email), as in the window.
+void App::openContextMenu(int x, int y, bool onItems)
+{
+    const QList<Menu> all = menus();
+    Menu menu{QString(), 0, {}};
+    auto add = [&](const char *name) {
+        const QString wanted = QString::fromUtf8(name);
+        for (const Menu &each : all) {
+            for (const MenuItem &item : each.items) {
+                if (!item.separator && item.name == wanted) {
+                    menu.items.append(item);
+                    return;
+                }
+            }
+        }
+    };
+    auto line = [&] {
+        MenuItem item;
+        item.separator = true;
+        menu.items.append(item);
+    };
+    if (onItems) {
+        add("Open");
+        add("Rename…");
+        line();
+        add("Copy to the Other Pane");
+        add("Move to the Other Pane");
+        line();
+        add("Move to Trash");
+        add("Delete Permanently…");
+    } else {
+        add("New Folder…");
+        add("Up");
+        line();
+        add("Select All");
+        line();
+        add("Hidden Files");
+        add("Read the Folder Again");
+    }
+    const Pane &p = pane();
+    if (!p.model->isTrash()) {
+        const QStringList selection = onItems ? targets() : QStringList();
+        QList<Extensions::Item> items;
+        bool known = true;
+        for (const QString &path : selection) {
+            const QModelIndex index = p.model->indexForPath(path);
+            if (!index.isValid()) {
+                known = false;
+                break;
+            }
+            const bool dir = p.model->isDir(index);
+            items.append({path, dir ? QStringLiteral("inode/directory") : ContentType::effectiveMime(DirectoryModel::contentResult(index)), dir});
+        }
+        const QList<Extensions::Command> offered =
+            known ? Extensions::Host::instance()->commands(p.model->extensionsFolder(), items) : QList<Extensions::Command>();
+        if (!offered.isEmpty())
+            line();
+        for (const Extensions::Command &command : offered) {
+            MenuItem item;
+            // No submenus here: a command says which group it is of ("Git: Stage").
+            item.name = command.group.isEmpty() ? command.label : QString(command.group).replace(QLatin1Char('/'), QStringLiteral(" › ")) + QStringLiteral(": ") + command.label;
+            item.mark = command.checked ? QStringLiteral("✓") : QString();
+            item.run = [this, command, selection] { runExtensionCommand(command, selection); };
+            menu.items.append(item);
+        }
+    }
+    m_menus = {menu};
+    m_menuOpen = 0;
+    m_menuCursor = -1;
+    m_menuTop = 0;
+    m_popup = true;
+    m_popupX = x;
+    m_popupY = y;
+    m_mode = Mode::Menu;
+    moveInMenu(1);
+}
+
 void App::openMenu(int index)
 {
+    m_popup = false;
     m_menus = menus();
     m_menuOpen = (index % int(m_menus.size()) + int(m_menus.size())) % int(m_menus.size());
     m_menuCursor = -1;
@@ -1831,6 +1921,7 @@ void App::openMenu(int index)
 void App::closeMenu()
 {
     m_menuOpen = -1;
+    m_popup = false;
     if (m_mode == Mode::Menu)
         m_mode = Mode::Normal;
     emit changed();
@@ -1865,7 +1956,7 @@ void App::runMenuRow(int row)
 
 QString App::menuTitle() const
 {
-    return m_mode == Mode::Menu && m_menuOpen >= 0 ? m_menus.at(m_menuOpen).title : QString();
+    return m_mode == Mode::Menu && m_menuOpen >= 0 && !m_popup ? m_menus.at(m_menuOpen).title : QString();
 }
 
 QStringList App::menuNames() const
@@ -1888,11 +1979,13 @@ void App::menuKey(const Key &key)
         closeMenu();
         return;
     case Key::Left:
-        openMenu(m_menuOpen - 1);
+        if (!m_popup) // a right click's menu has no neighbours
+            openMenu(m_menuOpen - 1);
         return;
     case Key::Right:
     case Key::Tab:
-        openMenu(m_menuOpen + 1);
+        if (!m_popup)
+            openMenu(m_menuOpen + 1);
         return;
     case Key::Up:
         moveInMenu(-1);
@@ -1917,7 +2010,7 @@ void App::menuKey(const Key &key)
         // Alt and a menu's letter: that menu. A letter alone: the next item
         // that starts with it.
         if (key.alt) {
-            for (int i = 0; i < m_menus.size(); ++i) {
+            for (int i = 0; i < m_menus.size() && !m_popup; ++i) {
                 if (QChar::toLower(key.ch) == m_menus.at(i).letter) {
                     if (i == m_menuOpen)
                         closeMenu();
@@ -1954,7 +2047,7 @@ void App::drawMenuBar(Screen &screen, int x)
     m_menuSpots.clear();
     for (int i = 0; i < int(std::size(titles)); ++i) {
         const QString title = QString::fromLatin1(titles[i]);
-        const bool open = m_mode == Mode::Menu && m_menuOpen == i;
+        const bool open = m_mode == Mode::Menu && m_menuOpen == i && !m_popup;
         const int width = Screen::widthOf(title) + 2;
         screen.put(x, 0, QLatin1Char(' ') + title + QLatin1Char(' '), {Ink::Normal, open ? Paper::Cursor : Paper::Bar, open});
         m_menuSpots.append({x, x + width, Key()});
@@ -1966,7 +2059,7 @@ void App::drawMenuBar(Screen &screen, int x)
 // right; what can't be done now is dim.
 void App::drawMenu(Screen &screen)
 {
-    if (m_menuOpen < 0 || m_menuOpen >= m_menus.size() || m_menuOpen >= m_menuSpots.size())
+    if (m_menuOpen < 0 || m_menuOpen >= m_menus.size() || (!m_popup && m_menuOpen >= m_menuSpots.size()))
         return;
     const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
     const int count = int(items.size());
@@ -1978,24 +2071,27 @@ void App::drawMenu(Screen &screen)
     const int w = screen.width();
     const int h = screen.height();
     const int width = qMin(w, 2 + 2 + names + (keys ? 3 + keys : 0) + 2); // edge, mark, name, key, edge
-    const int x = qBound(0, m_menuSpots.at(m_menuOpen).from, w - width);
     const int rows = qMax(1, qMin(count, h - 4));
+    // Under its title; a right click's menu just under the pointer, or
+    // higher where the screen ends.
+    const int x = qBound(0, m_popup ? m_popupX : m_menuSpots.at(m_menuOpen).from, w - width);
+    const int top = m_popup ? qBound(1, m_popupY + 1, qMax(1, h - rows - 3)) : 1;
     if (m_menuCursor >= 0 && m_menuCursor < m_menuTop)
         m_menuTop = m_menuCursor;
     if (m_menuCursor >= m_menuTop + rows)
         m_menuTop = m_menuCursor - rows + 1;
     m_menuTop = qBound(0, m_menuTop, qMax(0, count - rows));
     m_menuX = x;
-    m_menuY = 2;
+    m_menuY = top + 1;
     m_menuWidth = width;
     m_menuShown = rows;
 
     const Style box{Ink::Normal, Paper::Bar, false};
     const Style edge{Ink::Accent, Paper::Bar, false};
     const QString rule(width - 2, QChar(0x2500));
-    screen.fill(x, 1, width, rows + 2, box);
-    screen.put(x, 1, QStringLiteral("┌") + rule + QStringLiteral("┐"), edge);
-    screen.put(x, 2 + rows, QStringLiteral("└") + rule + QStringLiteral("┘"), edge);
+    screen.fill(x, top, width, rows + 2, box);
+    screen.put(x, top, QStringLiteral("┌") + rule + QStringLiteral("┐"), edge);
+    screen.put(x, top + 1 + rows, QStringLiteral("└") + rule + QStringLiteral("┘"), edge);
     for (int i = 0; i < rows; ++i) {
         const int row = m_menuTop + i;
         const int y = m_menuY + i;
@@ -2587,12 +2683,12 @@ void App::reportResult()
 
 // A command an extension put in the menu bar of the window: here it is in
 // the command palette. What it wants asked first is asked here too.
-void App::runExtensionCommand(const Extensions::Command &command)
+void App::runExtensionCommand(const Extensions::Command &command, const QStringList &selection)
 {
     const Pane &p = pane();
     const QString folder = p.model->extensionsFolder();
-    auto invoke = [this, command, folder](const QString &input) {
-        Extensions::Host::instance()->invoke(command, folder, {}, input);
+    auto invoke = [this, command, folder, selection](const QString &input) {
+        Extensions::Host::instance()->invoke(command, folder, selection, input);
     };
     auto typed = [this, command, invoke] {
         if (!command.asks) {
@@ -3402,7 +3498,8 @@ void App::drawHelp(Screen &screen)
         "  q, Ctrl+Q, F10                    quit (some terminals keep F10 for their own menu)",
         "",
         "  Mouse: click a row to go to it, double-click to open it (.. or the folder's",
-        "  name at the top: up), right-click to select, wheel to scroll, click a word on the",
+        "  name at the top: up), right-click for the menu of what can be done with it (it",
+        "  becomes the selection, as in the window), wheel to scroll, click a word on the",
         "  bottom line. Hold Shift to select text.",
         "",
         "Commands act on the selected items; with none selected, on the item under the cursor.",
