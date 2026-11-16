@@ -10,7 +10,7 @@
 #include "Access.h"
 #include "BatchRenameDialog.h"
 #include "CommandPalette.h"
-#include "ConnectDialog.h"
+#include "ExtensionForm.h"
 #include "DesktopActions.h"
 #include "OrganizerDialog.h"
 #include "Remote.h"
@@ -156,6 +156,9 @@ MainWindow::MainWindow(QWidget *parent)
                 refreshChrome();
         }
     });
+    // An extension asks something (a login). Not from inside the reading of
+    // its message: the dialog runs its own loop.
+    connect(Extensions::Host::instance(), &Extensions::Host::formRequested, this, &MainWindow::showExtensionForm, Qt::QueuedConnection);
     // An extension has a folder to show for what the user chose from it.
     connect(Extensions::Host::instance(), &Extensions::Host::openRequested, this, [this](const QString &, const QString &folder) {
         if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
@@ -174,7 +177,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_mounts = new MountActions(this);
     connect(m_mounts, &MountActions::message, this, [this](const QString &text) { showMessage(text); });
-    connect(m_mounts, &MountActions::connected, this, [this](const QString &folder) { navigateTo(folder); });
     connect(m_mounts, &MountActions::mountsChanged, this, [this] { m_sidebar->refreshSoon(); });
 
     InlineRename::Host rename;
@@ -590,13 +592,6 @@ void MainWindow::setupActions()
         }
         updateFloatingBar();
     });
-    m_connectAct = new QAction(tr("Connect to Server…"), this);
-    connect(m_connectAct, &QAction::triggered, this, [this] {
-        ConnectDialog dialog(this);
-        if (dialog.exec() == QDialog::Accepted)
-            m_mounts->connectToServer(dialog.address());
-    });
-
     m_organizeAct = new QAction(tr("Organize with Claude…"), this);
     connect(m_organizeAct, &QAction::triggered, this, &MainWindow::organizeWithClaude);
 
@@ -1726,17 +1721,13 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
             m_sidebar->refreshSoon();
             updateBookmarkAction();
         });
-    } else if (kind == Sidebar::NetworkItem && Sidebar::canEject(item)) {
-        menu->addSeparator();
-        const QString name = item->text();
-        menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Disconnect"), this,
-                        [this, path, name] { ejectDrive(path, name); });
     } else if (kind == Sidebar::ExtensionItem && Sidebar::canEject(item)) {
-        // Its extension does the disconnecting.
+        // Its extension does the disconnecting (a server: Connect to Server).
         menu->addSeparator();
         const QString place = Sidebar::extensionPlace(item);
+        const QString name = item->text();
         menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Disconnect"), this,
-                        [place] { Extensions::Host::instance()->activatePlace(place, QStringLiteral("eject")); });
+                        [this, place, path, name] { ejectExtensionPlace(place, path, name); });
     } else if (kind == Sidebar::DriveItem && Sidebar::canEject(item)) {
         menu->addSeparator();
         const QString name = item->text();
@@ -1951,21 +1942,56 @@ void MainWindow::applyOrganizePlan(const QString &folder, const QList<QPair<QStr
 // ------------------------------------------------------------- servers ---
 
 // Unmount and power off a USB drive (GNOME's own tool does it safely).
-void MainWindow::ejectDrive(const QString &root, const QString &name)
+// Before a drive is ejected or a server disconnected: no job of ours may be
+// using it, and we leave it if it is the open folder. False: not now.
+bool MainWindow::letGoOf(const QString &root, const QString &name)
 {
     for (FileJob *job : m_ops->activeJobs()) {
         for (const Transfer &t : job->transfers()) {
             if (t.source.startsWith(root + QLatin1Char('/')) || t.targetDir == root
                 || t.targetDir.startsWith(root + QLatin1Char('/'))) {
                 showMessage(tr("Wait until copying to or from “%1” is finished").arg(name));
-                return;
+                return false;
             }
         }
     }
     if (m_pane->current == root || m_pane->current.startsWith(root + QLatin1Char('/')))
         navigateTo(QDir::homePath()); // don't keep the drive busy ourselves
+    return true;
+}
 
-    m_mounts->eject(root, name);
+void MainWindow::ejectDrive(const QString &root, const QString &name)
+{
+    if (letGoOf(root, name))
+        m_mounts->eject(root, name);
+}
+
+// ⏏ on a row an extension added (a connected server): the extension does
+// it, after the same checks as for a drive when the row is a folder.
+void MainWindow::ejectExtensionPlace(const QString &place, const QString &path, const QString &name)
+{
+    if (!Extensions::Host::isPlacePath(path) && !letGoOf(path, name))
+        return;
+    Extensions::Host::instance()->activatePlace(place, QStringLiteral("eject"));
+}
+
+// An extension asks the user something while it works (a login). Shown by
+// one window only; the answer goes back to the extension.
+void MainWindow::showExtensionForm(const Extensions::Form &form)
+{
+    // The window in front (or a dialog of its): the user is there.
+    QWidget *active = QApplication::activeWindow();
+    while (active && active != this && active->parentWidget())
+        active = active->parentWidget()->window();
+    if (active && active != this)
+        return;
+    Extensions::Host *host = Extensions::Host::instance();
+    if (!host->takeForm(form.extension, form.id))
+        return; // another window has it
+    QPointer<MainWindow> self(this);
+    const ExtensionForm::Answer answer = ExtensionForm::ask(this, form);
+    host->answerForm(form.extension, form.id, answer.cancelled, answer.values, answer.button);
+    Q_UNUSED(self);
 }
 
 // ------------------------------------------------------------ settings ---
@@ -2086,19 +2112,20 @@ void MainWindow::showItems(const QStringList &items)
 bool MainWindow::navigateTo(const QString &path, bool addToHistory)
 {
     // A server address (typed, a bookmark, the command line): connect first.
-    if (path == Sidebar::connectPlace()) {
-        m_connectAct->trigger();
-        return false;
-    }
     // A sidebar row an extension answers for: it is told, and asks for a
     // folder to be opened when it has one (after connecting, say).
     if (Extensions::Host::isPlacePath(path)) {
         Extensions::Host::instance()->activatePlace(path, QStringLiteral("open"));
         return false;
     }
+    // An address that isn't a folder (sftp://host/, typed, a bookmark, the
+    // command line): the extension that said this kind is its connects and
+    // asks for the folder to be opened.
+    if (Extensions::Host::instance()->openAddress(path))
+        return false;
     if (Remote::isRemoteAddress(path)) {
-        m_mounts->connectToServer(path);
-        return false; // opens when connected
+        showMessage(tr("Connecting to servers is switched off: Edit → Extensions → Connect to Server"));
+        return false;
     }
     // Recent and Starred aren't folders: lists of items from anywhere. So is
     // an extension's list (Git's changed files), while its extension has it.
@@ -2727,7 +2754,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
         if (me->button() == Qt::LeftButton && m_sidebar->ejectButtonHit(item, me->position().toPoint())) {
             if (Sidebar::kindOf(item) == Sidebar::ExtensionItem)
-                Extensions::Host::instance()->activatePlace(Sidebar::extensionPlace(item), QStringLiteral("eject"));
+                ejectExtensionPlace(Sidebar::extensionPlace(item), Sidebar::pathOf(item), item->text());
             else
                 ejectDrive(Sidebar::pathOf(item), item->text());
             return true; // don't also open it
@@ -3422,7 +3449,6 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_homeAct);
     go->addSeparator();
     go->addAction(m_bookmarkAct);
-    go->addAction(m_connectAct);
     go->addSeparator();
     go->addAction(m_locationAct);
     go->addAction(m_searchAct);

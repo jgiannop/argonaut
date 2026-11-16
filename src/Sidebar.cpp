@@ -115,12 +115,6 @@ void Sidebar::watchForChanges()
     QDir().mkpath(QFileInfo(bookmarksFile).absolutePath());
     bookmarksWatcher->addPath(QFileInfo(bookmarksFile).absolutePath()); // atomic saves replace the file
     connect(bookmarksWatcher, &QFileSystemWatcher::directoryChanged, this, &Sidebar::refreshSoon);
-    // Servers connect and disconnect inside one FUSE mount, so /proc/mounts
-    // doesn't change: watch GVfs's folder of mounts instead.
-    if (const QString gvfs = Remote::gvfsRoot(); !gvfs.isEmpty()) {
-        auto *gvfsWatcher = new QFileSystemWatcher({gvfs}, this);
-        connect(gvfsWatcher, &QFileSystemWatcher::directoryChanged, this, &Sidebar::refreshSoon);
-    }
 #if defined(Q_OS_LINUX)
     // The kernel flags this file as "exceptional" whenever a mount changes.
     m_mountsFd = ::open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
@@ -254,28 +248,9 @@ void Sidebar::refresh()
 #endif
     }
 
-#if defined(Q_OS_LINUX)
-    // Network: connected servers (and phones), network bookmarks not
-    // connected now, and Connect to Server….
-    addSeparator();
-    QSet<QString> connected;
-    for (const Remote::Mount &m : Remote::mounts()) {
-        QListWidgetItem *item = addRow(m.name, m.localPath, Glyph::Network, NetworkItem);
-        item->setData(EjectRole, true);
-        item->setToolTip(m.address + QLatin1Char('\n') + tr("Disconnect: click ⏏"));
-        connected.insert(QUrl(m.address).host());
-    }
-    for (const Bookmarks::Bookmark &b : Bookmarks::loadRemote()) {
-        const QUrl url(b.path);
-        if (connected.contains(url.host()))
-            continue;
-        QListWidgetItem *item = addRow(b.label.isEmpty() ? url.host() : b.label, b.path, Glyph::Network, NetworkItem);
-        item->setToolTip(b.path);
-    }
-    addRow(tr("Connect to Server…"), connectPlace(), Glyph::Network, PlaceItem)->setToolTip(tr("sftp, smb, ftp, WebDAV…"));
-#endif
-    // Rows from extensions (a cloud drive, a kind of server we don't know):
-    // a group of their own at the end.
+    // Rows from extensions: a group of their own at the end. Connected
+    // servers, network bookmarks and "Connect to Server…" are the Connect
+    // to Server extension's; a cloud drive would be another's.
     const QList<Extensions::Place> added = Extensions::Host::instance()->places();
     if (!added.isEmpty())
         addSeparator();
@@ -344,7 +319,3 @@ bool Sidebar::ejectButtonHit(const QListWidgetItem *item, const QPoint &viewport
     return canEject(item) && ejectRect(visualItemRect(item)).contains(viewportPos);
 }
 
-QString Sidebar::connectPlace()
-{
-    return QStringLiteral("connect:///");
-}

@@ -22,6 +22,7 @@ for line in sys.stdin:
             {"id": "showme", "label": "Show Me", "target": "folder", "group": "Fake"},
             {"id": "listme", "label": "List Me", "target": "folder", "group": "Fake"},
             {"id": "live", "label": "Live", "target": "folder", "group": "Fake"},
+            {"id": "form", "label": "Form", "target": "folder", "group": "Fake"},
             {"id": "late", "label": "Late", "target": "folder", "group": "Fake"},
             {"id": "inmenu", "label": "In The & Menu", "menu": "view"},
             {"id": "nomenu", "label": "In No Menu", "menu": "tools"},
@@ -40,6 +41,8 @@ for line in sys.stdin:
             {"id": "", "label": "No id"},
             {"id": "nolabel"}]})
         say({"type": "open", "folder": here})  # out of the blue: not obeyed
+        say({"type": "form", "id": "sneaky", "title": "Your password, please",
+             "fields": [{"id": "p", "label": "Password", "kind": "secret"}]})  # nor is this shown
     if m.get("type") == "place":
         here = os.path.dirname(os.path.abspath(__file__))
         if m.get("action") == "open":
@@ -74,6 +77,19 @@ for line in sys.stdin:
         else:
             reply.update(kind="text", text="FAKE PREVIEW of " + name + " as " + m.get("mime", "") , monospace=True)
         say(reply)
+    if m.get("type") == "address":
+        # A kind of address that is ours (the manifest says so).
+        say({"type": "message", "text": "address " + m.get("address", "")})
+        say({"type": "open", "folder": os.path.dirname(os.path.abspath(__file__))})
+    if m.get("type") == "form":
+        # The answer to a form of ours (or the refusal to show one).
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "forms"), "a") as f:
+            f.write(json.dumps(m, sort_keys=True) + "\n")
+        if m.get("id") == "login" and not m.get("cancelled"):
+            v = m.get("values", {})
+            say({"type": "message", "text": "form %s|%s|%s|%s|%s button %d" % (
+                v.get("user"), v.get("password"), v.get("anon"), v.get("share"), v.get("where"), m.get("button", -1))})
+            say({"type": "form", "id": "again", "text": "Are you sure?", "buttons": ["Yes", "No & Never"]})
     if m.get("type") == "result":
         # A named result is on screen (the answer: a new version made for
         # the room there is) or no longer is. Written down for the tests.
@@ -85,6 +101,19 @@ for line in sys.stdin:
                  + " " + ",".join(sorted(m.get("colors", {}))) + " font=" + ("yes" if m.get("font") else "no")})
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
+        if m.get("command") == "form":
+            say({"type": "form", "id": "login", "title": "Log\nIn", "heading": "Log in to nas", "text": "Enter <b>it</b>",
+                 "warning": "That didn't work", "buttons": ["Connect", "Later", ""],
+                 "fields": [
+                     {"id": "anon", "kind": "check", "label": "Anonymously", "alone": True},
+                     {"id": "user", "label": "User", "value": "me"},
+                     {"id": "password", "label": "Password", "kind": "secret", "value": "never shown"},
+                     {"id": "share", "kind": "choice", "label": "Share", "choices": ["photos", "music"], "value": "music"},
+                     {"id": "where", "label": "Where", "choices": ["here", "there"], "placeholder": "somewhere"},
+                     {"id": "empty", "kind": "choice", "label": "Nothing to choose"},
+                     {"id": "user", "label": "Twice"},
+                     {"label": "No id"}]})
+            say({"type": "form", "id": "second", "text": "one at a time"})
         if m.get("command") == "live":
             say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1"})
         if m.get("command") == "late":

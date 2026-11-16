@@ -156,6 +156,18 @@ Manifest readManifest(const QString &folder, bool builtIn)
                         .arg(ProtocolVersion);
         return m;
     }
+    // "addresses": the kinds of address that are this extension's to open.
+    // Never ours (folders, the places) and never the web's.
+    static const QRegularExpression goodScheme(QStringLiteral("^[a-z][a-z0-9+.-]{1,30}$"));
+    static const QStringList reserved{QStringLiteral("file"), QStringLiteral("recent"), QStringLiteral("starred"), QStringLiteral("listing"),
+                                      QStringLiteral("extension-place"), QStringLiteral("trash"), QStringLiteral("connect"),
+                                      QStringLiteral("http"), QStringLiteral("https"), QStringLiteral("topic")};
+    const QJsonArray addresses = o.value(QLatin1String("addresses")).toArray();
+    for (const QJsonValue &value : addresses) {
+        const QString scheme = value.toString().toLower();
+        if (m.addresses.size() < 30 && goodScheme.match(scheme).hasMatch() && !reserved.contains(scheme) && !m.addresses.contains(scheme))
+            m.addresses << scheme;
+    }
     // "exec": the program and its arguments. A relative program is inside
     // the extension's folder.
     QStringList exec;
@@ -198,6 +210,7 @@ Host::Host(QObject *parent) : QObject(parent)
 {
     qRegisterMetaType<Extensions::Badge>();
     qRegisterMetaType<Extensions::PreviewReply>();
+    qRegisterMetaType<Extensions::Form>();
     rescan();
 }
 
@@ -545,6 +558,79 @@ QList<Command> Host::menuCommands(const QString &menu) const
     return out;
 }
 
+namespace {
+
+// "sftp" of "sftp://host/path"; empty for anything that isn't an address.
+QString schemeOf(const QString &address)
+{
+    const qsizetype at = address.indexOf(QLatin1String("://"));
+    return at > 0 ? address.left(at).toLower() : QString();
+}
+
+} // namespace
+
+bool Host::handlesAddress(const QString &address) const
+{
+    const QString scheme = schemeOf(address);
+    if (scheme.isEmpty())
+        return false;
+    for (const Running *ext : m_running) {
+        if (ext->manifest.addresses.contains(scheme) && ext->failures < MaxFailures)
+            return true;
+    }
+    return false;
+}
+
+bool Host::openAddress(const QString &address)
+{
+    const QString scheme = schemeOf(address);
+    if (scheme.isEmpty() || m_quitting)
+        return false;
+    for (Running *ext : std::as_const(m_running)) {
+        if (!ext->manifest.addresses.contains(scheme) || ext->failures >= MaxFailures)
+            continue;
+        if (!ext->process)
+            start(ext); // an address can come before any folder is shown (the command line)
+        ext->userActed = QDateTime::currentMSecsSinceEpoch();
+        send(ext, {{QStringLiteral("type"), QStringLiteral("address")}, {QStringLiteral("address"), address.left(2000)}});
+        return true;
+    }
+    return false;
+}
+
+bool Host::takeForm(const QString &extension, const QString &id)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id == extension && ext->process && ext->formPending == id && !ext->formTaken) {
+            ext->formTaken = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Host::answerForm(const QString &extension, const QString &id, bool cancelled, const QHash<QString, QString> &values, int button)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension || ext->formPending != id)
+            continue;
+        ext->formPending.clear();
+        ext->formTaken = false;
+        QJsonObject message{{QStringLiteral("type"), QStringLiteral("form")}, {QStringLiteral("id"), id}};
+        if (cancelled) {
+            message.insert(QStringLiteral("cancelled"), true);
+        } else {
+            QJsonObject filled;
+            for (auto it = values.constBegin(); it != values.constEnd(); ++it)
+                filled.insert(it.key(), it.value());
+            message.insert(QStringLiteral("values"), filled);
+            message.insert(QStringLiteral("button"), button);
+            ext->userActed = QDateTime::currentMSecsSinceEpoch(); // the conversation goes on
+        }
+        send(ext, message);
+    }
+}
+
 QList<Place> Host::places() const
 {
     QList<Place> out;
@@ -888,6 +974,68 @@ void Host::handle(Running *ext, const QByteArray &line)
         emit placesChanged();
         return;
     }
+    if (type == QLatin1String("form")) { // it needs the user to fill something in, or to decide
+        const QString id = message.value(QLatin1String("id")).toString().left(64);
+        if (id.isEmpty())
+            return;
+        auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("form")}, {QStringLiteral("id"), id}, {QStringLiteral("cancelled"), true}}); };
+        // Like "open": only while it is doing what the user asked of it. A
+        // dialog out of the blue asking for a password is not something an
+        // extension gets to show. And one at a time.
+        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs || !ext->formPending.isEmpty()) {
+            refuse();
+            return;
+        }
+        Form form;
+        form.extension = ext->manifest.id;
+        form.extensionName = ext->manifest.name;
+        form.id = id;
+        form.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        form.heading = tidy(message.value(QLatin1String("heading")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        form.text = tidy(message.value(QLatin1String("text")).toString(), 1000);
+        form.warning = tidy(message.value(QLatin1String("warning")).toString(), MaxTooltipChars);
+        QSet<QString> ids;
+        const QJsonArray fields = message.value(QLatin1String("fields")).toArray();
+        for (const QJsonValue &entry : fields) {
+            if (form.fields.size() >= 12)
+                break;
+            const QJsonObject o = entry.toObject();
+            FormField field;
+            field.id = o.value(QLatin1String("id")).toString().left(64);
+            if (field.id.isEmpty() || ids.contains(field.id))
+                continue;
+            ids.insert(field.id);
+            field.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            const QString kind = o.value(QLatin1String("kind")).toString();
+            field.kind = kind == QLatin1String("secret") ? FormField::Secret
+                         : kind == QLatin1String("check") ? FormField::Check
+                         : kind == QLatin1String("choice") ? FormField::Choice : FormField::Text;
+            const QJsonValue value = o.value(QLatin1String("value"));
+            field.value = value.isBool() ? (value.toBool() ? QStringLiteral("true") : QStringLiteral("false"))
+                                         : value.toString().left(2000).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            field.placeholder = tidy(o.value(QLatin1String("placeholder")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            const QJsonArray choices = o.value(QLatin1String("choices")).toArray();
+            for (const QJsonValue &choice : choices) {
+                const QString text = choice.toString().left(300).replace(QLatin1Char('\n'), QLatin1Char(' '));
+                if (field.choices.size() < 200 && !text.isEmpty())
+                    field.choices << text;
+            }
+            if (field.kind == FormField::Choice && field.choices.isEmpty())
+                continue; // nothing to choose from
+            field.alone = o.value(QLatin1String("alone")).toBool();
+            form.fields.append(field);
+        }
+        const QJsonArray buttons = message.value(QLatin1String("buttons")).toArray();
+        for (const QJsonValue &button : buttons) {
+            const QString text = tidy(button.toString(), 40).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            if (form.buttons.size() < 6 && !text.isEmpty())
+                form.buttons << text;
+        }
+        ext->formPending = id;
+        ext->formTaken = false;
+        emit formRequested(form);
+        return;
+    }
     if (type == QLatin1String("open")) { // show this folder: the answer to what the user chose
         const QString folder = message.value(QLatin1String("folder")).toString();
         // Never out of the blue: an extension can't move the user about.
@@ -1024,6 +1172,8 @@ void Host::forget(Running *ext)
         emit placesChanged();
     }
     ext->userActed = 0;
+    ext->formPending.clear();
+    ext->formTaken = false;
     const QStringList lists = ext->listings.keys();
     ext->listings.clear();
     for (const QString &id : lists)

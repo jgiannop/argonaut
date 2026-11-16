@@ -92,6 +92,11 @@ private:
     bool m_done = false;
 };
 
+// The servers connected to before, newest first (at most 10), in Argonaut's
+// settings ("network/recent").
+QStringList recentServers();
+void rememberServer(const QString &address);
+
 // Disconnects a mount (`gio mount -u`). Runs in the background; calls
 // `done(ok, error)` when finished.
 void unmount(const QString &address, QObject *context, const std::function<void(bool, const QString &)> &done);

@@ -18,7 +18,10 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Five extensions come with Argonaut and are good to read: System Dashboard
+Six extensions come with Argonaut and are good to read: Connect to Server
+([`extensions/connect`](../extensions/connect): rows in the sidebar, a kind of
+address that is its to open, and forms for the questions a server asks),
+System Dashboard
 ([`extensions/dashboard`](../extensions/dashboard): a picture it draws itself,
 shown as a result that updates while it is on screen), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
@@ -92,6 +95,7 @@ only those are looked at then.
 | `protocol` | Required. `1`. |
 | `exec` | Required. The program and its arguments, as a list (or one string for a program alone). A relative program is inside the extension's folder. It must be executable. |
 | `name`, `description`, `version`, `author` | Shown in the Extensions window. |
+| `addresses` | The kinds of address that are yours to open, by what comes before `://`: `["sftp", "smb"]`. See [Addresses](#addresses). |
 
 ## The conversation
 
@@ -123,6 +127,9 @@ Ignore message types and keys you don't know; newer versions may add some.
 - `unwatch`: no view shows it any more. Forget it.
 - `preview`: the user is previewing a file of a kind you announced (see
   [Previews](#previews)).
+- `address`: the user asked for an address of a kind you said is yours (see
+  [Addresses](#addresses)).
+- `form`: the answer to a form you showed (see [Forms](#forms)).
 - `place`: the user clicked one of your sidebar rows, or its ⏏ (see
   [Places in the sidebar](#places-in-the-sidebar)).
 - `result`: a result you named is on screen now, or no longer is (see
@@ -347,6 +354,81 @@ changed, and to show the user where they now are:
 Argonaut obeys one `open` after the user chose something of yours (a row, or
 one of your commands), within five minutes, and ignores any other. An
 extension can't move the user about on its own. At most 20 rows.
+
+### Addresses
+
+Some places aren't folders until something is done: `sftp://me@example.com/`
+has to be connected first. Say in your `extension.json` which kinds are
+yours:
+
+```json
+"addresses": ["sftp", "smb"]
+```
+
+When the user types such an address in the path bar (or one is given on the
+command line), you are told, and started first if you weren't running:
+
+```json
+{"type": "address", "address": "sftp://me@example.com/projects"}
+```
+
+Do what it takes, then answer with `open` and the folder. You can't claim
+`file`, the web's `http`/`https`, or Argonaut's own places; a kind two
+extensions claim goes to the first.
+
+### Forms
+
+When you need the user in the middle of your work (a login, an unknown host
+key, which of several things), show a form:
+
+```json
+{"type": "form", "id": "login", "title": "Log In", "heading": "Log in to nas",
+ "text": "Enter user and password for share “photos”.",
+ "warning": "That user name or password didn't work. Try again.",
+ "fields": [
+     {"id": "anonymous", "kind": "check", "label": "Connect anonymously", "alone": true},
+     {"id": "user", "label": "User", "value": "me"},
+     {"id": "password", "kind": "secret", "label": "Password"}
+ ],
+ "buttons": ["Connect"]}
+```
+
+Argonaut shows it as a dialog of its own, with Cancel added, and answers:
+
+```json
+{"type": "form", "id": "login", "button": 0,
+ "values": {"anonymous": "false", "user": "alice", "password": "…"}}
+{"type": "form", "id": "login", "cancelled": true}
+```
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Comes back with the answer. |
+| `title`, `heading`, `text` | The dialog's title, a heading and a paragraph. Plain text. |
+| `warning` | A line shown as a problem (the last answer was wrong). |
+| `fields` | Up to 12, each with an `id` and a `label`. |
+| `buttons` | Up to 6 labels; `button` in the answer is the one pressed, counted from 0. None given: "OK". A form with buttons and no fields is a question ("Log In Anyway" / "Cancel Login"). |
+
+A field's `kind`:
+
+| Kind | Shown as | Its value in the answer |
+|---|---|---|
+| `text` (default) | A line of text starting with `value`, with `placeholder` while empty. With `choices`, a list of suggestions to pick or type over. | The text. |
+| `secret` | A password field. It always starts empty. | The text. |
+| `check` | A tick box (`"value": true` to start ticked). With `"alone": true`, ticking it turns the other fields off. | `"true"` or `"false"`. |
+| `choice` | One of `choices` (up to 200). | The one chosen. |
+
+Rules, because a dialog that asks for a password is a serious thing:
+
+- A form is shown only **while you are doing something the user asked of
+  you** (one of your commands, sidebar rows or addresses, within five
+  minutes; an answered form keeps that going). Otherwise it is refused: you
+  get `"cancelled": true` at once.
+- One form at a time; a second while one is open is refused the same way.
+- The dialog always says **which extension is asking**. You can't change
+  that line.
+- What is typed is handed to you and kept nowhere by Argonaut. Don't write
+  passwords to disk or to your output.
 
 ### Previews
 

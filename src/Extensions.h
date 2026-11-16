@@ -133,6 +133,33 @@ struct Place
     bool eject = false; // has a ⏏ button (disconnect); the extension is told when it is pressed
 };
 
+// Something an extension needs the user to fill in or decide while it works
+// (a login, an unknown host key, which shared folder): shown as a dialog
+// that says which extension is asking.
+struct FormField
+{
+    enum Kind { Text, Secret, Check, Choice } kind = Text;
+    QString id;
+    QString label;
+    QString value;       // what it starts with ("true" for a ticked Check)
+    QString placeholder; // Text: shown while empty
+    QStringList choices; // Choice: what to pick from; Text: suggestions to pick or type over
+    bool alone = false;  // Check: while ticked, the other fields are off ("Connect anonymously")
+};
+
+struct Form
+{
+    QString extension;     // its extension's id
+    QString extensionName;
+    QString id;
+    QString title;         // the dialog's title
+    QString heading;
+    QString text;
+    QString warning;       // shown as a problem ("That password didn't work")
+    QList<FormField> fields;
+    QStringList buttons;   // besides Cancel; none given: "OK"
+};
+
 // A selected item, as far as commands care.
 struct Item
 {
@@ -149,6 +176,7 @@ struct Manifest
     QString version;
     QString author;
     QString folder;      // where extension.json is
+    QStringList addresses; // the kinds of address it opens ("sftp", "smb"): typed in the path bar, they go to it
     QString program;     // absolute path of the program to start
     QStringList arguments;
     bool builtIn = false; // came with Argonaut (not from the user's folder): on unless switched off
@@ -224,6 +252,21 @@ public:
     // is told {"type":"place","id":…,"action":…}.
     void activatePlace(const QString &placePath, const QString &action);
 
+    // Addresses that aren't folders ("sftp://host/", "gdrive://…"): true if
+    // a switched-on extension said in its extension.json that this kind is
+    // its. It is told {"type":"address","address":…} (started first if it
+    // isn't running), and answers with "open" when there is a folder.
+    bool openAddress(const QString &address);
+    bool handlesAddress(const QString &address) const;
+
+    // Forms: formRequested says an extension asks. Exactly one window shows
+    // it: the one whose takeForm() is true. answerForm() tells the extension
+    // what was filled in (`values` by field id; a Check is "true"/"false")
+    // and which button was pressed, or that the user backed out.
+    bool takeForm(const QString &extension, const QString &id);
+    void answerForm(const QString &extension, const QString &id, bool cancelled,
+                    const QHash<QString, QString> &values = {}, int button = 0);
+
     // Previews: true if a running extension said it previews this type.
     // requestPreview() asks it and returns the request's number (0: nobody
     // to ask); the answer comes as previewReady with that number, or never
@@ -259,6 +302,7 @@ signals:
     void message(const QString &extension, const QString &text); // something to tell the user
     void previewReady(int request, const Extensions::PreviewReply &reply);
     void placesChanged();                                  // the sidebar rows from extensions
+    void formRequested(const Extensions::Form &form);      // an extension asks the user something
     // An extension asks for a folder to be shown, as the answer to something
     // the user just chose from it (a command, a sidebar row).
     void openRequested(const QString &extension, const QString &folder);
@@ -288,6 +332,8 @@ private:
         QHash<QString, Listing> listings; // by id
         QList<Place> places;              // its sidebar rows
         qint64 userActed = 0;             // when the user last chose something of its (ms since the epoch)
+        QString formPending;              // the form it waits on (its id); one at a time
+        bool formTaken = false;           // a window is showing it
     };
 
     void startAsNeeded();
@@ -312,3 +358,4 @@ private:
 
 Q_DECLARE_METATYPE(Extensions::Badge)
 Q_DECLARE_METATYPE(Extensions::PreviewReply)
+Q_DECLARE_METATYPE(Extensions::Form)

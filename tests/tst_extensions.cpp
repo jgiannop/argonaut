@@ -75,6 +75,8 @@ private slots:
     void documentPreview();
     void systemDashboard();
     void placesAndOpeningFolders();
+    void formsAndAddresses();
+    void connectToServer();
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void gitChangesCommitAndBranches();
@@ -99,7 +101,7 @@ void TestExtensions::initTestCase()
         QSKIP("python3 isn't installed (the test extension is a Python script)");
     writeFile(g_extensions + "/fake/extension.json",
               R"({"id": "fake", "name": "Fake", "description": "For tests", "version": "1.0",
-                  "protocol": 1, "exec": ["fake.py"]})");
+                  "protocol": 1, "addresses": ["fake", "FAKE2", "file", "https", "no spaces", "listing"], "exec": ["fake.py"]})");
     QVERIFY(QFile::copy(QStringLiteral(FAKE_EXTENSION), g_extensions + "/fake/fake.py"));
     QFile::setPermissions(g_extensions + "/fake/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
 }
@@ -326,7 +328,7 @@ void TestExtensions::commandsFitTheSelection()
     QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
     QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
     QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
-    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme", "live", "late"})); // the folder's empty space
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme", "live", "form", "late"})); // the folder's empty space
     QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
     QVERIFY(ids(QString(), {}).isEmpty());
     // A command for the menu bar is in its menu and nowhere else; one for a
@@ -486,6 +488,188 @@ void TestExtensions::placesAndOpeningFolders()
     // Switched off: its rows go.
     host.setEnabled("fake", false);
     QVERIFY(host.places().isEmpty());
+}
+
+// Forms and address kinds, as the host sees them: a form only while the
+// extension does what the user asked, one at a time, shown by one window;
+// address kinds from the manifest, never ours or the web's.
+void TestExtensions::formsAndAddresses()
+{
+    Host host;
+    QSignalSpy forms(&host, &Host::formRequested);
+    QSignalSpy said(&host, &Host::message);
+    host.setEnabled("fake", true);
+    // Address kinds are known from extension.json, before the program runs.
+    QVERIFY(host.handlesAddress("fake://x/y"));
+    QVERIFY(host.handlesAddress("FAKE2://x"));
+    QVERIFY(!host.handlesAddress("file:///etc"));
+    QVERIFY(!host.handlesAddress("https://example.com"));
+    QVERIFY(!host.handlesAddress("listing:///fake/x"));
+    QVERIFY(!host.handlesAddress("sftp://example.com"));
+    QVERIFY(!host.handlesAddress(m_dir));
+    QVERIFY(!host.openAddress("sftp://example.com"));
+    // An address starts the program if no folder has yet (the command line).
+    QVERIFY(!host.isRunning("fake"));
+    QVERIFY(host.openAddress("fake://x/y"));
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("address fake://x/y"));
+
+    // A login form: checked and cut like everything an extension says.
+    forms.clear();
+    host.watch(m_dir);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.commands(m_dir, {})) {
+            if (c.id == "form")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    host.invoke(command, m_dir, {});
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 1, 10000);
+    QTest::qWait(200);
+    QCOMPARE(forms.size(), 1); // "second" came while this one is open: refused
+    Extensions::Form form = forms.first().first().value<Extensions::Form>();
+    QCOMPARE(form.title, QStringLiteral("Log In"));
+    QCOMPARE(form.buttons, (QStringList{"Connect", "Later"}));
+    QCOMPARE(int(form.fields.size()), 5); // not the empty choice, the second "user", the one without an id
+    QCOMPARE(form.fields.at(0).kind, Extensions::FormField::Check);
+    QVERIFY(form.fields.at(0).alone);
+    QCOMPARE(form.fields.at(2).kind, Extensions::FormField::Secret);
+    QCOMPARE(form.fields.at(3).choices, (QStringList{"photos", "music"}));
+    QCOMPARE(form.fields.at(4).kind, Extensions::FormField::Text);
+    QCOMPARE(form.fields.at(4).choices, (QStringList{"here", "there"})); // suggestions
+    said.clear();
+    QCOMPARE(form.extensionName, QStringLiteral("Fake"));
+    QVERIFY(!host.takeForm("fake", "other"));
+    QVERIFY(host.takeForm("fake", "login"));
+    QVERIFY(!host.takeForm("fake", "login")); // one window shows it
+    host.answerForm("fake", "login", false, {{"user", "bob"}, {"password", "pw"}, {"anon", "false"}}, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.last().at(1).toString(), QStringLiteral("form bob|pw|false|None|None button 1"));
+    // Its follow-up may be asked: the conversation goes on.
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 2, 10000);
+    QCOMPARE(forms.last().first().value<Extensions::Form>().id, QStringLiteral("again"));
+    host.answerForm("fake", "again", true);
+}
+
+// The Connect to Server extension, against a pretend `gio`: its rows, the
+// address form, the login the server asks for, the folder opened at the end,
+// the server in the sidebar afterwards, and disconnecting.
+void TestExtensions::connectToServer()
+{
+    const QString gvfs = m_dir + "/gvfs";
+    const QString mounted = gvfs + "/sftp:host=example.com,user=alice";
+    QDir().mkpath(gvfs);
+    const QString gio = m_dir + "/gio";
+    const QString log = m_dir + "/gio.log";
+    writeFile(gio, QString("#!/bin/sh\n"
+                           "echo \"$@\" >> '%1'\n"
+                           "if [ \"$1\" = info ]; then echo 'local path: %2'; exit 0; fi\n"
+                           "if [ \"$1\" = mount ] && [ \"$2\" = -u ]; then rmdir '%2'; exit 0; fi\n"
+                           "printf 'Enter password for example.com\\n'\n"
+                           "while true; do\n"
+                           "  printf 'User [me]: '; read u || exit 2\n"
+                           "  printf 'Password: '; read p || exit 2\n"
+                           "  echo \"login $u|$p\" >> '%1'\n"
+                           "  [ \"$p\" = right ] && mkdir -p '%2' && exit 0\n"
+                           "done\n")
+                       .arg(log, mounted)
+                       .toUtf8());
+    QFile::setPermissions(gio, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(gio));
+    qputenv("ARGONAUT_GVFS_ROOT", QFile::encodeName(gvfs));
+    struct Restore
+    {
+        ~Restore()
+        {
+            qunsetenv("ARGONAUT_GIO_PROGRAM");
+            qunsetenv("ARGONAUT_GVFS_ROOT");
+        }
+    } restore;
+
+    Host host;
+    bool there = false;
+    for (const Extensions::Manifest &m : host.extensions())
+        there = there || m.id == "connect-to-server";
+    if (!there)
+        QSKIP("the Connect to Server extension isn't built here (Linux only)");
+    QSignalSpy forms(&host, &Host::formRequested);
+    QSignalSpy open(&host, &Host::openRequested);
+    QSignalSpy said(&host, &Host::message);
+    host.setEnabled("connect-to-server", true);
+    QVERIFY(host.handlesAddress("sftp://example.com/"));
+    QVERIFY(host.handlesAddress("smb://nas/photos"));
+    host.watch(m_dir);
+    auto row = [&](const QString &label) {
+        for (const Extensions::Place &place : host.places()) {
+            if (place.label == label)
+                return place;
+        }
+        return Extensions::Place();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(!row("Connect to Server…").id.isEmpty(), 10000);
+    QVERIFY(row("Connect to Server…").folder.isEmpty());
+    QCOMPARE(int(host.menuCommands("go").size()), 1);
+    QCOMPARE(host.menuCommands("go").first().label, QStringLiteral("Connect to Server…"));
+
+    // The row: which server? A bare name is SSH.
+    host.activatePlace(Host::placePath("connect-to-server", "connect"), "open");
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 1, 10000);
+    Extensions::Form form = forms.last().first().value<Extensions::Form>();
+    QCOMPARE(form.title, QStringLiteral("Connect to Server"));
+    QCOMPARE(int(form.fields.size()), 1);
+    QVERIFY(host.takeForm(form.extension, form.id));
+    host.answerForm(form.extension, form.id, false, {{"address", "example.com"}});
+
+    // The server asks who: user and password (ssh: no "anonymously"), a wrong
+    // password is asked again and said to be wrong.
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 2, 10000);
+    form = forms.last().first().value<Extensions::Form>();
+    QCOMPARE(form.title, QStringLiteral("Log In"));
+    QCOMPARE(form.heading, QStringLiteral("Log in to example.com"));
+    QCOMPARE(int(form.fields.size()), 2);
+    QCOMPARE(form.fields.at(0).value, QStringLiteral("me"));
+    QCOMPARE(form.fields.at(1).kind, Extensions::FormField::Secret);
+    QVERIFY(form.warning.isEmpty());
+    QVERIFY(host.takeForm(form.extension, form.id));
+    host.answerForm(form.extension, form.id, false, {{"user", "alice"}, {"password", "wrong"}});
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 3, 10000);
+    form = forms.last().first().value<Extensions::Form>();
+    QVERIFY(!form.warning.isEmpty());
+    QVERIFY(host.takeForm(form.extension, form.id));
+    host.answerForm(form.extension, form.id, false, {{"user", "alice"}, {"password", "right"}});
+
+    // Connected: the folder is opened, and the server is a row with ⏏.
+    QTRY_COMPARE_WITH_TIMEOUT(open.size(), 1, 10000);
+    QCOMPARE(open.first().at(1).toString(), mounted);
+    QTRY_VERIFY_WITH_TIMEOUT(!row("alice@example.com").id.isEmpty(), 10000);
+    QCOMPARE(row("alice@example.com").folder, mounted);
+    QVERIFY(row("alice@example.com").eject);
+    QFile logFile(log);
+    QVERIFY(logFile.open(QIODevice::ReadOnly));
+    const QString logged = QString::fromUtf8(logFile.readAll());
+    QVERIFY2(logged.contains("mount sftp://example.com"), qPrintable(logged));
+    QVERIFY(logged.contains("login alice|wrong") && logged.contains("login alice|right"));
+
+    // ⏏: disconnected, the row is gone.
+    said.clear();
+    host.activatePlace(Host::placePath("connect-to-server", row("alice@example.com").id), "eject");
+    QTRY_VERIFY_WITH_TIMEOUT(row("alice@example.com").id.isEmpty(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty() && said.last().at(1).toString().startsWith("Disconnected from"), 10000);
+
+    // An address typed in the path bar goes the same way; Cancel at the
+    // login ends it without a folder.
+    forms.clear();
+    QVERIFY(host.openAddress("ssh://alice@example.com/"));
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 1, 10000);
+    form = forms.last().first().value<Extensions::Form>();
+    QCOMPARE(form.title, QStringLiteral("Log In"));
+    QVERIFY(host.takeForm(form.extension, form.id));
+    host.answerForm(form.extension, form.id, true);
+    QTest::qWait(500);
+    QCOMPARE(open.size(), 1);
+    QVERIFY(row("alice@example.com").id.isEmpty());
 }
 
 // The System Dashboard extension: its command answers with a picture as a

@@ -20,7 +20,7 @@ class Sidebar : public QListWidget
     Q_OBJECT
 
 public:
-    enum Kind { PlaceItem, BookmarkItem, DriveItem, NetworkItem, ExtensionItem };
+    enum Kind { PlaceItem, BookmarkItem, DriveItem, ExtensionItem };
 
     explicit Sidebar(QWidget *parent = nullptr);
     ~Sidebar() override;
@@ -45,9 +45,6 @@ public:
     // else empty. Its path is the folder it opens, or that address when
     // the extension is to be asked.
     static QString extensionPlace(const QListWidgetItem *item);
-
-    // The path of the "Connect to Server…" row: not a folder, a command.
-    static QString connectPlace();
 
 signals:
     void refreshed(); // the rows were rebuilt: select the open folder again

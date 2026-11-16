@@ -4,6 +4,8 @@
 
 #include <QList>
 #include <QObject>
+
+#include <functional>
 #include <QStringList>
 #include <QThreadPool>
 
@@ -86,8 +88,13 @@ private:
         QString name;                  // custom name, e.g. "Rename"
     };
 
+    // `prepare` is called with the job before it starts: anything that
+    // must hear its `finished` is connected there. (The job runs on another
+    // thread and a quick one can be finished before startJob() returns; a
+    // connection made after that would never be called.)
     FileJob *startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
-                      bool userAction, const QString &undoName = QString());
+                      bool userAction, const QString &undoName = QString(),
+                      const std::function<void(FileJob *)> &prepare = {});
     // Starts the job that reverses `entry`; when it finishes, its own
     // inverse goes on `onto` (undo -> redo list, redo -> undo list).
     void runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, const char *history);

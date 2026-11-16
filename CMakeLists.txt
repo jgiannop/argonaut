@@ -164,8 +164,8 @@ qt_add_library(argonaut_app STATIC
     src/AboutDialog.cpp
     src/CommandPalette.h
     src/CommandPalette.cpp
-    src/ConnectDialog.h
-    src/ConnectDialog.cpp
+    src/ExtensionForm.h
+    src/ExtensionForm.cpp
     src/OrganizerDialog.h
     src/OrganizerDialog.cpp
 )
@@ -311,6 +311,21 @@ if(UNIX)
     install(TARGETS argonaut-preview-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/document-preview)
+
+    # Connect to Server: servers as folders through GVfs (Linux).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        qt_add_executable(argonaut-connect-extension extensions/connect/main.cpp)
+        target_link_libraries(argonaut-connect-extension PRIVATE argonaut_core)
+        set(ARGONAUT_CONNECT_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-connect-extension")
+        configure_file(extensions/connect/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/connect-to-server/extension.json @ONLY)
+        set(ARGONAUT_CONNECT_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-connect-extension")
+        configure_file(extensions/connect/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/connect-to-server/extension.json @ONLY)
+        install(TARGETS argonaut-connect-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/connect-to-server/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/connect-to-server)
+    endif()
 
     # System Dashboard: gauges for processor, memory, disk and network in the
     # preview pane (reads /proc, so Linux only).

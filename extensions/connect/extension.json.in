@@ -1,0 +1,10 @@
+{
+    "id": "connect-to-server",
+    "name": "Connect to Server",
+    "description": "Other computers as folders: sftp (SSH), smb (Windows shares), ftp, WebDAV and more, through GVfs. Adds Go → Connect to Server, the servers you are connected to and your network bookmarks to the sidebar, and opens server addresses typed in the path bar. Switch it off if you never connect to servers.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "addresses": ["sftp", "ssh", "smb", "ftp", "ftps", "dav", "davs", "webdav", "webdavs", "afp", "nfs", "mtp"],
+    "exec": ["@ARGONAUT_CONNECT_EXTENSION_EXE@"]
+}

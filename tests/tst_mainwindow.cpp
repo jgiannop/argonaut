@@ -50,6 +50,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QComboBox>
+#include <QDialog>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QTemporaryDir>
@@ -107,6 +109,7 @@ private slots:
     void extensionListIsAPlace();
     void extensionResultStaysLive();
     void extensionPlacesInTheSidebar();
+    void extensionFormsAndAddresses();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -972,7 +975,7 @@ int main(int argc, char **argv)
         QFile manifest(root + "/extensions/fake/extension.json");
         if (!manifest.open(QIODevice::WriteOnly))
             return 1;
-        manifest.write(R"({"id": "fake", "name": "Fake", "protocol": 1, "exec": ["fake.py"]})");
+        manifest.write(R"({"id": "fake", "name": "Fake", "protocol": 1, "addresses": ["fake"], "exec": ["fake.py"]})");
     }
     QFile::copy(QStringLiteral(FAKE_EXTENSION), root + "/extensions/fake/fake.py");
     QFile::setPermissions(root + "/extensions/fake/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
@@ -1265,6 +1268,154 @@ void TestMainWindow::terminalBringsTheFilesAlong()
 #else
     QSKIP("no embedded terminal in this build");
 #endif
+}
+
+// What an extension asks the user while it works is a dialog of ours that
+// names the extension; what is filled in goes back to it, Cancel too. A
+// kind of address an extension said is its goes to it when typed; a server
+// address nobody answers for says so.
+void TestMainWindow::extensionFormsAndAddresses()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString fakeFolder = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake";
+    QFile::remove(fakeFolder + "/forms");
+    auto logged = [&] {
+        QFile file(fakeFolder + "/forms");
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    open(m_dir);
+
+    // Nobody answers for server addresses: said, and nothing opens.
+    QVERIFY(!w->navigateTo("sftp://example.com/"));
+    QVERIFY(w->m_pane->message.contains("switched off"));
+    QCOMPARE(w->m_pane->current, m_dir);
+
+    host->setEnabled("fake", true);
+    auto command = [&](const QString &id) {
+        for (const Extensions::Command &c : host->commands(m_dir, {})) {
+            if (c.id == id) {
+                host->invoke(c, m_dir, {});
+                return true;
+            }
+        }
+        return false;
+    };
+    // The form it sent when it started, unasked, was refused and never shown.
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains("\"sneaky\""), 10000);
+    QVERIFY(logged().contains("\"cancelled\": true"));
+    QVERIFY(!QApplication::activeModalWidget());
+
+    // Looks at the next dialog, fills it in and presses a button (or Cancel).
+    // One button for each dialog to come, in order (a dialog opens inside
+    // the event loop the test is waiting in, so its answer must be ready).
+    QStringList seenAll;
+    QString seen;
+    auto answerForms = [&](const QStringList &buttons, bool tickAnonymous = false) {
+        auto *timer = new QTimer(this);
+        timer->setInterval(10);
+        auto left = std::make_shared<QStringList>(buttons);
+        auto last = std::make_shared<QPointer<QDialog>>();
+        connect(timer, &QTimer::timeout, this, [&seen, &seenAll, timer, left, last, tickAnonymous] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!dialog || dialog == last->data())
+                return;
+            *last = dialog;
+            const QString button = left->takeFirst();
+            if (left->isEmpty()) {
+                timer->stop();
+                timer->deleteLater();
+            }
+            QStringList parts{dialog->windowTitle()};
+            for (QLabel *label : dialog->findChildren<QLabel *>())
+                parts << label->text();
+            for (QLineEdit *edit : dialog->findChildren<QLineEdit *>()) {
+                if (edit->echoMode() == QLineEdit::Password) {
+                    parts << "secret=" + edit->text();
+                    edit->setText("s3cret");
+                } else if (!qobject_cast<QComboBox *>(edit->parentWidget())) {
+                    parts << "text=" + edit->text();
+                    edit->setText("alice");
+                }
+            }
+            for (QComboBox *combo : dialog->findChildren<QComboBox *>()) {
+                parts << "combo=" + combo->currentText() + (combo->isEditable() ? "/editable" : "");
+                if (combo->isEditable())
+                    combo->setEditText("typed");
+            }
+            for (QCheckBox *box : dialog->findChildren<QCheckBox *>()) {
+                parts << "check=" + box->text();
+                if (tickAnonymous)
+                    box->setChecked(true);
+            }
+            for (QLineEdit *edit : dialog->findChildren<QLineEdit *>()) {
+                if (edit->echoMode() == QLineEdit::Password)
+                    parts << QString("enabled=%1").arg(edit->isEnabled());
+            }
+            seen = parts.join("|");
+            seenAll << seen;
+            for (QAbstractButton *b : dialog->findChildren<QAbstractButton *>()) {
+                if (b->text() == button) {
+                    b->click();
+                    return;
+                }
+            }
+            dialog->reject();
+        });
+        timer->start();
+    };
+
+    // A login: its texts as plain text, the fields that make sense, who asks.
+    QSignalSpy said(host, &Extensions::Host::message);
+    answerForms({"Connect", "No && Never"}); // the login, then its follow-up question
+    QVERIFY(command("form"));
+    QTRY_COMPARE_WITH_TIMEOUT(int(seenAll.size()), 2, 10000);
+    seen = seenAll.first();
+    QVERIFY2(seen.startsWith("Log In|Log in to nas|Enter <b>it</b>|That didn't work|"), qPrintable(seen)); // one line; not obeyed as HTML
+    QVERIFY2(seen.contains("Asked by the extension “Fake”."), qPrintable(seen));
+    QVERIFY2(seen.contains("text=me") && seen.contains("secret=|"), qPrintable(seen)); // a password never starts filled in
+    QVERIFY2(seen.contains("combo=music|") && seen.contains("combo=/editable"), qPrintable(seen));
+    QVERIFY(seen.contains("check=Anonymously") && seen.contains("enabled=1"));
+    QVERIFY(!seen.contains("Twice") && !seen.contains("Nothing to choose"));
+    // What was filled in went to the extension, and to nobody's log of ours.
+    auto wasSaid = [&said](const QString &text) {
+        for (const auto &entry : said) {
+            if (entry.at(1).toString() == text)
+                return true;
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(wasSaid("form alice|s3cret|false|music|typed button 0"), 10000);
+    // The second form it sent while the first was open was refused.
+    QVERIFY(logged().contains("\"second\""));
+
+    // Its follow-up question: buttons only, a name is a name; Cancel is told too.
+    seen = seenAll.last();
+    QVERIFY2(seen.contains("Are you sure?"), qPrintable(seen));
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains("\"again\""), 10000);
+    QVERIFY(logged().contains("\"button\": 1, \"id\": \"again\""));
+
+    // Ticking the box that stands alone turns the other fields off; Cancel.
+    seenAll.clear();
+    said.clear();
+    answerForms({"Cancel"}, true);
+    QVERIFY(command("form"));
+    QTRY_COMPARE_WITH_TIMEOUT(int(seenAll.size()), 1, 10000);
+    QVERIFY(seenAll.first().contains("enabled=0"));
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains("{\"cancelled\": true, \"id\": \"login\""), 10000);
+
+    // An address of a kind it said is its: it is told, and opens a folder.
+    said.clear();
+    QCOMPARE(w->m_pane->current, m_dir);
+    QVERIFY(host->handlesAddress("fake://somewhere/else"));
+    QVERIFY(!w->navigateTo("fake://somewhere/else"));
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, fakeFolder, 10000);
+    bool told = false;
+    for (const auto &entry : said)
+        told = told || entry.at(1).toString() == "address fake://somewhere/else";
+    QVERIFY(told);
+    host->setEnabled("fake", false);
 }
 
 // An extension's rows in the sidebar: a click on one that is a folder opens

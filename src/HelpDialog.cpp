@@ -442,7 +442,9 @@ space in the sidebar. Right-click a bookmark to rename or remove it. Bookmarks a
 <code>sftp://me@example.com</code> (SSH), <code>smb://nas/photos</code> (Windows and NAS shares),
 <code>ftp://…</code> and <code>davs://…</code> (WebDAV). You can also type an address in the path bar ([[Ctrl+L]]).
 Argonaut asks for a login when the server needs one; <code>smb://server</code> on its own lists its shared folders.</p>
-<p>Connected servers appear under the drives; the ⏏ button disconnects. Copying, moving, renaming and
+<p>This is the <a href="topic:extensions">Connect to Server extension</a>, which comes with Argonaut. If you
+never connect to servers, switch it off in <b>Edit → Extensions</b>: its entries leave the sidebar and the Go menu.</p>
+<p>Connected servers appear at the end of the sidebar; the ⏏ button disconnects. Copying, moving, renaming and
 previews work there like anywhere else. Servers have no Trash, so deleting there is permanent (Argonaut asks first).</p>
 <h2>Drives</h2>
 <p>Plugged-in drives appear in the sidebar. The ⏏ button ejects one safely. While a copy to or from the drive is still running, Argonaut asks you to wait.</p>
@@ -574,7 +576,10 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b> and <b>System Dashboard</b>.</p>
+<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b> and
+<b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<p>An extension may ask you something while it works, such as a login. The window that asks is Argonaut's and
+always says which extension is asking; what you type there, a password included, is handed to that extension.</p>
 <p><b>System Dashboard</b>: choose <b>View → System Dashboard</b>, or find it in the command palette
 ([[Ctrl+Shift+P]]). The preview
 pane shows how busy the computer is: the processor, the memory and the disk the folder is on as gauges, what

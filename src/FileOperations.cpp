@@ -145,7 +145,7 @@ void FileOperations::cancelAll()
 }
 
 FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers, bool recordUndo,
-                                  bool userAction, const QString &undoName)
+                                  bool userAction, const QString &undoName, const std::function<void(FileJob *)> &prepare)
 {
     if (transfers.isEmpty())
         return nullptr;
@@ -157,6 +157,8 @@ FileJob *FileOperations::startJob(FileJob::Kind kind, QList<Transfer> transfers,
         emit conflictRaised(job, source, existing);
     });
     m_active.append(job);
+    if (prepare)
+        prepare(job); // before ours below: the history is up to date when jobFinished is heard
     connect(job, &FileJob::finished, this, [this, job, recordUndo, undoName] {
         m_active.removeOne(job);
         const QList<TransferResult> results = job->results();
@@ -260,41 +262,43 @@ void FileOperations::runInverse(const UndoEntry &entry, QList<UndoEntry> *onto, 
         created.append(r.target);
     }
 
-    FileJob *job = nullptr;
+    // Set up before the job starts: a quick job (one rename) can be done
+    // before we get any further, and its inverse must still be recorded,
+    // or there would be nothing to redo.
+    const auto prepare = [this, onto, history, action = entry.action, name = entry.name](FileJob *job) {
+        job->setProperty(HistoryProperty, QString::fromLatin1(history));
+        // When it's done, what it did can be reversed in turn.
+        connect(job, &FileJob::finished, this, [this, job, onto, action, name] {
+            const QList<TransferResult> results = job->results();
+            if (results.isEmpty())
+                return;
+            const UndoEntry next{job->kind(), results, action, name};
+            if (onto == &m_undo)
+                pushUndo(next);
+            else
+                onto->append(next);
+            emit undoChanged();
+        });
+    };
     switch (entry.kind) {
     case FileJob::Kind::Copy:     // copies, extracted files, new items…
     case FileJob::Kind::Extract:
     case FileJob::Kind::Compress:
     case FileJob::Kind::Restore:  // …and what came back from the Trash
-        job = startJob(FileJob::Kind::Trash, transfersInto(created, QString()), false, false);
+        startJob(FileJob::Kind::Trash, transfersInto(created, QString()), false, false, QString(), prepare);
         break;
     case FileJob::Kind::Move:
         // Backwards: steps that depend on each other (a batch rename's
         // "b -> c" before "a -> b") must be undone in reverse order.
         std::reverse(back.begin(), back.end());
-        job = startJob(FileJob::Kind::Move, back, false, false);
+        startJob(FileJob::Kind::Move, back, false, false, QString(), prepare);
         break;
     case FileJob::Kind::Trash:
-        job = startJob(FileJob::Kind::Restore, back, false, false);
+        startJob(FileJob::Kind::Restore, back, false, false, QString(), prepare);
         break;
     case FileJob::Kind::Delete: // permanent: nothing to reverse
         break;
     }
-    if (!job)
-        return;
-    job->setProperty(HistoryProperty, QString::fromLatin1(history));
-    // When it's done, what it did can be reversed in turn.
-    connect(job, &FileJob::finished, this, [this, job, onto, action = entry.action, name = entry.name] {
-        const QList<TransferResult> results = job->results();
-        if (results.isEmpty())
-            return;
-        const UndoEntry next{job->kind(), results, action, name};
-        if (onto == &m_undo)
-            pushUndo(next);
-        else
-            onto->append(next);
-        emit undoChanged();
-    });
 }
 
 // ------------------------------------------------------------ clipboard ---

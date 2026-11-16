@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -42,6 +43,21 @@ QString hostPart(const QHash<QString, QString> &k, const QString &hostKey)
 } // namespace
 
 namespace Remote {
+
+QStringList recentServers()
+{
+    return QSettings().value(QStringLiteral("network/recent")).toStringList();
+}
+
+void rememberServer(const QString &address)
+{
+    QStringList list = recentServers();
+    list.removeAll(address);
+    list.prepend(address);
+    while (list.size() > 10)
+        list.removeLast();
+    QSettings().setValue(QStringLiteral("network/recent"), list);
+}
 
 bool isRemoteAddress(const QString &text)
 {
