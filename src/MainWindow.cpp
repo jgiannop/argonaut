@@ -345,6 +345,9 @@ void MainWindow::setupActions()
     m_newDocumentMenu = makeMenu();
     m_newDocumentMenu->setTitle(tr("New Document"));
     connect(m_newDocumentMenu, &QMenu::aboutToShow, this, &MainWindow::fillNewDocumentMenu);
+    m_themeMenu = makeMenu();
+    m_themeMenu->setTitle(tr("Theme"));
+    connect(m_themeMenu, &QMenu::aboutToShow, this, &MainWindow::fillThemeMenu);
 
     m_closeAct = new QAction(tr("Close Tab"), this);
     m_closeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_W)); // the last tab closes the window
@@ -418,6 +421,15 @@ void MainWindow::setupActions()
         if (!dialog) {
             dialog = new PreferencesDialog(this);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
+            // "Open Themes Folder", and a theme saved as a file: here, in the files.
+            connect(dialog, &PreferencesDialog::folderRequested, this, [this](const QString &path) {
+                if (QFileInfo(path).isDir())
+                    navigateTo(path);
+                else
+                    showItems({path});
+                raise();
+                activateWindow();
+            });
         }
         dialog->show();
         dialog->raise();
@@ -1154,6 +1166,8 @@ void MainWindow::showCommandPalette()
                     if (!act->isEnabled())
                         continue;
                 }
+                if (sub == m_themeMenu)
+                    fillThemeMenu(); // "View › Theme › Forest": the themes there are now
                 walk(sub, where + QStringLiteral(" › ") + clean(sub->title()));
                 continue;
             }
@@ -3436,6 +3450,7 @@ QWidget *MainWindow::buildMenuBar()
     sortMenu->addAction(m_sortAscAct);
     sortMenu->addAction(m_sortDescAct);
     view->addMenu(sortMenu);
+    view->addMenu(m_themeMenu);
     view->addSeparator();
     view->addAction(m_hiddenAct);
     view->addAction(m_sidebarAct);
@@ -3585,6 +3600,29 @@ void MainWindow::invertSelection()
 }
 
 // ------------------------------------------------------- new from template ---
+
+// View → Theme: the built-in themes and the ones from files, the one in use
+// ticked. Made when the menu opens (and for the command palette), so a
+// theme file added meanwhile is there.
+void MainWindow::fillThemeMenu()
+{
+    m_themeMenu->clear();
+    const QString current = currentThemeKey();
+    bool files = false;
+    const QList<ThemeChoice> themes = allThemes();
+    for (const ThemeChoice &theme : themes) {
+        if (!theme.file.isEmpty() && !files) {
+            m_themeMenu->addSeparator(); // the ones people made
+            files = true;
+        }
+        // A name is a name: "&" isn't a shortcut key.
+        QAction *action = m_themeMenu->addAction(QString(theme.name).replace(QLatin1Char('&'), QStringLiteral("&&")));
+        action->setCheckable(true);
+        action->setChecked(theme.key == current);
+        const QString key = theme.key;
+        connect(action, &QAction::triggered, this, [key] { setThemeKey(key); });
+    }
+}
 
 void MainWindow::fillNewDocumentMenu()
 {

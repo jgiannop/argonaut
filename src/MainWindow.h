@@ -337,6 +337,8 @@ private:
     QAction *m_selectMatchingAct = nullptr;
     QAction *m_invertSelectionAct = nullptr;
     QMenu *m_newDocumentMenu = nullptr;
+    QMenu *m_themeMenu = nullptr; // View → Theme: every theme, built in or from a file; filled when it opens
+    void fillThemeMenu();
     QString m_lastPattern; // Select Items Matching remembers it
     QAction *m_closeAct = nullptr;
     QAction *m_quitAct = nullptr;

@@ -358,6 +358,10 @@ if(UNIX AND NOT APPLE)
     configure_file(data/argonaut.desktop.in ${CMAKE_CURRENT_BINARY_DIR}/argonaut.desktop @ONLY)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/argonaut.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES data/argonaut.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    # Themes are files (docs/themes.md): two come along, as examples to copy.
+    # A build folder gets them next to the program.
+    install(DIRECTORY data/themes/ DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/themes FILES_MATCHING PATTERN "*.json")
+    file(COPY data/themes/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/themes FILES_MATCHING PATTERN "*.json")
     # Open/Save windows for other apps. No UseIn in argonaut.portal: the
     # portal uses it only where the user chose it (Preferences writes their
     # portals.conf). xdg-desktop-portal reads only /usr/share, so this works

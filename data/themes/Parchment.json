@@ -1,0 +1,9 @@
+{
+    "name": "Parchment",
+    "dark": false,
+    "window": "#f7f1e3",
+    "sidebar": "#ede4cf",
+    "text": "#3b3226",
+    "accent": "#b5651d",
+    "selection": "#40b5651d"
+}

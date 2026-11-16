@@ -40,6 +40,9 @@ public:
         // Never the extensions installed on this computer (a test names its own).
         if (!qEnvironmentVariableIsSet("ARGONAUT_EXTENSIONS_PATH"))
             qputenv("ARGONAUT_EXTENSIONS_PATH", "");
+        // Nor the theme files installed here.
+        if (!qEnvironmentVariableIsSet("ARGONAUT_THEMES_PATH"))
+            qputenv("ARGONAUT_THEMES_PATH", "");
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
             qputenv("QT_QPA_PLATFORM", "offscreen");
     }

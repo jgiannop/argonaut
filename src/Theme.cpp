@@ -6,6 +6,21 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QSettings>
+#include <algorithm>
+#include <QWidget>
+#include <QTimer>
+#include <QStandardPaths>
+#include <QSet>
+#include <QSaveFile>
+#include <QRegularExpression>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QFileSystemWatcher>
+#include <QFileInfo>
+#include <QFile>
+#include <QEvent>
+#include <QDir>
 
 #include <initializer_list>
 
@@ -22,6 +37,8 @@ const QPalette &systemPalette()
 }
 
 ThemeMode s_mode = ThemeMode::System; // what applyThemeMode() last applied
+QString s_fileKey;                    // a theme from a file is applied instead: its key…
+Theme s_fileTheme;                    // …and its tokens
 
 struct ThemeInfo
 {
@@ -212,6 +229,7 @@ ThemeMode savedThemeMode()
 void applyThemeMode(ThemeMode mode)
 {
     const QPalette &system = systemPalette();
+    s_fileKey.clear();
     s_mode = mode;
     if (mode == ThemeMode::System) {
         // Leave the palette untouched at startup so Qt keeps following the
@@ -231,8 +249,302 @@ void setThemeMode(ThemeMode mode)
 
 Theme currentTheme()
 {
+    if (!s_fileKey.isEmpty())
+        return s_fileTheme;
     return s_mode == ThemeMode::System ? Theme::fromPalette(QApplication::palette())
                                        : Theme::forMode(s_mode);
+}
+
+// ------------------------------------------------- themes from files ---
+
+namespace {
+
+// Where theme files are looked for, the user's own first. ARGONAUT_THEMES_PATH
+// replaces them all (a colon list; tests).
+QStringList themeFolders()
+{
+    if (qEnvironmentVariableIsSet("ARGONAUT_THEMES_PATH"))
+        return qEnvironmentVariable("ARGONAUT_THEMES_PATH").split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    QStringList folders{userThemesFolder(), QCoreApplication::applicationDirPath() + QStringLiteral("/themes")};
+    const QStringList system = QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation);
+    for (const QString &dir : system) {
+        const QString folder = dir + QStringLiteral("/argonaut/themes");
+        if (!folders.contains(folder))
+            folders << folder;
+    }
+    return folders;
+}
+
+// "file:harbor" → its file, the first found; empty if there is none.
+QString fileOfKey(const QString &key)
+{
+    static const QRegularExpression good(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"));
+    const QString name = key.mid(5);
+    if (!key.startsWith(QLatin1String("file:")) || !good.match(name).hasMatch())
+        return {};
+    const QStringList folders = themeFolders();
+    for (const QString &folder : folders) {
+        const QString path = folder + QLatin1Char('/') + name + QStringLiteral(".json");
+        if (QFileInfo(path).isFile())
+            return path;
+    }
+    return {};
+}
+
+// The folders are watched, so a theme being written shows as it is saved.
+class ThemeWatcher : public QObject
+{
+public:
+    static void start()
+    {
+        static ThemeWatcher *watcher = nullptr;
+        if (!watcher && qApp)
+            watcher = new ThemeWatcher(qApp);
+        if (watcher)
+            watcher->watchFolders();
+    }
+
+private:
+    explicit ThemeWatcher(QObject *parent) : QObject(parent)
+    {
+        m_later.setSingleShot(true);
+        m_later.setInterval(150);
+        connect(&m_watcher, &QFileSystemWatcher::directoryChanged, &m_later, qOverload<>(&QTimer::start));
+        connect(&m_watcher, &QFileSystemWatcher::fileChanged, &m_later, qOverload<>(&QTimer::start));
+        connect(&m_later, &QTimer::timeout, this, [this] {
+            watchFolders();
+            if (!s_fileKey.isEmpty())
+                applyThemeKey(s_fileKey); // the file being edited: its new colours now
+        });
+    }
+    void watchFolders()
+    {
+        const QStringList folders = themeFolders();
+        for (const QString &folder : folders) {
+            if (QFileInfo(folder).isDir() && !m_watcher.directories().contains(folder))
+                m_watcher.addPath(folder);
+        }
+        // The file itself too: an editor that writes in place changes no folder.
+        const QString file = fileOfKey(s_fileKey);
+        if (!file.isEmpty() && !m_watcher.files().contains(file))
+            m_watcher.addPath(file);
+    }
+    QFileSystemWatcher m_watcher;
+    QTimer m_later;
+};
+
+} // namespace
+
+QString userThemesFolder()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/argonaut/themes");
+}
+
+ThemeFile readThemeFile(const QString &path)
+{
+    ThemeFile out;
+    out.name = QFileInfo(path).completeBaseName();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        out.problem = QCoreApplication::translate("Theme", "It can't be read.");
+        return out;
+    }
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.read(64 * 1024), &error);
+    if (!doc.isObject()) {
+        out.problem = QCoreApplication::translate("Theme", "It isn't a theme file: %1").arg(error.errorString());
+        return out;
+    }
+    const QJsonObject o = doc.object();
+    // A colour: "#rrggbb", "#aarrggbb", or a name like "white".
+    auto colour = [&o](const char *key) {
+        const QString text = o.value(QLatin1String(key)).toString().trimmed();
+        return text.isEmpty() || text.size() > 40 ? QColor() : QColor(text);
+    };
+    const QColor window = colour("window"), text = colour("text"), accent = colour("accent");
+    if (!window.isValid() || !text.isValid() || !accent.isValid()) {
+        out.problem = QCoreApplication::translate("Theme", "It needs the colours \"window\", \"text\" and \"accent\" (like \"#1e2a36\").");
+        return out;
+    }
+    const QString name = o.value(QLatin1String("name")).toString().simplified().left(40);
+    if (!name.isEmpty())
+        out.name = name;
+    // Dark or light: said, or told from the background.
+    const bool dark = o.contains(QLatin1String("dark")) ? o.value(QLatin1String("dark")).toBool() : window.lightness() < 128;
+    QColor sidebar = colour("sidebar");
+    if (!sidebar.isValid())
+        sidebar = dark ? window.lighter(118) : window.darker(104);
+    Theme t = custom(dark, QColor(window.rgb()), QColor(sidebar.rgb()), QColor(text.rgb()), QColor(accent.rgb()));
+    // Every other colour is worked out from those four; any of them can be
+    // said outright instead.
+    const struct { const char *key; QColor Theme::*token; } others[] = {
+        {"dim", &Theme::dimFg},           {"outline", &Theme::outline},       {"hover", &Theme::hover},
+        {"pressed", &Theme::pressed},     {"sidebarSelection", &Theme::selected}, {"selection", &Theme::itemSelected},
+        {"pathBar", &Theme::pathBg},      {"button", &Theme::button},         {"buttonHover", &Theme::buttonHover},
+        {"popup", &Theme::popup},         {"border", &Theme::border},         {"scrollbar", &Theme::scroll},
+        {"scrollbarHover", &Theme::scrollHover},
+    };
+    for (const auto &other : others) {
+        const QColor value = colour(other.key);
+        if (value.isValid())
+            t.*(other.token) = value;
+    }
+    // A new id whenever the file's colours change: that is what makes the
+    // window dress again.
+    file.seek(0);
+    t.id = QStringLiteral("file:%1:%2").arg(QFileInfo(path).completeBaseName()).arg(qHash(file.read(64 * 1024)));
+    out.theme = t;
+    return out;
+}
+
+QString saveThemeFile(const Theme &theme, const QString &name, QString *error)
+{
+    const QString folder = userThemesFolder();
+    QString base = name.simplified();
+    base.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9 ._-]")), QStringLiteral("-"));
+    base = base.left(40).trimmed();
+    if (base.isEmpty() || base.startsWith(QLatin1Char('.')))
+        base = QStringLiteral("My Theme");
+    if (!QDir().mkpath(folder)) {
+        if (error)
+            *error = QCoreApplication::translate("Theme", "The themes folder couldn't be made.");
+        return {};
+    }
+    QString path = folder + QLatin1Char('/') + base + QStringLiteral(".json");
+    for (int n = 2; QFileInfo::exists(path); ++n)
+        path = folder + QLatin1Char('/') + base + QStringLiteral(" %1.json").arg(n);
+    // The four colours everything comes from, then the rest spelled out,
+    // so each can be changed by itself. Translucent ones keep their alpha.
+    auto hex = [](const QColor &c) { return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb); };
+    QByteArray text = "{\n";
+    auto line = [&text, &hex](const char *key, const QColor &c, bool last = false) {
+        text += "    \"" + QByteArray(key) + "\": \"" + hex(c).toLatin1() + (last ? "\"\n" : "\",\n");
+    };
+    text += "    \"name\": " + QJsonDocument(QJsonArray{QFileInfo(path).completeBaseName()}).toJson(QJsonDocument::Compact).mid(1).chopped(1) + ",\n";
+    text += QByteArray("    \"dark\": ") + (theme.dark ? "true" : "false") + ",\n";
+    line("window", theme.window);
+    line("sidebar", theme.sidebar);
+    line("text", theme.fg);
+    line("accent", theme.accent);
+    line("dim", theme.dimFg);
+    line("selection", theme.itemSelected);
+    line("sidebarSelection", theme.selected);
+    line("hover", theme.hover);
+    line("pressed", theme.pressed);
+    line("pathBar", theme.pathBg);
+    line("button", theme.button);
+    line("buttonHover", theme.buttonHover);
+    line("popup", theme.popup);
+    line("border", theme.border);
+    line("outline", theme.outline);
+    line("scrollbar", theme.scroll);
+    line("scrollbarHover", theme.scrollHover, true);
+    text += "}\n";
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(text) != text.size() || !file.commit()) {
+        if (error)
+            *error = QCoreApplication::translate("Theme", "The file couldn't be written.");
+        return {};
+    }
+    return path;
+}
+
+QList<ThemeChoice> allThemes()
+{
+    QList<ThemeChoice> out;
+    for (const ThemeInfo &info : kThemes)
+        out.append({QString::fromLatin1(info.key), QCoreApplication::translate("Theme", info.name), QString()});
+    // The files, by name; the first folder that has a name wins (the user's
+    // own copy over one that came with Argonaut). Broken ones aren't offered.
+    QList<ThemeChoice> files;
+    QSet<QString> seen;
+    const QStringList folders = themeFolders();
+    for (const QString &folder : folders) {
+        const QStringList names = QDir(folder).entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+        for (const QString &name : names) {
+            const QString base = QFileInfo(name).completeBaseName();
+            const QString key = QStringLiteral("file:") + base;
+            if (files.size() >= 200 || seen.contains(base) || fileOfKey(key).isEmpty())
+                continue;
+            seen.insert(base);
+            const ThemeFile read = readThemeFile(folder + QLatin1Char('/') + name);
+            if (read.problem.isEmpty())
+                files.append({key, read.name, folder + QLatin1Char('/') + name});
+        }
+    }
+    std::sort(files.begin(), files.end(), [](const ThemeChoice &a, const ThemeChoice &b) {
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    return out + files;
+}
+
+QString savedThemeKey()
+{
+    return QSettings().value(ThemeKey, "system").toString();
+}
+
+QString currentThemeKey()
+{
+    return s_fileKey.isEmpty() ? QString::fromLatin1(infoFor(s_mode).key) : s_fileKey;
+}
+
+Theme themeForKey(const QString &key)
+{
+    for (const ThemeInfo &info : kThemes) {
+        if (key == QLatin1String(info.key))
+            return info.mode == ThemeMode::System ? Theme::fromPalette(systemPalette()) : Theme::forMode(info.mode);
+    }
+    const QString file = fileOfKey(key);
+    if (!file.isEmpty()) {
+        const ThemeFile read = readThemeFile(file);
+        if (read.problem.isEmpty())
+            return read.theme;
+    }
+    return Theme::fromPalette(systemPalette());
+}
+
+void applyThemeKey(const QString &key)
+{
+    ThemeWatcher::start();
+    for (const ThemeInfo &info : kThemes) {
+        if (key == QLatin1String(info.key)) {
+            applyThemeMode(info.mode);
+            return;
+        }
+    }
+    const QString file = fileOfKey(key);
+    const ThemeFile read = file.isEmpty() ? ThemeFile() : readThemeFile(file);
+    if (file.isEmpty() || !read.problem.isEmpty()) {
+        // Gone, or broken while being edited: the last good colours stay
+        // if it is the one applied; otherwise the system's.
+        if (key != s_fileKey || file.isEmpty())
+            applyThemeMode(ThemeMode::System);
+        return;
+    }
+    systemPalette(); // captured before it is replaced
+    const bool same = key == s_fileKey && read.theme.id == s_fileTheme.id;
+    s_fileKey = key;
+    s_fileTheme = read.theme;
+    ThemeWatcher::start(); // its file is watched now
+    if (same)
+        return;
+    const QPalette palette = paletteFor(read.theme);
+    if (QApplication::palette() != palette) {
+        QApplication::setPalette(palette); // every window dresses again
+    } else {
+        // Only colours the palette doesn't hold changed: windows are told the same way.
+        const QWidgetList windows = QApplication::topLevelWidgets();
+        for (QWidget *window : windows) {
+            QEvent event(QEvent::ApplicationPaletteChange);
+            QApplication::sendEvent(window, &event);
+        }
+    }
+}
+
+void setThemeKey(const QString &key)
+{
+    QSettings().setValue(ThemeKey, key);
+    applyThemeKey(key);
 }
 
 Theme Theme::fromPalette(const QPalette &palette)

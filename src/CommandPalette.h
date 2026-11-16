@@ -27,6 +27,7 @@ public:
     explicit CommandPalette(QWidget *parent);
 
     void open(const QList<Command> &commands);
+    const QList<Command> &commands() const { return m_commands; } // what it was opened with (tests)
     void close();
 
     // How well `query` matches `text` (both folded): 0 = not at all. Words

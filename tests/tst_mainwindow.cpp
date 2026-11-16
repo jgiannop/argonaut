@@ -32,6 +32,7 @@
 
 #if defined(ARGONAUT_DBUS)
 #include "ChooserBar.h"
+#include "CommandPalette.h"
 #include "ChooserMode.h"
 #include "FileChooserPortal.h"
 #include "FileChooserRequest.h"
@@ -110,6 +111,7 @@ private slots:
     void extensionResultStaysLive();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
+    void themesFromFiles();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1268,6 +1270,141 @@ void TestMainWindow::terminalBringsTheFilesAlong()
 #else
     QSKIP("no embedded terminal in this build");
 #endif
+}
+
+// Themes are files: one in a themes folder is offered beside the built-in
+// ones (Preferences, View → Theme, the command palette), its colours are
+// the window's, and saving the file again changes the window at once.
+void TestMainWindow::themesFromFiles()
+{
+    const QString folder = m_dir + "/themes-folder";
+    QDir().mkpath(folder);
+    qputenv("ARGONAUT_THEMES_PATH", QFile::encodeName(folder));
+    struct Restore
+    {
+        ~Restore()
+        {
+            setThemeKey("system");
+            qputenv("ARGONAUT_THEMES_PATH", ""); // as the tests have it: no theme files
+        }
+    } restore;
+    auto write = [&](const QString &name, const QByteArray &json) {
+        QFile file(folder + "/" + name);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(json);
+    };
+    write("Deep Sea.json", R"({"name": "Deep & Sea", "window": "#0b1d2a", "sidebar": "#102838", "text": "#e0f0ff", "accent": "#00c2a8"})");
+    write("Paper.json", R"({"window": "#fffdf5", "text": "#222222", "accent": "#aa3300", "border": "#11223344"})");
+    write("Broken.json", R"({"window": "#000000", "text": "not a colour"})");
+    write("Nonsense.json", "this is not JSON");
+    write("notes.txt", "not a theme");
+
+    // Reading: three colours are enough; dark or light is told from the
+    // background; any other colour can be said outright.
+    ThemeFile read = readThemeFile(folder + "/Deep Sea.json");
+    QVERIFY2(read.problem.isEmpty(), qPrintable(read.problem));
+    QCOMPARE(read.name, QStringLiteral("Deep & Sea"));
+    QVERIFY(read.theme.dark);
+    QCOMPARE(read.theme.window, QColor("#0b1d2a"));
+    QCOMPARE(read.theme.accent, QColor("#00c2a8"));
+    read = readThemeFile(folder + "/Paper.json");
+    QVERIFY(read.problem.isEmpty());
+    QCOMPARE(read.name, QStringLiteral("Paper")); // no name inside: the file's
+    QVERIFY(!read.theme.dark);
+    QVERIFY(read.theme.sidebar.isValid() && read.theme.sidebar != read.theme.window); // worked out
+    QCOMPARE(read.theme.border, QColor("#11223344"));
+    QVERIFY(!readThemeFile(folder + "/Broken.json").problem.isEmpty());
+    QVERIFY(!readThemeFile(folder + "/Nonsense.json").problem.isEmpty());
+    QVERIFY(!readThemeFile(folder + "/missing.json").problem.isEmpty());
+
+    // Offered after the built-in ones; the broken ones aren't.
+    QStringList keys, names;
+    for (const ThemeChoice &theme : allThemes()) {
+        keys << theme.key;
+        names << theme.name;
+    }
+    QCOMPARE(keys.mid(0, 3), (QStringList{"system", "light", "dark"}));
+    QVERIFY(keys.contains("forest"));
+    QCOMPARE(keys.mid(keys.size() - 2), (QStringList{"file:Deep Sea", "file:Paper"}));
+    QVERIFY(!names.contains("Broken") && !names.contains("Nonsense") && !names.contains("notes"));
+
+    // Chosen: the window is dressed in its colours, and it is remembered.
+    open(m_dir);
+    setThemeKey("file:Deep Sea");
+    QCOMPARE(currentThemeKey(), QStringLiteral("file:Deep Sea"));
+    QCOMPARE(savedThemeKey(), QStringLiteral("file:Deep Sea"));
+    QCOMPARE(currentTheme().window, QColor("#0b1d2a"));
+    QTRY_COMPARE(w->m_theme.window, QColor("#0b1d2a"));
+    QCOMPARE(QApplication::palette().color(QPalette::Window), QColor("#0b1d2a"));
+    QVERIFY(w->styleSheet().contains("11, 29, 42") || w->styleSheet().contains("#0b1d2a"));
+
+    // The file saved again with another colour: the window follows.
+    write("Deep Sea.json", R"({"name": "Deep & Sea", "window": "#0b1d2a", "sidebar": "#102838", "text": "#e0f0ff", "accent": "#ff5500"})");
+    QTRY_COMPARE_WITH_TIMEOUT(currentTheme().accent, QColor("#ff5500"), 10000);
+    QTRY_COMPARE(w->m_theme.accent, QColor("#ff5500"));
+    // Broken halfway through an edit: the last good colours stay.
+    write("Deep Sea.json", "{\"window\": ");
+    QTest::qWait(500);
+    QCOMPARE(currentTheme().accent, QColor("#ff5500"));
+    QCOMPARE(currentThemeKey(), QStringLiteral("file:Deep Sea"));
+    write("Deep Sea.json", R"({"name": "Deep & Sea", "window": "#0b1d2a", "text": "#e0f0ff", "accent": "#00c2a8"})");
+    QTRY_COMPARE_WITH_TIMEOUT(currentTheme().accent, QColor("#00c2a8"), 10000);
+
+    // View → Theme lists them all, the one in use ticked; choosing one applies it.
+    w->fillThemeMenu();
+    QAction *deepSea = nullptr, *dark = nullptr;
+    for (QAction *action : w->m_themeMenu->actions()) {
+        if (action->text() == "Deep && Sea") // a name is a name
+            deepSea = action;
+        if (action->text() == "Dark")
+            dark = action;
+    }
+    QVERIFY(deepSea && dark);
+    QVERIFY(deepSea->isChecked() && !dark->isChecked());
+    dark->trigger();
+    QCOMPARE(currentThemeKey(), QStringLiteral("dark"));
+    QTRY_VERIFY(w->m_theme.dark && w->m_theme.window != QColor("#0b1d2a"));
+
+    // The command palette has them: "View › Theme › Paper".
+    w->showCommandPalette();
+    QAction *paper = nullptr;
+    for (const CommandPalette::Command &command : w->m_palette->commands()) {
+        if (command.name == "Paper" && command.where.contains("Theme"))
+            paper = command.action;
+    }
+    w->m_palette->close();
+    QVERIFY(paper);
+    paper->trigger();
+    QCOMPARE(currentThemeKey(), QStringLiteral("file:Paper"));
+    QTRY_COMPARE(w->m_theme.window, QColor("#fffdf5"));
+
+    // A theme whose file is gone: Follow System, not a broken window.
+    QFile::remove(folder + "/Paper.json");
+    applyThemeKey("file:Paper");
+    QCOMPARE(currentThemeKey(), QStringLiteral("system"));
+    applyThemeKey("file:../../etc/passwd"); // a key is a plain name
+    QCOMPARE(currentThemeKey(), QStringLiteral("system"));
+
+    // "Save This Theme as a File": every colour written out, read back the same; never over another file.
+    const Theme forest = themeForKey("forest");
+    QString error;
+    const QString saved = saveThemeFile(forest, "My / Forest", &error);
+    QVERIFY2(!saved.isEmpty(), qPrintable(error));
+    QVERIFY(saved.startsWith(userThemesFolder() + "/"));
+    QVERIFY(!QFileInfo(saved).fileName().contains('/'));
+    read = readThemeFile(saved);
+    QVERIFY2(read.problem.isEmpty(), qPrintable(read.problem));
+    QCOMPARE(read.theme.window, forest.window);
+    QCOMPARE(read.theme.sidebar, forest.sidebar);
+    QCOMPARE(read.theme.fg, forest.fg);
+    QCOMPARE(read.theme.accent, forest.accent);
+    QCOMPARE(read.theme.itemSelected, forest.itemSelected); // translucent ones keep their alpha
+    QCOMPARE(read.theme.border, forest.border);
+    QCOMPARE(read.theme.dark, forest.dark);
+    const QString again = saveThemeFile(forest, "My / Forest", &error);
+    QVERIFY(!again.isEmpty() && again != saved);
+    QFile::remove(saved);
+    QFile::remove(again);
 }
 
 // What an extension asks the user while it works is a dialog of ours that

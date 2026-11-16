@@ -220,7 +220,7 @@ int main(int argc, char *argv[])
     // Same base style everywhere; our style sheet and drawing do the rest.
     QApplication::setStyle("Fusion");
     // Light / dark / follow system, from Preferences.
-    applyThemeMode(savedThemeMode());
+    applyThemeKey(savedThemeKey());
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QApplication::translate("main", "A fast file manager."));

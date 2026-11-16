@@ -50,6 +50,39 @@ void setThemeMode(ThemeMode mode);
 // Tokens for what's applied now.
 Theme currentTheme();
 
+// Themes by key: the ones above ("system", "light", "dark", "midnight",
+// "rose", "forest", "sunset") and the ones people make, which are files in
+// a themes folder ("file:<name>"). docs/themes.md is the guide for writing
+// one. This is what Preferences, the View menu and the settings use.
+struct ThemeChoice
+{
+    QString key;
+    QString name;
+    QString file; // a theme from a file: where it is
+};
+QList<ThemeChoice> allThemes();
+QString savedThemeKey();
+QString currentThemeKey();
+void applyThemeKey(const QString &key); // an unknown or broken one: Follow System
+void setThemeKey(const QString &key);   // apply and remember
+// The tokens of a theme, for a preview of it ("system": what it is now).
+Theme themeForKey(const QString &key);
+
+// Where people put theme files: $XDG_DATA_HOME/argonaut/themes.
+QString userThemesFolder();
+// Reads a theme file (JSON: a name, three or four colours, and any other
+// colour to override). `problem` says what is wrong, if anything.
+struct ThemeFile
+{
+    QString name;
+    Theme theme;
+    QString problem; // empty: fine
+};
+ThemeFile readThemeFile(const QString &path);
+// Writes `theme` as a file in the user's folder, to start a new one from.
+// Returns the file (never over an existing one), or empty and `error`.
+QString saveThemeFile(const Theme &theme, const QString &name, QString *error = nullptr);
+
 // "rgba(r, g, b, a)" for use in Qt style sheets.
 QString cssColor(const QColor &color);
 

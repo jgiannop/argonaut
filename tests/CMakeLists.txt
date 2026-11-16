@@ -24,7 +24,7 @@ function(argonaut_test name)
         add_test(NAME ${name} COMMAND tst_${name})
     endif()
     set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;ARGONAUT_KEYSTORE=file;ARGONAUT_EXTENSIONS_PATH=;${ARG_ENV}"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;ARGONAUT_TRASH_HOME_ONLY=1;ARGONAUT_KEYSTORE=file;ARGONAUT_EXTENSIONS_PATH=;ARGONAUT_THEMES_PATH=;${ARG_ENV}"
         TIMEOUT ${ARG_TIMEOUT}
     )
 endfunction()

@@ -16,6 +16,9 @@
 #include <QButtonGroup>
 #include <QLineEdit>
 #include <QDir>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QFileInfo>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QCheckBox>
@@ -68,7 +71,7 @@ void drawMockWindow(QPainter &p, const Theme &t, const QPainterPath &clip)
     p.restore();
 }
 
-QIcon previewIcon(ThemeMode mode)
+QIcon previewIcon(const QString &key)
 {
     const qreal dpr = qApp->devicePixelRatio();
     QPixmap pm(PreviewSize * dpr);
@@ -82,7 +85,7 @@ QIcon previewIcon(ThemeMode mode)
 
     const Theme light = Theme::forMode(ThemeMode::Light);
     const Theme dark = Theme::forMode(ThemeMode::Dark);
-    if (mode == ThemeMode::System) {
+    if (key == QLatin1String("system")) {
         // Split diagonally: light top-left, dark bottom-right.
         QPainterPath lightHalf;
         lightHalf.moveTo(0, 0);
@@ -95,7 +98,7 @@ QIcon previewIcon(ThemeMode mode)
         drawMockWindow(p, light, frame.intersected(lightHalf));
         drawMockWindow(p, dark, frame.intersected(darkHalf));
     } else {
-        drawMockWindow(p, Theme::forMode(mode), frame);
+        drawMockWindow(p, themeForKey(key), frame);
     }
 
     p.setPen(QPen(QColor(0, 0, 0, 50), 1));
@@ -142,25 +145,66 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     auto *group = new QButtonGroup(this);
     group->setExclusive(true);
 
-    const ThemeMode current = savedThemeMode();
-    const QList<ThemeMode> modes = allThemeModes();
+    // The built-in themes, then the ones from files in the themes folders.
+    const QString current = currentThemeKey();
+    const QList<ThemeChoice> themes = allThemes();
     constexpr int Columns = 4;
-    for (int i = 0; i < modes.size(); ++i) {
-        const ThemeMode mode = modes.at(i);
+    for (int i = 0; i < themes.size(); ++i) {
+        const ThemeChoice theme = themes.at(i);
         auto *card = new QToolButton(this);
         card->setObjectName("themeCard");
         card->setCheckable(true);
-        card->setChecked(mode == current);
+        card->setChecked(theme.key == current);
         card->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        card->setText(themeModeName(mode));
-        card->setIcon(previewIcon(mode));
+        card->setText(theme.name);
+        card->setIcon(previewIcon(theme.key));
         card->setIconSize(PreviewSize);
         card->setCursor(Qt::PointingHandCursor);
+        if (!theme.file.isEmpty())
+            card->setToolTip(QDir::toNativeSeparators(theme.file));
         group->addButton(card);
         cards->addWidget(card, i / Columns, i % Columns);
-        connect(card, &QToolButton::clicked, this, [mode] { setThemeMode(mode); });
+        connect(card, &QToolButton::clicked, this, [theme] { setThemeKey(theme.key); });
     }
     layout->addLayout(cards);
+
+    // Themes are files: anyone can make one.
+    auto *themesHint = new QLabel(tr("A theme is a small file of colours in the themes folder. Save the one in use as a "
+                                     "file to start your own from, then change its colours: Argonaut follows as you save."),
+                                  this);
+    themesHint->setObjectName("prefHint");
+    themesHint->setWordWrap(true);
+    layout->addSpacing(6);
+    layout->addWidget(themesHint);
+    auto *themeButtons = new QHBoxLayout;
+    auto *openThemes = new QPushButton(tr("Open Themes Folder"), this);
+    auto *saveTheme = new QPushButton(tr("Save This Theme as a File…"), this);
+    openThemes->setObjectName("themesFolderButton");
+    saveTheme->setObjectName("saveThemeButton");
+    themeButtons->addWidget(openThemes);
+    themeButtons->addWidget(saveTheme);
+    themeButtons->addStretch(1);
+    layout->addLayout(themeButtons);
+    connect(openThemes, &QPushButton::clicked, this, [this] {
+        QDir().mkpath(userThemesFolder());
+        emit folderRequested(userThemesFolder());
+    });
+    connect(saveTheme, &QPushButton::clicked, this, [this] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, tr("Save Theme"), tr("Name of the new theme:"), QLineEdit::Normal,
+                                                   tr("My Theme"), &ok);
+        if (!ok || name.trimmed().isEmpty())
+            return;
+        QString error;
+        const QString file = saveThemeFile(currentTheme(), name, &error);
+        if (file.isEmpty()) {
+            QMessageBox::warning(this, tr("Save Theme"), error);
+            return;
+        }
+        // The new theme is the one in use: change the file and see it.
+        setThemeKey(QStringLiteral("file:") + QFileInfo(file).completeBaseName());
+        emit folderRequested(file);
+    });
 
 #if defined(Q_OS_LINUX)
     // Making thumbnails for PDFs and videos reads the files: cheap on the

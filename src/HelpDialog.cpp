@@ -660,8 +660,15 @@ drawn with characters, and updates as it does here.</li>
 
     QString prefs = tr(R"(
 <h2>Themes</h2>
-<p><b>Edit → Preferences</b> ([[Ctrl+,]]) has seven themes: Follow System, Light, Dark, Midnight Blue,
-Rosé Dawn, Forest and Sunset.</p>
+<p><b>Edit → Preferences</b> ([[Ctrl+,]]) has seven built-in themes: Follow System, Light, Dark, Midnight Blue,
+Rosé Dawn, Forest and Sunset. They are also in <b>View → Theme</b> and in the command palette
+([[Ctrl+Shift+P]], then the theme's name).</p>
+<p><b>Your own themes.</b> A theme is a small file of colours in the themes folder
+(<code>~/.local/share/argonaut/themes</code>), and every file there is offered beside the built-in ones. To make
+one, pick the theme closest to what you want and press <b>Save This Theme as a File…</b> in Preferences: the file
+is written with every colour spelled out and shown to you. Change a colour in a text editor and save; the window
+follows at once. <b>Open Themes Folder</b> shows where they are. A theme is only colours, so one from somebody
+else is safe to try.</p>
 <h2>Thumbnails</h2>
 <p>Previews for PDFs, videos and more are made by the thumbnailers installed on your system, in a sandbox
 with no network access. By default they're made only for files on the computer's own disks, because
