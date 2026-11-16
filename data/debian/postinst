@@ -1,0 +1,13 @@
+#!/bin/sh
+# Loads Argonaut's AppArmor profile (see /etc/apparmor.d/argonaut-files), so
+# its sandbox works at once, not only after a restart. Where AppArmor isn't
+# there, or is older than the profile's format, nothing is loaded and the
+# package still installs: Argonaut then runs as it would without the file.
+set -e
+if [ "$1" = "configure" ] && [ -f /etc/apparmor.d/argonaut-files ] && command -v apparmor_parser >/dev/null 2>&1; then
+    if command -v aa-enabled >/dev/null 2>&1 && ! aa-enabled --quiet 2>/dev/null; then
+        exit 0
+    fi
+    apparmor_parser -r -T -W /etc/apparmor.d/argonaut-files >/dev/null 2>&1 || true
+fi
+exit 0

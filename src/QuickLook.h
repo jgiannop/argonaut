@@ -6,6 +6,7 @@
 #include <QPixmap>
 #include <QWidget>
 
+class PdfView;
 class QLabel;
 class QLineEdit;
 class QMovie;
@@ -60,6 +61,8 @@ public:
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
     QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
+    PdfView *pdfReader() const { return m_pdf; }         // the reader, shown for a PDF where it can be (tests)
+    bool isReadingPdf() const;
     bool hasOpenButton() const;                          // "Open" is there: not for an extension's result, which is no file (tests)
 
 signals:
@@ -76,6 +79,7 @@ protected:
 private:
     void apply(quint64 generation, const Preview::Result &result);
     void loadBuiltIn(quint64 generation);
+    void loadPreview(quint64 generation); // Preview::load: what every kind of file gets
     void extensionAnswered(int request, const Extensions::PreviewReply &reply);
     bool applyExtension(const Extensions::PreviewReply &reply);
     void showInfo(const QString &message);
@@ -89,6 +93,7 @@ private:
     QLabel *m_details = nullptr;
     QStackedWidget *m_pages = nullptr;
     class PictureView *m_picture = nullptr;
+    PdfView *m_pdf = nullptr;        // the PDF reader: every page, in the sandbox (PdfView)
     class QScrollArea *m_scroll = nullptr; // an extension's picture that is taller than the pane ("scroll")
     QLabel *m_scrollPicture = nullptr;
     QLabel *m_movieLabel = nullptr;

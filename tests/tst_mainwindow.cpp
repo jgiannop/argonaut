@@ -17,6 +17,8 @@
 #include "DiskUsageModel.h"
 #include "InlineRename.h"
 #include "MainWindow.h"
+#include "PdfPages.h"
+#include "PdfView.h"
 #include "MountActions.h"
 #include "PathBar.h"
 #include "QuickLook.h"
@@ -38,6 +40,10 @@
 #include "FileChooserRequest.h"
 #endif
 
+#include <QPainter>
+#include <QPageSize>
+#include <QScrollBar>
+#include <QPdfWriter>
 #include <QAbstractButton>
 #include <QAction>
 #include <QCheckBox>
@@ -102,6 +108,7 @@ private slots:
     void extensionCommandsAskFirst();
     void extensionsWindowListsAndSwitches();
     void fadeNeverGetsInTheWay();
+    void pdfReaderInQuickLook();
     void previewFromAnExtension();
     void richTextGetsAPageLook();
     void terminalBringsTheFilesAlong();
@@ -1141,6 +1148,85 @@ void TestMainWindow::fadeNeverGetsInTheWay()
 // Space on a file an extension previews: the pane shows the extension's
 // answer; "not from me" falls back to the built-in preview; rich text loads
 // nothing it names; and a program in disguise is never handed to it.
+// Space on a PDF: a reader with every page, each drawn in the sandbox when
+// it comes into sight. A file that only claims to be a PDF gets what any
+// file gets.
+void TestMainWindow::pdfReaderInQuickLook()
+{
+    if (!PdfPages::available())
+        QSKIP("no PDF reader here: it needs pdfinfo and pdftoppm (poppler-utils) and a sandbox that works");
+    // A real PDF of 40 pages, each with its number on it.
+    const QString file = m_dir + "/long.pdf";
+    {
+        QPdfWriter writer(file);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter p(&writer);
+        QFont font;
+        font.setPointSize(48);
+        p.setFont(font);
+        for (int page = 1; page <= 40; ++page) {
+            if (page > 1)
+                writer.newPage();
+            p.fillRect(QRect(0, 0, writer.width(), writer.height() / 8), QColor(page == 3 ? "#c01c28" : "#1c71d8"));
+            p.drawText(QRect(0, 0, writer.width(), writer.height()), Qt::AlignCenter, QStringLiteral("Page number %1").arg(page));
+        }
+    }
+    const QString broken = make("broken.pdf", "%PDF-1.4\nthis is not what a PDF goes on with\n");
+    open(m_dir);
+    auto current = [&](const QString &path) {
+        w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(path)));
+    };
+    current(file);
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *preview = w->m_quickLook;
+    PdfView *reader = preview->pdfReader();
+    QTRY_VERIFY_WITH_TIMEOUT(preview->isReadingPdf(), 15000);
+    QCOMPARE(reader->pageCount(), 40);
+    QCOMPARE(reader->currentPage(), 1);
+    // Only what is in sight (and the next) is drawn: not forty pages.
+    QTRY_VERIFY_WITH_TIMEOUT(reader->readyPages() >= 1, 15000);
+    QTest::qWait(600);
+    QVERIFY2(reader->readyPages() <= 4, qPrintable(QString::number(reader->readyPages())));
+    QVERIFY(preview->hasOpenButton()); // it is a file: Open hands it to the PDF app
+    // The page on screen is the PDF's own: blue across its top.
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        const QImage seen = reader->viewport()->grab().toImage();
+        return seen.pixelColor(seen.width() / 2, 24) == QColor("#1c71d8");
+    }(), 15000);
+    // Further on: the page says where we are, and the pages there are drawn.
+    reader->showPage(3);
+    QCOMPARE(reader->currentPage(), 3);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        const QImage seen = reader->viewport()->grab().toImage();
+        return seen.pixelColor(seen.width() / 2, 24) == QColor("#c01c28"); // page 3 is the red one
+    }(), 15000);
+    reader->showPage(40);
+    QCOMPARE(reader->currentPage(), 40);
+    QTRY_VERIFY_WITH_TIMEOUT(reader->readyPages() >= 2, 15000);
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) { // to look at it
+        reader->showPage(2);
+        QTest::qWait(1500);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+    }
+    // Bigger: the same page stays, wider than the pane now.
+    reader->showPage(5);
+    reader->setZoom(2);
+    QCOMPARE(reader->currentPage(), 5);
+    QVERIFY(reader->horizontalScrollBar()->maximum() > 0);
+    reader->setZoom(0.2); // never smaller than fitted
+    QCOMPARE(reader->zoom(), 1.0);
+
+    // A file that only starts like a PDF: no reader, the usual preview.
+    current(broken);
+    QTRY_VERIFY_WITH_TIMEOUT(!preview->isReadingPdf() && reader->pageCount() == 0, 15000);
+    // Back on the real one, then away: the reader lets go of the file.
+    current(file);
+    QTRY_VERIFY_WITH_TIMEOUT(preview->isReadingPdf() && reader->pageCount() == 40, 15000);
+    QCOMPARE(reader->currentPage(), 1); // from the start again
+    w->hideQuickLook();
+}
+
 void TestMainWindow::previewFromAnExtension()
 {
     if (QStandardPaths::findExecutable("python3").isEmpty())

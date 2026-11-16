@@ -20,7 +20,11 @@
 #include <QTextBrowser>
 #include <QTimer>
 #include <QRegularExpression>
+#include "PdfPages.h"
+#include "PdfView.h"
+
 #include <QKeyEvent>
+#include <QMimeDatabase>
 #include <QLineEdit>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -135,6 +139,26 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_picture = new PictureView(m_pages);
     m_movieLabel = new QLabel(m_pages);
     m_movieLabel->setAlignment(Qt::AlignCenter);
+    m_pdf = new PdfView(m_pages);
+    m_pdf->setObjectName("qlPdf");
+    connect(m_pdf, &PdfView::pageChanged, this, [this](int page, int pages) {
+        if (m_pages->currentWidget() == m_pdf)
+            m_note->setText(pages == 1 ? tr("1 page") : tr("Page %1 of %2").arg(page).arg(pages));
+    });
+    connect(m_pdf, &PdfView::loaded, this, [this] {
+        if (m_pdf->path() == m_item.path) {
+            m_kind = Preview::Kind::Image;
+            m_pages->setCurrentWidget(m_pdf);
+        }
+    });
+    // Not readable as a PDF after all (damaged, or locked with a password):
+    // what any other file gets.
+    connect(m_pdf, &PdfView::failed, this, [this] {
+        if (m_pdf->path() != m_item.path)
+            return;
+        m_pdf->clear();
+        loadPreview(m_generation);
+    });
     m_scroll = new QScrollArea(m_pages);
     m_scroll->setObjectName("qlScroll");
     m_scroll->setFrameShape(QFrame::NoFrame);
@@ -177,7 +201,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     info->addSpacing(10);
     info->addWidget(m_infoText);
     info->addStretch();
-    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll),
+    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll), static_cast<QWidget *>(m_pdf),
                           static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
     layout->addWidget(m_pages, 1);
@@ -218,6 +242,7 @@ QSize QuickLook::pictureBox() const
 void QuickLook::showItem(const Item &item)
 {
     closeResult(); // a file takes the pane back
+    m_pdf->clear();
     m_item = item;
     m_title->setText(item.name);
     m_details->setText(item.details);
@@ -259,7 +284,24 @@ void QuickLook::showItem(const Item &item)
     loadBuiltIn(generation);
 }
 
+bool QuickLook::isReadingPdf() const
+{
+    return m_pages->currentWidget() == m_pdf;
+}
+
 void QuickLook::loadBuiltIn(quint64 generation)
+{
+    // A PDF is read, all of it, where the reader can be (poppler's tools
+    // and a sandbox that works); never a program in disguise.
+    if (m_item.verdict != ContentType::Verdict::Dangerous && PdfPages::available()
+        && QMimeDatabase().mimeTypeForName(m_item.mimeType).inherits(QStringLiteral("application/pdf"))) {
+        m_pdf->setFile(m_item.path); // loaded() shows it; failed() comes back for the usual preview
+        return;
+    }
+    loadPreview(generation);
+}
+
+void QuickLook::loadPreview(quint64 generation)
 {
     const Item item = m_item;
     QPointer<QuickLook> self(this);
@@ -508,6 +550,7 @@ QString QuickLook::shownText() const
 void QuickLook::clear()
 {
     closeResult();
+    m_pdf->clear();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();
     m_extensionRequest = 0;

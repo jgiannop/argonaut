@@ -347,6 +347,11 @@ text and code, what's inside archives, and folders. Markdown is shown formatted,
 spreadsheets as a table (the <a href="topic:extensions">Document Preview extension</a>). The preview is a pane at the right of the files;
 drag its edge to make it wider. It follows the file you select, so the arrow keys go through a folder.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
+<p>A PDF is shown whole: every page, one under another. Scroll with the wheel or the scrollbar; the line under
+the pages says which page you are on. [[Ctrl]] and the wheel make the pages bigger. Pages are drawn as you reach
+them, so a long document opens as quickly as a short one. They are pictures: to select text, follow a link or fill
+in a form, use <b>Open</b>. The reader needs <i>poppler-utils</i> and <i>bubblewrap</i>; a PDF that is locked with
+a password is not shown.</p>
 <h2>Split view</h2>
 <p>[[F3]] shows two folders side by side. [[F5]] copies the selection to the other side and [[F6]]
 moves it; you can also drag between them. Every shortcut acts on the side you're working in.</p>

@@ -169,6 +169,10 @@ QImage runProgram(const Thumbnailer::Program &program, const QString &path, cons
         }
     }); // don't compete with the user
 #endif
+    // bubblewrap is there but the system refuses it to this Argonaut (see
+    // Sandbox::works): nothing is run, not even to fail and say so each time.
+    if (sandbox && !Sandbox::works())
+        return {};
     if (sandbox) {
         const QString home = QDir::homePath();
         QStringList box = Sandbox::systemArgs();

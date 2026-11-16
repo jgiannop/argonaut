@@ -1,4 +1,5 @@
 #include "AboutDialog.h"
+#include "Sandbox.h"
 
 #include "DefaultFileManager.h"
 #include "FileJob.h"
@@ -59,9 +60,12 @@ QList<Detail> details()
     list.append({QObject::tr("Terminal"), QObject::tr("Not in this build")});
 #endif
 #if defined(Q_OS_LINUX)
-    list.append({QObject::tr("Thumbnail sandbox"),
-                 yesNo(!QStandardPaths::findExecutable(QStringLiteral("bwrap")).isEmpty(),
-                       QObject::tr("Yes, bubblewrap"), QObject::tr("No (install bubblewrap)"))});
+    // The box untrusted files are read in (thumbnails, previews, details).
+    list.append({QObject::tr("Sandbox"),
+                 !Sandbox::available() ? QObject::tr("No (install bubblewrap)")
+                 : Sandbox::works() ? QObject::tr("Yes, bubblewrap")
+                 : QObject::tr("bubblewrap is installed, but the system doesn't let this Argonaut use it "
+                               "(AppArmor: install Argonaut from its package)")});
     list.append({QObject::tr("Default file manager"),
                  yesNo(DefaultFileManager::isArgonautDefault(), QObject::tr("Argonaut"), QObject::tr("Another app"))});
 #endif

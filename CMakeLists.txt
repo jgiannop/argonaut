@@ -42,6 +42,8 @@ qt_add_library(argonaut_core STATIC
     src/Places.cpp
     src/Volumes.h
     src/Volumes.cpp
+    src/PdfPages.h
+    src/PdfPages.cpp
     src/Theme.h
     src/Theme.cpp
     src/OpenWith.h
@@ -132,6 +134,8 @@ qt_add_library(argonaut_app STATIC
     src/RichTextStyle.cpp
     src/FadeOverlay.h
     src/FadeOverlay.cpp
+    src/PdfView.h
+    src/PdfView.cpp
     src/ExtensionMenu.h
     src/ExtensionMenu.cpp
     src/ExtensionsDialog.h
@@ -476,6 +480,17 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/jgiannop/argonaut")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# The AppArmor profile that lets Argonaut make its sandbox on Ubuntu 24.04
+# and later (data/apparmor/argonaut-files says why). Only in a package
+# (prefix /usr): the profile names /usr/bin/argonaut, and a file in /etc is
+# not for an install into a home folder. The package loads it when it is
+# installed and marks it as a configuration file.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_INSTALL_PREFIX STREQUAL "/usr")
+    install(FILES data/apparmor/argonaut-files DESTINATION /etc/apparmor.d)
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/data/debian/postrm;${CMAKE_CURRENT_SOURCE_DIR}/data/debian/conffiles")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
+endif()
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
     "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git")
 include(CPack)

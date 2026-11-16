@@ -12,6 +12,13 @@
 namespace Sandbox {
 
 bool available(); // bwrap is installed
+// …and the system lets us make a box with it (tried once, with a program
+// that does nothing). On Ubuntu 24.04 and later a program may make a
+// sandbox only if an AppArmor profile says so: the package brings one for
+// /usr/bin/argonaut (data/apparmor/argonaut-files); an Argonaut started from
+// somewhere else by the desktop is refused, and everything that needs the
+// box then shows nothing. About → System says which it is.
+bool works();
 
 // The bwrap arguments every box starts with: read-only /usr and /etc (and
 // the /bin, /lib… links of merged-/usr systems), /proc, /dev, no network or

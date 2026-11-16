@@ -2,6 +2,7 @@
 // kind of preview, and a program in disguise is never touched.
 
 #include "Preview.h"
+#include "PdfPages.h"
 #include "Thumbnailer.h"
 
 #include <QApplication>
@@ -34,6 +35,7 @@ private slots:
     void archive();
     void blockedNeverTouched();
     void generic();
+    void pdfInfoIsRead();
     void pdfThroughSandbox();
 
 private:
@@ -178,6 +180,26 @@ void TestPreview::pdfThroughSandbox()
     QCOMPARE(r.kind, Kind::Image);
     QCOMPARE(qMax(r.image.width(), r.image.height()), 900); // the preview size, not the 256 px thumbnail
     QVERIFY(r.image.pixelColor(r.image.width() / 6, r.image.height() / 6).red() > 200);
+}
+
+// What pdfinfo prints, as the reader needs it: how many pages, and the
+// shape of a page as it is shown (a turned page is wider than tall).
+void TestPreview::pdfInfoIsRead()
+{
+    PdfPages::Info info = PdfPages::parseInfo("Title:          A\nPages:          12\nEncrypted:      no\n"
+                                              "Page size:      595.276 x 841.89 pts (A4)\nPage rot:       0\n");
+    QVERIFY(info.ok);
+    QCOMPARE(info.pages, 12);
+    QCOMPARE(qRound(info.pageSize.width()), 595);
+    QCOMPARE(qRound(info.pageSize.height()), 842);
+    info = PdfPages::parseInfo("Pages: 3\nPage size: 612 x 792 pts (letter)\nPage rot: 90\n");
+    QVERIFY(info.ok);
+    QCOMPARE(qRound(info.pageSize.width()), 792); // turned: wide
+    QCOMPARE(qRound(info.pageSize.height()), 612);
+    info = PdfPages::parseInfo("Pages: 2\n"); // no size said: a usual sheet
+    QVERIFY(info.ok && info.pageSize.height() > info.pageSize.width());
+    for (const char *bad : {"", "Pages: 0\n", "Pages: -4\n", "Pages: many\n", "Command Line Error: Incorrect password\n", "Pages: 99999999\n"})
+        QVERIFY2(!PdfPages::parseInfo(bad).ok, bad);
 }
 
 int main(int argc, char **argv)

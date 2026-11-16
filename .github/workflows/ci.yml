@@ -72,6 +72,9 @@ jobs:
           ldd /usr/bin/argonaut | grep -q libarchive
           ldd /usr/bin/argonaut-tui | grep -q libvterm
           ldd /usr/bin/argonaut-tui | grep -q libncursesw
+          # The AppArmor profile its sandbox needs on Ubuntu, with the scripts that load it.
+          test -f /etc/apparmor.d/argonaut-files
+          dpkg-query --showformat='${Conffiles}\n' --show argonaut-files | grep -q apparmor.d/argonaut-files
 
   # The same tests with memory-error checkers (AddressSanitizer + UBSan):
   # a bad read or write stops the test instead of passing by luck.

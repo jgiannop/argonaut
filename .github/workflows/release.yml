@@ -79,6 +79,9 @@ jobs:
           ldd /usr/bin/argonaut | grep -q libarchive
           ldd /usr/bin/argonaut-tui | grep -q libvterm
           ldd /usr/bin/argonaut-tui | grep -q libncursesw
+          # The AppArmor profile its sandbox needs on Ubuntu, with the scripts that load it.
+          test -f /etc/apparmor.d/argonaut-files
+          dpkg-query --showformat='${Conffiles}\n' --show argonaut-files | grep -q apparmor.d/argonaut-files
 
       - uses: actions/upload-artifact@v4
         with:

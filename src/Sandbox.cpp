@@ -4,6 +4,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <mutex>
+
 namespace Sandbox {
 
 QProcessEnvironment cleanEnvironment()
@@ -28,6 +30,30 @@ bool available()
     return found;
 }
 
+bool works()
+{
+    static std::once_flag once;
+    static bool ok = false;
+    std::call_once(once, [] {
+        if (!available())
+            return;
+        QString nothing = QStandardPaths::findExecutable(QStringLiteral("true"));
+        if (nothing.isEmpty())
+            nothing = QStringLiteral("/usr/bin/true");
+        QProcess process;
+        process.setStandardInputFile(QProcess::nullDevice());
+        process.setStandardOutputFile(QProcess::nullDevice());
+        process.setStandardErrorFile(QProcess::nullDevice()); // what bwrap says about it isn't for the terminal
+        process.start(QStringLiteral("bwrap"), systemArgs() << nothing);
+        ok = process.waitForFinished(5000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+        if (!ok && process.state() != QProcess::NotRunning) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+    });
+    return ok;
+}
+
 QStringList systemArgs()
 {
     QStringList box = {QStringLiteral("--ro-bind"), QStringLiteral("/usr"), QStringLiteral("/usr"),
@@ -50,6 +76,8 @@ QByteArray run(const QString &program, const QStringList &args, const QString &f
 {
     if (ok)
         *ok = false;
+    if (!works())
+        return {}; // not installed, or refused to this Argonaut: nothing is read
     const QString bwrap = QStandardPaths::findExecutable(QStringLiteral("bwrap"));
     const QString tool = QStandardPaths::findExecutable(program);
     if (bwrap.isEmpty() || tool.isEmpty() || !QFileInfo(file).isFile())

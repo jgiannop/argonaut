@@ -1,0 +1,11 @@
+#!/bin/sh
+# Takes Argonaut's AppArmor profile out of the running system when the
+# package is removed (the file itself is the package's: dpkg removes it on
+# purge, and it does nothing once /usr/bin/argonaut is gone).
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if command -v apparmor_parser >/dev/null 2>&1 && [ -f /etc/apparmor.d/argonaut-files ]; then
+        apparmor_parser -R /etc/apparmor.d/argonaut-files >/dev/null 2>&1 || true
+    fi
+fi
+exit 0

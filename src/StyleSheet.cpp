@@ -178,6 +178,7 @@ QSplitter#paneSplitter::handle { background: @border; }
 QLabel#qlTitle { color: @fg; font-weight: bold; font-size: 15px; }
 QLabel#qlDetails { color: @dim; }
 QScrollArea#qlScroll, QScrollArea#qlScroll > QWidget > QWidget { background: transparent; }
+QAbstractScrollArea#qlPdf, QAbstractScrollArea#qlPdf > QWidget { background: transparent; border: none; }
 QPlainTextEdit#qlText, QTextBrowser#qlText { background: @pathBg; color: @fg; border: none; border-radius: 8px; padding: 6px; }
 QTreeWidget#qlArchive { background: @window; color: @fg; border: none; }
 QTreeWidget#qlArchive QHeaderView::section { background: @window; color: @dim; border: none;

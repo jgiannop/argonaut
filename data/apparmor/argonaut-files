@@ -1,0 +1,27 @@
+# AppArmor profile for Argonaut (the argonaut-files package).
+#
+# Argonaut reads files it doesn't trust (a downloaded PDF, a video) only
+# inside a bubblewrap sandbox: for thumbnails, for previews, for a file's
+# details. A sandbox is made of user namespaces, and Ubuntu (24.04 and
+# later) lets a program make those only if a profile says it may
+# (kernel.apparmor_restrict_unprivileged_userns). Without this file the
+# sandbox fails ("bwrap: loopback: Failed RTM_NEWADDR: Operation not
+# permitted") and those features show nothing.
+#
+# It confines nothing and grants nothing else: Argonaut runs as it would
+# without a profile ("unconfined"), and may make user namespaces, as every
+# program could before that restriction. The programs Argonaut starts for
+# the sandbox (bwrap, and what runs inside it) inherit this.
+#
+# The same is done for other programs that sandbox (see the profiles next
+# to this one that have "userns,").
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile argonaut-files /usr/bin/argonaut{,-tui} flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/argonaut-files>
+}

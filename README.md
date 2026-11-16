@@ -67,7 +67,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 **Extras**
 - Embedded terminal (Ctrl+`) that opens in the current folder
 - Themes: Follow System, Light, Dark, Midnight Blue, Rosé Dawn, Forest, Sunset (Preferences, Ctrl+,)
-- Tabs (Ctrl+T), bookmarks shared with Nautilus (Ctrl+D), eject for USB drives, drives that aren't mounted in the sidebar (a click mounts one), Open With…, Properties (Ctrl+I), type-to-find
+- Tabs (Ctrl+T), bookmarks shared with Nautilus (Ctrl+D), a PDF reader in Quick Look (every page, drawn in a sandbox), eject for USB drives, drives that aren't mounted in the sidebar (a click mounts one), Open With…, Properties (Ctrl+I), type-to-find
 - **Properties → Details** for photos, music, videos and PDFs (dimensions, camera and exposure, date taken, length, tags, pages), read with exiftool inside a sandbox
 - 🔒 and ↗ badges on items you can't change and on links; Cut, Trash and Rename are off where the folder can't be changed
 - **Send by Email…**, **Set as Background**, and **Scripts ▸** (runs your GNOME Files scripts unchanged)
@@ -152,6 +152,8 @@ The [releases page](https://github.com/jgiannop/argonaut/releases) has a package
 ```bash
 sudo apt install ./argonaut-files_0.11.2_ubuntu24.04_amd64.deb
 ```
+
+The package also brings a small AppArmor profile (`/etc/apparmor.d/argonaut-files`): Ubuntu 24.04 and later let a program make a sandbox only if a profile says it may, and Argonaut reads files it doesn't trust (for thumbnails, previews and details) only inside one. An Argonaut built from source and started from the desktop has no such profile there, and those features show nothing; **Help → About → System** says whether the sandbox works.
 
 On a server without a desktop, add `--no-install-recommends` and run `argonaut-tui`: the terminal version needs no display.
 
