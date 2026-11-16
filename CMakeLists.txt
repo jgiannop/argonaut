@@ -344,6 +344,20 @@ if(UNIX)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-dashboard/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-dashboard)
     endif()
+
+    # Space Overview: the open folder's size and the biggest things inside it,
+    # in the preview pane (measured with Analyze's DiskUsageModel).
+    qt_add_executable(argonaut-space-extension extensions/space/main.cpp)
+    target_link_libraries(argonaut-space-extension PRIVATE argonaut_core)
+    set(ARGONAUT_SPACE_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-space-extension")
+    configure_file(extensions/space/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/space-overview/extension.json @ONLY)
+    set(ARGONAUT_SPACE_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-space-extension")
+    configure_file(extensions/space/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/space-overview/extension.json @ONLY)
+    install(TARGETS argonaut-space-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/space-overview/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/space-overview)
 endif()
 
 # ------------------------------------------------------------- install ---

@@ -75,6 +75,7 @@ private slots:
     void previewsAreAskedAndChecked();
     void documentPreview();
     void systemDashboard();
+    void spaceOverview();
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
@@ -887,6 +888,127 @@ void TestExtensions::systemDashboard()
     QVERIFY(widest(content.text.section(QStringLiteral("SYSTEM INFO"), 0, 0)) <= 30);         // the gauges fit
     terminal.resultShown("system-dashboard", "dashboard", false);
     terminal.setEnabled("system-dashboard", false);
+}
+
+// The Space Overview extension: its command measures the open folder and
+// answers with a named result, biggest first; a picture in the theme's
+// colours in a window, text with colour codes in a terminal.
+void TestExtensions::spaceOverview()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto fill = [&](const QString &name, int bytes) {
+        QVERIFY(QDir(dir.path()).mkpath(QFileInfo(dir.filePath(name)).path()));
+        QFile file(dir.filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArray(bytes, 'x')), qint64(bytes));
+    };
+    fill("big/film.bin", 3000000);
+    fill("middle.bin", 1000000);
+    fill("small/note.bin", 400000);
+    fill("tiny.txt", 10);
+
+    Host host;
+    host.setEnabled("space-overview", true);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("view")) {
+            if (c.extension == "space-overview")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QCOMPARE(command.label, QStringLiteral("Space Overview"));
+    for (const Extensions::Command &c : host.commands(dir.path(), {})) // in the View menu, not in the right-click menu
+        QVERIFY(c.extension != "space-overview");
+
+    // A place that is no folder: a line of text, nothing shown.
+    QSignalSpy shown(&host, &Host::showRequested);
+    QSignalSpy said(&host, &Host::message);
+    host.invoke(command, QStringLiteral("recent:///"), {});
+    QTRY_COMPARE_WITH_TIMEOUT(said.size(), 1, 10000);
+    QCOMPARE(shown.size(), 0);
+
+    host.invoke(command, dir.path(), {});
+    QTRY_VERIFY_WITH_TIMEOUT(shown.size() >= 1, 10000);
+    auto content = shown.first().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Image);
+    QCOMPARE(content.extension, QStringLiteral("space-overview"));
+    QCOMPARE(content.resultId, QStringLiteral("space"));
+    QVERIFY(!content.update);
+    QVERIFY(!QImage(content.image).isNull());
+    // Measured: said in the note, as an update of the same result.
+    QTRY_VERIFY_WITH_TIMEOUT(shown.last().at(2).value<Extensions::PreviewReply>().note.startsWith("Measured at"), 10000);
+    QVERIFY(shown.last().at(2).value<Extensions::PreviewReply>().update);
+
+    // On screen, 500 pixels wide, in a theme: drawn again for that.
+    Extensions::ResultLook look;
+    look.window = "#fdf6e3";
+    look.surface = "#eee8d5";
+    look.text = "#073642";
+    look.dim = "#657b83";
+    look.accent = "#d33682";
+    look.border = "#d6cfba";
+    int before = int(shown.size());
+    host.resultShown("space-overview", "space", true, QSize(500, 900), look);
+    QTRY_COMPARE_WITH_TIMEOUT(int(shown.size()), before + 1, 10000);
+    content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QVERIFY(content.update);
+    const QImage image(content.image);
+    QCOMPARE(image.width(), 500);
+    QVERIFY(image.height() <= 900);
+    QCOMPARE(image.pixelColor(2, 2), QColor("#fdf6e3"));
+    bool card = false, accent = false;
+    for (int y = 0; y < image.height(); y += 2) {
+        for (int x = 0; x < image.width(); x += 2) {
+            card = card || image.pixelColor(x, y) == QColor("#eee8d5");
+            accent = accent || image.pixelColor(x, y) == QColor("#d33682");
+        }
+    }
+    QVERIFY(card);   // its panels
+    QVERIFY(accent); // its bars
+    // Nothing more by itself: it measures when asked, it doesn't watch.
+    before = int(shown.size());
+    QTest::qWait(1500);
+    QCOMPARE(int(shown.size()), before);
+    host.resultShown("space-overview", "space", false);
+    host.setEnabled("space-overview", false);
+
+    // In the terminal interface: text, biggest first, as wide as the room.
+    Host terminal;
+    terminal.setInterface("terminal");
+    terminal.setEnabled("space-overview", true);
+    QSignalSpy text(&terminal, &Host::showRequested);
+    Extensions::Command inTerminal;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : terminal.menuCommands("view")) {
+            if (c.extension == "space-overview")
+                inTerminal = c;
+        }
+        return !inTerminal.id.isEmpty();
+    }(), 10000);
+    terminal.invoke(inTerminal, dir.path(), {});
+    QTRY_VERIFY_WITH_TIMEOUT(!text.isEmpty() && text.last().at(2).value<Extensions::PreviewReply>().note.startsWith("Measured at"), 10000);
+    Extensions::ResultLook cells;
+    cells.columns = 50;
+    cells.rows = 30;
+    before = int(text.size());
+    terminal.resultShown("space-overview", "space", true, QSize(), cells);
+    QTRY_COMPARE_WITH_TIMEOUT(int(text.size()), before + 1, 10000);
+    content = text.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Ansi);
+    QVERIFY(content.text.contains(QStringLiteral("\x1b[")));
+    static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
+    const QString plain = QString(content.text).remove(codes);
+    for (const char *part : {"BIGGEST INSIDE", "big/", "middle.bin", "small/", "1 smaller file", "MB", "6 items"})
+        QVERIFY2(plain.contains(QLatin1String(part)), qPrintable(plain));
+    QVERIFY(plain.indexOf("big/") < plain.indexOf("middle.bin"));
+    QVERIFY(plain.indexOf("middle.bin") < plain.indexOf("small/"));
+    QVERIFY(plain.indexOf("small/") < plain.indexOf("1 smaller file")); // the rest comes last
+    for (const QString &line : plain.split(QLatin1Char('\n')))
+        QVERIFY2(line.size() <= 50, qPrintable(line));
+    terminal.resultShown("space-overview", "space", false);
+    terminal.setEnabled("space-overview", false);
 }
 
 void TestExtensions::documentPreview()

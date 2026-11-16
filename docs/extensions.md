@@ -18,12 +18,15 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Six extensions come with Argonaut and are good to read: Connect to Server
+Seven extensions come with Argonaut and are good to read: Connect to Server
 ([`extensions/connect`](../extensions/connect): rows in the sidebar, a kind of
 address that is its to open, and forms for the questions a server asks),
 System Dashboard
 ([`extensions/dashboard`](../extensions/dashboard): a picture it draws itself,
-shown as a result that updates while it is on screen), Document Preview
+shown as a result that updates while it is on screen), Space Overview
+([`extensions/space`](../extensions/space): the open folder's size and the
+biggest things inside it, a result that fills in while the folder is
+measured), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
 spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands

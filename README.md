@@ -24,7 +24,7 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - **Analyze view** (Ctrl+3, or the pie button): how much disk space every folder and sub-folder uses, as a tree with usage bars, biggest first. Sizes match `du` exactly (space on disk, hard links counted once; symlinks and other drives aren't followed). Folders appear while it measures; opening a folder inside what's been measured is instant. **Show Files When Analyzing** (View menu or right-click) also lists each folder's biggest files. Copying, moving, trashing, extracting and Undo update the sizes at once, without measuring everything again. Right-click to open, trash or scan again
 - Live updates when files change on disk
 - **Connect to Server** (sidebar, Go menu, or an address in the path bar): `sftp://`, `smb://`, `ftp://`, WebDAV and more through GVfs, with a login dialog; connected servers and phones appear in the sidebar with a disconnect button. It is an extension that comes with Argonaut, so it can be switched off if you never use it
-- **Extensions**: small programs in any language that add marks to files, information to the path bar, commands to the right-click menu or the menu bar, previews for more kinds of files and results in the preview pane, switched on one by one in **Edit → Extensions** ([how to write one](docs/extensions.md)). Git support is the first; **System Dashboard** (View menu, or the command palette; in the terminal version too) shows processor, memory, disk and network use in the preview pane, updating as you watch
+- **Extensions**: small programs in any language that add marks to files, information to the path bar, commands to the right-click menu or the menu bar, previews for more kinds of files and results in the preview pane, switched on one by one in **Edit → Extensions** ([how to write one](docs/extensions.md)). Git support is the first; **System Dashboard** (View menu, or the command palette; in the terminal version too) shows processor, memory, disk and network use in the preview pane, updating as you watch; **Space Overview** (same places) shows how big the open folder is and the biggest folders and files inside it
 - **Git repositories**: M / A / U / C badges on changed, added, new and conflicting files, a dot on folders with changes inside, and the branch in the path bar. Repositories whose own settings would make git run programs are never checked
 - **Themes are files**: seven come built in, and anyone can make more: a small file of colours in the themes folder, followed live as you edit it ([how to write one](docs/themes.md)). Choose one in Preferences, View → Theme, or the command palette
 - **In a terminal too**: `argonaut --tui` is the same file manager without a window, with one or two panes, a list or grid view, the mouse, and a shell panel under the files ([more](#in-a-terminal))
@@ -239,7 +239,7 @@ Open the folder in VS Code and install the recommended extensions when asked (C/
 ```
 src/               Application source code
 src/tui/           The terminal interface (argonaut --tui)
-extensions/        The extensions that come with Argonaut (Git, System Dashboard, Document Preview…)
+extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Document Preview…)
 docs/              The guide for writing extensions; the comparison with GNOME's file dialog
 tests/             Qt Test suites (run with ctest)
 CMakeLists.txt     Build definition

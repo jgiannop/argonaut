@@ -49,7 +49,7 @@ if(TARGET argonaut-git-extension)
     argonaut_test(extensions ENV GIT_CONFIG_NOSYSTEM=1)
     target_compile_definitions(tst_extensions PRIVATE GIT_EXTENSION_FOLDER="${CMAKE_BINARY_DIR}/extensions"
         FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
-    add_dependencies(tst_extensions argonaut-git-extension argonaut-desktop-extension argonaut-preview-extension)
+    add_dependencies(tst_extensions argonaut-git-extension argonaut-desktop-extension argonaut-preview-extension argonaut-space-extension)
     if(TARGET argonaut-connect-extension)
         add_dependencies(tst_extensions argonaut-connect-extension)
     endif()

@@ -576,7 +576,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b> and
+<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b> and
 <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension may ask you something while it works, such as a login. The window that asks is Argonaut's and
 always says which extension is asking; what you type there, a password included, is handed to that extension.</p>
@@ -585,6 +585,11 @@ always says which extension is asking; what you type there, a password included,
 pane shows how busy the computer is: the processor, the memory and the disk the folder is on as gauges, what
 the system is, and the network's download and upload. It updates every two seconds until you select a file
 or close the pane.</p>
+<p><b>Space Overview</b>: choose <b>View → Space Overview</b>, or find it in the command palette. The preview
+pane shows how big the open folder is, how full its disk is, and the biggest folders and files directly inside
+it, each with a bar for its share. It is a quick look and only shows: it measures when you choose it (choose it
+again to measure again), and to open folders in the tree or delete from it you use
+<a href="topic:analyze">Analyze</a>.</p>
 <p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
 Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
 (.xlsx, .ods: the first sheet as a table).</p>
@@ -652,7 +657,8 @@ the arrows and [[PgUp]] / [[PgDn]] scroll; the wheel and its scrollbar work too.
 "big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same. Commands that
 extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
-drawn with characters, and updates as it does here.</li>
+drawn with characters, and updates as it does here, and <b>Space Overview</b> shows how big the folder is and
+the biggest things inside it.</li>
 <li><b>Mouse:</b> click, double-click, right-click to select, the wheel, and the words on the bottom line.</li>
 <li>[[F1]] lists every key; [[q]] or [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>

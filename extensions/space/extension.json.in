@@ -1,0 +1,11 @@
+{
+    "id": "space-overview",
+    "name": "Space Overview",
+    "description": "View → Space Overview (or the command palette): how big the open folder is, how full its disk is, and the biggest folders and files inside it, in the preview pane. A quick look only; Analyze is where you work in the tree.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "commands": [{"id": "space", "label": "Space Overview", "menu": "view"}],
+    "exec": ["@ARGONAUT_SPACE_EXTENSION_EXE@"]
+}

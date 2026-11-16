@@ -14,6 +14,7 @@
 //   argonaut-dashboard-extension --text [COLUMNS]
 //                                            prints it once as the terminal interface shows it
 
+#include "../shared/ResultDrawing.h"
 #include "Format.h"
 
 #include <QDir>
@@ -38,13 +39,6 @@
 #include <unistd.h>
 
 namespace {
-
-void send(const QJsonObject &message)
-{
-    const QByteArray line = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
-    std::fwrite(line.constData(), 1, size_t(line.size()), stdout);
-    std::fflush(stdout);
-}
 
 // ------------------------------------------------------------ numbers ---
 
@@ -177,72 +171,6 @@ QList<QPair<QString, QString>> systemInfo()
 }
 
 // ------------------------------------------------------------ picture ---
-
-// The colours and font of the picture: Argonaut's theme, as it tells them
-// with "result" (so the dashboard looks like part of the window, in every
-// theme), or a dark or light look of its own until it has.
-struct Look
-{
-    QColor window, card, track, text, dim, accent;
-    QString font;
-};
-
-QColor mix(const QColor &a, const QColor &b, double share)
-{
-    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * share, a.greenF() + (b.greenF() - a.greenF()) * share,
-                            a.blueF() + (b.blueF() - a.blueF()) * share);
-}
-
-Look lookFor(bool dark, const QJsonObject &colors = {}, const QString &font = {})
-{
-    Look look = dark ? Look{QColor(0x1e, 0x1e, 0x1e), QColor(0x2a, 0x2a, 0x2a), {}, QColor(0xf0, 0xf0, 0xf0), QColor(0x9a, 0x9a, 0x9a), QColor(0x35, 0x84, 0xe4), {}}
-                     : Look{QColor(0xfa, 0xfa, 0xfa), QColor(0xeb, 0xeb, 0xeb), {}, QColor(0x24, 0x24, 0x24), QColor(0x6a, 0x6a, 0x6a), QColor(0x1c, 0x71, 0xd8), {}};
-    auto take = [&colors](const char *name, QColor *into) {
-        const QColor color(colors.value(QLatin1String(name)).toString());
-        if (color.isValid())
-            *into = color;
-    };
-    take("window", &look.window);
-    take("surface", &look.card);
-    take("text", &look.text);
-    take("dim", &look.dim);
-    take("accent", &look.accent);
-    // A theme whose panels are the background's colour still gets panels.
-    if (look.card == look.window)
-        look.card = mix(look.window, look.text, 0.06);
-    look.track = mix(look.card, look.text, 0.10); // the empty part of a gauge
-    look.font = font;
-    return look;
-}
-
-// A gauge is in the theme's accent colour, and warns when it is nearly full.
-QColor levelColor(const Look &look, double share)
-{
-    if (share >= 0.9)
-        return QColor(0xe0, 0x1b, 0x24);
-    if (share >= 0.75)
-        return QColor(0xe6, 0x61, 0x00);
-    return look.accent;
-}
-
-QString g_font; // the family every text is drawn in (empty: Qt's own)
-
-void card(QPainter &p, const QRectF &r, const Look &look, double u)
-{
-    p.setPen(Qt::NoPen);
-    p.setBrush(look.card);
-    p.drawRoundedRect(r, u * 0.5, u * 0.5);
-}
-
-QFont fontOf(double pixels, bool bold = false)
-{
-    QFont font;
-    if (!g_font.isEmpty())
-        font.setFamily(g_font);
-    font.setPixelSize(qMax(8, int(pixels + 0.5)));
-    font.setBold(bold);
-    return font;
-}
 
 // A gauge card: a name, an arc of three quarters of a circle with `share`
 // of it filled, and a line of text under it.
@@ -385,29 +313,6 @@ QImage draw(const Numbers &n, const QList<QPair<QString, QString>> &info, int wi
 // ("ansi"): the same three gauges, drawn as rings of half blocks (two
 // "pixels" to the cell), the same system lines, the same network bars.
 
-QString sgr(int fg, int bg = -1)
-{
-    QString code = QStringLiteral("\x1b[0");
-    if (fg >= 0)
-        code += QStringLiteral(";38;5;%1").arg(fg);
-    if (bg >= 0)
-        code += QStringLiteral(";48;5;%1").arg(bg);
-    return code + QLatin1Char('m');
-}
-
-const QString kReset = QStringLiteral("\x1b[0m");
-const QString kBold = QStringLiteral("\x1b[0;1m");
-const QString kDim = QStringLiteral("\x1b[0;38;5;8m");
-constexpr int kTrack = 238;  // the empty part of a gauge: a dark grey
-constexpr int kAccent = 6;   // the terminal's own cyan, as the rest of the interface
-constexpr int kNearlyFull = 208;
-constexpr int kFull = 196;
-
-int levelIndex(double share)
-{
-    return share >= 0.9 ? kFull : share >= 0.75 ? kNearlyFull : kAccent;
-}
-
 // A gauge's ring, `cells` wide: one string a screen line. Painted small
 // (a pixel to half a cell) with the colours as numbers, then read back.
 QStringList ring(int cells, double share)
@@ -515,15 +420,6 @@ QString drawAnsi(const Numbers &n, const QList<QPair<QString, QString>> &info, i
     out << QString();
     network(QStringLiteral("UPLOAD"), n.upRate, n.upPeak, n.upTotal);
     return out.join(QLatin1Char('\n'));
-}
-
-bool save(const QImage &image, const QString &path)
-{
-    // Whole or not at all: Argonaut reads it as soon as it is told.
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return false;
-    return image.save(&file, "PNG", 80) && file.commit(); // 80: little compression, quick
 }
 
 } // namespace
