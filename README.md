@@ -187,11 +187,11 @@ Notes:
 
 ### In a terminal
 
-`argonaut --tui` (or `argonaut-tui`) is Argonaut without a window: two panes of files in the terminal, for a server reached over SSH or for working from the keyboard. It uses the same engine as the window, so copying and moving have progress and undo, deleting goes to the Trash, anything permanent is asked about first, and Git repositories show their marks and branch.
+`argonaut --tui` (or `argonaut-tui`) is Argonaut without a window: the files in the terminal, in one pane or two side by side, for a server reached over SSH or for working from the keyboard. It uses the same engine as the window, so copying and moving have progress and undo, deleting goes to the Trash, anything permanent is asked about first, and Git repositories show their marks and branch.
 
 ```bash
-argonaut --tui                 # this folder on the left, home on the right
-argonaut --tui ~/src /mnt/usb  # two folders of your choice
+argonaut --tui                 # this folder, in one pane (F4 opens a second)
+argonaut --tui ~/src /mnt/usb  # two folders, side by side
 ```
 
 | Keys | |
@@ -199,6 +199,7 @@ argonaut --tui ~/src /mnt/usb  # two folders of your choice
 | Arrows, PgUp/PgDn, Home/End | move |
 | Enter / Backspace | into a folder, or open the file with its app / up (Enter on `..` goes up too) |
 | F3 | read a text file in the terminal |
+| F4 | a second pane beside the first, or back to one |
 | Tab | the other pane |
 | Space or Insert | select |
 | F5 / F6 | copy / move to the other pane |

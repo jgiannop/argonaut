@@ -47,7 +47,8 @@ struct Mouse
     int y = 0;
 };
 
-// Argonaut in a terminal: two panes of files side by side, the same engine
+// Argonaut in a terminal: one pane of files, or two side by side (F4; it
+// starts with two when `rightFolder` is given), the same engine
 // as the window (folder model, copy/move/trash with undo, the same rules
 // before anything permanent, Git marks from the extension), drawn as text.
 // It never talks to a terminal itself: key() takes key presses, render()
@@ -70,6 +71,7 @@ public:
     // For tests (and the terminal's title).
     QString folder(int pane) const;
     int activePane() const { return m_active; }
+    bool isSplit() const { return m_split; }
     QString cursorPath() const;         // the item under the active pane's cursor
     QStringList selectedPaths() const;  // the active pane's selection
     QString message() const { return m_message; }
@@ -127,6 +129,7 @@ private:
     void newFolder();
     void rename();
     void goTo();
+    void setSplit(bool on);
     void toggleHidden();
     void quit();
     void say(const QString &text);
@@ -150,6 +153,8 @@ private:
     FileOperations *m_ops;
     Pane m_panes[2];
     int m_active = 0;
+    bool m_split = false;      // both panes are on screen
+    bool m_secondUsed = false; // the second pane has been shown once (it has its own folder now)
     bool m_showHidden = false;
     Mode m_mode = Mode::Normal;
     QString m_message;

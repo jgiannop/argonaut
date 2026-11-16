@@ -92,7 +92,11 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
     // Git marks and the branch come from the extension, as in the window.
     connect(Extensions::Host::instance(), &Extensions::Host::folderChanged, this, &App::changed);
 
-    const QString folders[2] = {leftFolder, rightFolder};
+    // One pane to start with; two when a second folder was asked for. The
+    // second pane is there all along (hidden), so splitting is instant.
+    m_split = !rightFolder.isEmpty();
+    m_secondUsed = m_split;
+    const QString folders[2] = {leftFolder, m_split ? rightFolder : leftFolder};
     for (int i = 0; i < 2; ++i) {
         Pane &p = m_panes[i];
         p.model = new DirectoryModel(this);
@@ -392,6 +396,10 @@ void App::transfer(bool move)
     const QStringList paths = targets();
     if (paths.isEmpty())
         return;
+    if (!m_split) {
+        say(QStringLiteral("Copying and moving go to the other pane: F4 opens it"));
+        return;
+    }
     const QString target = other().current;
     if (!FileRules::isTransferTarget(target)) {
         say(QStringLiteral("The other pane isn't a folder things can be put in"));
@@ -513,6 +521,22 @@ void App::goTo()
         if (!path.isEmpty())
             navigate(pane(), path);
     });
+}
+
+// F4: one pane or two. The second pane opens on the folder you are in the
+// first time, and keeps its own folder after that. Going back to one pane
+// keeps the pane you are in.
+void App::setSplit(bool on)
+{
+    if (m_split == on)
+        return;
+    m_split = on;
+    if (on && !m_secondUsed) {
+        m_secondUsed = true;
+        if (other().current != pane().current)
+            navigate(other(), pane().current, false);
+    }
+    emit changed();
 }
 
 void App::toggleHidden()
@@ -826,8 +850,15 @@ void App::normalKey(const Key &key)
         goUp();
         return;
     case Key::Tab:
+        if (!m_split) {
+            say(QStringLiteral("There is one pane. F4 opens a second one."));
+            return;
+        }
         m_active = 1 - m_active;
         emit changed();
+        return;
+    case Key::F4:
+        setSplit(!m_split);
         return;
     case Key::Insert: { // select and step down, as in every two-pane manager
         const QString path = cursorPath();
@@ -939,8 +970,14 @@ void App::render(Screen &screen)
     const QString undo = m_ops->canUndo() ? QStringLiteral("Ctrl+Z %1").arg(m_ops->undoText()) : QString();
     screen.put(qMax(11, w - Screen::widthOf(undo) - 1), 0, undo, {Ink::Dim, Paper::Bar, false});
 
-    const int left = (w - 1) / 2;
     const int paneHeight = h - 3; // top bar above; message and key lines below
+    if (!m_split) {
+        other().width = 0; // not on screen: the mouse can't reach it
+        drawPane(screen, m_active, 0, w, 1, paneHeight);
+        drawBottom(screen);
+        return;
+    }
+    const int left = (w - 1) / 2;
     drawPane(screen, 0, 0, left, 1, paneHeight);
     for (int y = 1; y < 1 + paneHeight; ++y)
         screen.put(left, y, QStringLiteral("│"), kDim);
@@ -1146,13 +1183,16 @@ void App::drawBottom(Screen &screen)
         const char *key;
         const char *what;
         Key::Code code;
-    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "View", Key::F3}, {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6},
-                {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8}, {"Tab", "Other Pane", Key::Tab},
+    } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "View", Key::F3}, {"F4", "Split", Key::F4},
+                {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6}, {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8},
                 {"F10", "Quit", Key::F10}};
     int x = 1;
     for (const auto &entry : keys) {
+        // With one pane there is no other pane to copy to or go to.
+        if (!m_split && (entry.code == Key::F5 || entry.code == Key::F6))
+            continue;
         const QString key = QString::fromLatin1(entry.key);
-        const QString what = QString::fromLatin1(entry.what);
+        const QString what = entry.code == Key::F4 && m_split ? QStringLiteral("One Pane") : QString::fromLatin1(entry.what);
         if (x + key.size() + 1 + what.size() >= w)
             break;
         const int from = x;
@@ -1173,6 +1213,7 @@ void App::drawHelp(Screen &screen)
         "  F3                                read a text file here in the terminal",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",
+        "  F4                                a second pane beside this one, or back to one",
         "  Tab                               the other pane",
         "  g  or  Ctrl+L                     go to a folder (\"trash\" for the Trash)",
         "  ~                                 home",

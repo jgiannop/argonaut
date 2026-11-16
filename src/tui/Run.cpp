@@ -24,8 +24,8 @@ int run(int argc, char **argv)
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == QLatin1String("--help") || arg == QLatin1String("-h")) {
-            std::printf("Usage: argonaut --tui [left folder] [right folder]\n"
-                        "Argonaut in the terminal: two panes of files. Press F1 inside for the keys.\n");
+            std::printf("Usage: argonaut --tui [folder] [second folder]\n"
+                        "Argonaut in the terminal. One pane of files; F4 (or a second folder) gives two. Press F1 inside for the keys.\n");
             return 0;
         }
         if (!arg.startsWith(QLatin1Char('-')))
@@ -43,7 +43,7 @@ int run(int argc, char **argv)
     QCoreApplication::setOrganizationName(QStringLiteral("Argonaut"));
     QCoreApplication::setApplicationVersion(QStringLiteral(ARGONAUT_VERSION));
 
-    App tui(folders.value(0, QDir::currentPath()), folders.value(1, QDir::homePath()));
+    App tui(folders.value(0, QDir::currentPath()), folders.value(1));
     auto terminal = std::make_unique<Terminal>();
     Screen screen;
     bool dirty = true;

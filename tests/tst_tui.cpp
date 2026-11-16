@@ -44,6 +44,7 @@ private slots:
     void quitWaitsForTheWork();
     void mouseClicksAndDoubleClicks();
     void opensFiles();
+    void startsWithOnePane();
 
 private:
     QString make(const QString &relative, const QByteArray &content = "x");
@@ -481,6 +482,62 @@ void TestTui::hiddenFilesAndGoTo()
     QVERIFY(app->message().startsWith("Folder not found"));
     keys({Key::character('~')});
     QCOMPARE(app->folder(0), QDir::cleanPath(QDir::homePath()));
+}
+
+void TestTui::startsWithOnePane()
+{
+    // One folder asked for: one pane, over the whole width.
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(!app->isSplit());
+    QString text = screen();
+    QVERIFY(text.contains("alpha.txt"));
+    QVERIFY(!text.contains(QChar(0x2502))); // no line between panes
+    QVERIFY(text.contains("F4 Split"));
+    QVERIFY(!text.contains("F5 Copy"));
+
+    // Nothing to copy to, nowhere to Tab to.
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::of(Key::F5)});
+    settle();
+    QVERIFY(!app->isBusy());
+    QVERIFY(app->message().contains("F4"));
+    QCOMPARE(QDir(m_left).entryList(QDir::Files).size(), 2);
+    keys({Key::of(Key::F6)});
+    settle();
+    QVERIFY(exists(m_left + "/alpha.txt"));
+    keys({Key::of(Key::Tab)});
+    QCOMPARE(app->activePane(), 0);
+
+    // F4: a second pane, on the same folder; then it is a pane like any other.
+    keys({Key::of(Key::F4)});
+    settle();
+    QVERIFY(app->isSplit());
+    QCOMPARE(app->folder(1), m_left);
+    text = screen();
+    QVERIFY(text.contains(QChar(0x2502)));
+    QVERIFY(text.contains("F4 One Pane"));
+    keys({Key::of(Key::Tab)});
+    QCOMPARE(app->activePane(), 1);
+    app->selectPath(m_left + "/Documents");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(1), m_left + "/Documents");
+
+    // Back to one: the pane you are in stays, and the other keeps its folder.
+    keys({Key::of(Key::F4)});
+    settle();
+    QVERIFY(!app->isSplit());
+    QCOMPARE(app->activePane(), 1);
+    QVERIFY(screen().contains("inside.txt"));
+    QVERIFY(!screen().contains("alpha.txt"));
+    // A click where the hidden pane used to be lands in the one shown.
+    app->mouse({Tui::Mouse::Press, 3, 4});
+    QCOMPARE(app->activePane(), 1);
+    keys({Key::of(Key::F4)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    QCOMPARE(app->folder(1), m_left + "/Documents");
 }
 
 void TestTui::quitWaitsForTheWork()
