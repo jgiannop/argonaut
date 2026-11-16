@@ -46,7 +46,7 @@ struct Key
 // What the mouse did, in cells from the top-left corner.
 struct Mouse
 {
-    enum Kind { Press, RightPress, WheelUp, WheelDown };
+    enum Kind { Press, RightPress, WheelUp, WheelDown, Move };
     Kind kind = Press;
     int x = 0;
     int y = 0;
@@ -91,6 +91,13 @@ public:
     // the key of one of Argonaut's themes ("forest", "file:My Theme").
     QString themeKey() const { return m_themeKey; }
     void setTheme(const QString &key);
+    // The effects (on unless switched off, "tui/effects"): a theme's exact
+    // colours where the terminal can show them, rounded frames with a shadow
+    // and the rest of the screen dimmed under a menu, what is under the
+    // mouse lit up, names in the colour of their kind, bars that move by
+    // eighths of a cell. Off: the plain look, and less to send to a slow line.
+    bool effects() const { return m_effects; }
+    void setEffects(bool on);
     bool isSidebarShown() const { return m_sidebar; } // the list of places at the left (Ctrl+B)
     bool isInSidebar() const { return m_inSidebar; }  // and the keys go to it
     void setSidebarShown(bool on);
@@ -153,6 +160,7 @@ private:
         int cellWidth = 1;     // grid: cells an item takes
         int widestName = 0;    // grid: the longest name's width (of the first few thousand)
         int barY = 0, barHeight = 0; // the scrollbar, from the last frame (height 0: there is none)
+        int hover = -1;        // the row of the list under the mouse (-1: none)
         bool widthStale = true;
     };
     enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette, Menu };
@@ -282,6 +290,9 @@ private:
     bool m_split = false;      // both panes are on screen
     bool m_secondUsed = false; // the second pane has been shown once (it has its own folder now)
     bool m_showHidden = false;
+    bool m_effects = true;
+    int m_sideHover = -1;      // the row of the places under the mouse
+    void hoverAt(int x, int y); // the mouse moved (no button): what is under it lights up
     // The shell panel (F12): made when first asked for, gone when the shell ends.
     Shell *m_shell = nullptr;
     bool m_inShell = false;       // keys go to the shell, not to the files

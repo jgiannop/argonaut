@@ -685,6 +685,10 @@ colours are the default): <b>System Dashboard</b> opens in the preview at the ri
 drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
 the biggest things inside it, and <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory
 first ([[Tab]] to the preview, then [[/]] searches the list by name).</li>
+<li><b>Effects</b> (View → Effects, on unless you switch them off): a theme in its exact colours where the terminal
+can show any colour, names in the colour of their kind (pictures, archives, code), the row under the mouse lit up,
+menus with rounded corners and a shadow over a dimmed screen, and scrollbars and bars that move by eighths of a
+character. Switch them off for the plain look, or on a slow connection: they send more.</li>
 <li><b>Mouse:</b> click, double-click, the wheel, and the words on the bottom line. A right-click works as it does
 here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
 pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is

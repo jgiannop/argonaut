@@ -135,11 +135,17 @@ inline QString padded(const QString &text, int width, bool right = false)
     return right ? space + cut : cut + space;
 }
 
-// A bar of `width` cells, `share` of it in `color`.
+// A bar of `width` cells, `share` of it in `color`. It grows by eighths of
+// a cell: the cell where it ends is a part block, the bar's colour on the
+// track's.
 inline QString blocks(int width, double share, int color)
 {
-    const int filled = qBound(0, int(width * share + 0.5), width);
-    return sgr(color) + QString(filled, QChar(0x2588)) + sgr(kTrack) + QString(width - filled, QChar(0x2588)) + kReset;
+    const int eighths = qBound(0, int(width * 8 * share + 0.5), width * 8);
+    const int full = eighths / 8, part = eighths % 8;
+    QString bar = sgr(color) + QString(full, QChar(0x2588));
+    if (part > 0)
+        bar += sgr(color, kTrack) + QChar(0x2590 - part); // ▏ is 0x258F (one eighth) … ▉ 0x2589 (seven)
+    return bar + sgr(kTrack) + QString(width - full - (part > 0 ? 1 : 0), QChar(0x2588)) + kReset;
 }
 
 // ------------------------------------------------ a list, biggest first ---

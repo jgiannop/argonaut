@@ -32,7 +32,14 @@ private:
     int pairFor(Ink ink, Paper paper);
     int rawPair(int fg, int bg); // for a cell with the shell's own colours
 
-    int m_pairs[8][6] = {};
+    bool canShowAnyColor() const;  // the terminal's palette can be set, and it shows every colour
+    void setExactColors(bool on);  // gives the theme's very colours to palette entries of ours
+    void setMotion(bool on);       // the mouse reports where it is as it moves
+
+    int m_pairs[InkCount][PaperCount] = {};
+    bool m_exact = false;          // the pairs are made of our own palette entries
+    bool m_motion = false;
+    bool m_again = false;          // everything is to be set up again (after another program had the terminal)
     Palette m_palette; // the colours the pairs were made for
     Screen m_shown;    // the last frame, to tell when many lines changed at once
     int m_nextPair = 1;

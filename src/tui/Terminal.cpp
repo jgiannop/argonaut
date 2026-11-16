@@ -52,8 +52,27 @@ short colorOf(Paper paper)
         return COLORS >= 256 ? 238 : COLOR_BLACK;
     case Paper::Side:
         return -1; // the places: the terminal's background too
+    case Paper::Hover:
+        return COLORS >= 256 ? 235 : COLOR_BLACK;
+    case Paper::Shadow:
+        return COLORS >= 256 ? 233 : COLOR_BLACK;
     }
     return -1;
+}
+
+// Sixteen entries of the terminal's palette are ours while a theme is shown
+// exactly: its eight inks and eight papers. They are the light end of the
+// grey ramp (240…255), the entries programs use least; what a shell or a
+// dashboard draws in one of them goes to the nearest grey of the cube.
+constexpr int kInkSlot = 240;
+constexpr int kPaperSlot = 248;
+
+int greyOutsideOurSlots(int index)
+{
+    if (index < kInkSlot || index > 255)
+        return index;
+    const int level = 8 + 10 * (index - 232); // what that grey is, 0…255
+    return level < 115 ? 59 : level < 155 ? 102 : level < 195 ? 145 : level < 235 ? 188 : 231;
 }
 
 } // namespace
@@ -102,6 +121,7 @@ Terminal::Terminal()
 #if defined(BUTTON5_PRESSED)
                     | BUTTON5_PRESSED
 #endif
+                    | REPORT_MOUSE_POSITION
                 ,
                 nullptr);
     ::mouseinterval(0);
@@ -114,6 +134,8 @@ Terminal::Terminal()
 
 Terminal::~Terminal()
 {
+    setMotion(false);
+    setExactColors(false);
     ::curs_set(1);
     ::endwin();
 }
@@ -136,11 +158,11 @@ int Terminal::pairFor(Ink ink, Paper paper)
     if (pair == 0 && m_nextPair < COLOR_PAIRS) {
         pair = m_nextPair++;
         const bool themed = m_palette.themed && COLORS >= 256; // a theme needs the 256 colours
-        short fg = themed ? m_palette.ink[int(ink)] : colorOf(ink);
-        const short bg = themed ? m_palette.paper[int(paper)] : colorOf(paper);
+        short fg = !themed ? colorOf(ink) : m_exact ? short(kInkSlot + int(ink)) : m_palette.ink[int(ink)];
+        const short bg = !themed ? colorOf(paper) : m_exact ? short(kPaperSlot + int(paper)) : m_palette.paper[int(paper)];
         // Folder blue on the blue cursor bar would vanish.
         if (paper == Paper::Cursor && (ink == Ink::Folder || ink == Ink::Dim))
-            fg = themed ? m_palette.ink[int(Ink::Normal)] : short(COLOR_WHITE);
+            fg = !themed ? short(COLOR_WHITE) : m_exact ? short(kInkSlot + int(Ink::Normal)) : m_palette.ink[int(Ink::Normal)];
         ::init_pair(short(pair), fg, bg);
     }
     return pair;
@@ -156,11 +178,15 @@ int Terminal::rawPair(int fg, int bg)
         bg = -1;
     // "The terminal's own colour" inside a themed frame is the theme's: a
     // shell panel or a dashboard doesn't sit there as a patch of another colour.
+    if (m_exact) { // 240…255 are the theme's now
+        fg = greyOutsideOurSlots(fg);
+        bg = greyOutsideOurSlots(bg);
+    }
     if (m_palette.themed && COLORS >= 256) {
         if (fg < 0)
-            fg = m_palette.ink[int(Ink::Normal)];
+            fg = m_exact ? kInkSlot + int(Ink::Normal) : m_palette.ink[int(Ink::Normal)];
         if (bg < 0)
-            bg = m_palette.paper[int(Paper::Normal)];
+            bg = m_exact ? kPaperSlot + int(Paper::Normal) : m_palette.paper[int(Paper::Normal)];
     }
     if (fg < 0 && bg < 0)
         return 0;
@@ -181,12 +207,57 @@ int Terminal::rawPair(int fg, int bg)
     return pair;
 }
 
+bool Terminal::canShowAnyColor() const
+{
+    // The terminal says so itself (COLORTERM); such a terminal also lets its
+    // palette be set, which is how ncurses is given a colour that isn't one
+    // of the 256. Over SSH the variable usually isn't passed on: the nearest
+    // of the 256 then, as before.
+    const QByteArray any = qgetenv("COLORTERM").toLower();
+    return m_colors && COLORS >= 256 && ::can_change_color() && (any.contains("truecolor") || any.contains("24bit"));
+}
+
+void Terminal::setExactColors(bool on)
+{
+    if (on) {
+        auto set = [](int slot, quint32 rgb) {
+            ::init_color(short(slot), short(((rgb >> 16) & 0xff) * 1000 / 255), short(((rgb >> 8) & 0xff) * 1000 / 255),
+                         short((rgb & 0xff) * 1000 / 255));
+        };
+        for (int i = 0; i < InkCount; ++i)
+            set(kInkSlot + i, m_palette.inkRgb[i]);
+        for (int i = 0; i < PaperCount; ++i)
+            set(kPaperSlot + i, m_palette.paperRgb[i]);
+    } else if (m_exact) {
+        // The terminal's own colours back in the entries that were ours.
+        QByteArray reset = "\033]104";
+        for (int slot = kInkSlot; slot <= 255; ++slot)
+            reset += ';' + QByteArray::number(slot);
+        reset += "\007";
+        (void)!::write(STDOUT_FILENO, reset.constData(), size_t(reset.size()));
+    }
+    m_exact = on;
+}
+
+void Terminal::setMotion(bool on)
+{
+    if (on == m_motion)
+        return;
+    m_motion = on;
+    // "Any event" tracking: where the mouse is, as it moves.
+    static const char start[] = "\033[?1003h", stop[] = "\033[?1003l";
+    (void)!::write(STDOUT_FILENO, on ? start : stop, sizeof start - 1);
+}
+
 void Terminal::show(const Screen &screen)
 {
-    if (!(screen.palette() == m_palette)) {
+    setMotion(screen.wantsMotion());
+    if (!(screen.palette() == m_palette) || m_again) {
+        m_again = false;
         // Another theme: every pair of colours is made again, and the whole
         // screen painted again (the numbers mean other colours now).
         m_palette = screen.palette();
+        setExactColors(m_palette.themed && m_palette.exact && canShowAnyColor());
         for (auto &row : m_pairs) {
             for (int &pair : row)
                 pair = 0;
@@ -235,6 +306,10 @@ void Terminal::show(const Screen &screen)
             if (cell.tail)
                 continue; // the wide character before it covers this cell
             attr_t attributes = cell.style.bold ? A_BOLD : A_NORMAL;
+            if (!cell.style.raw && cell.style.underline)
+                attributes |= A_UNDERLINE;
+            if (!cell.style.raw && cell.style.reverse)
+                attributes |= A_REVERSE;
             if (!m_colors && (cell.style.paper == Paper::Cursor || cell.style.paper == Paper::Bar))
                 attributes |= A_REVERSE;
             int pair;
@@ -276,6 +351,11 @@ void Terminal::show(const Screen &screen)
 
 void Terminal::suspend()
 {
+    // The other program gets the terminal as it was: its own colours, and
+    // a mouse that doesn't report every move.
+    setMotion(false);
+    setExactColors(false);
+    m_again = true;
     ::def_prog_mode();
     ::endwin();
 }
@@ -327,6 +407,8 @@ QList<Key> Terminal::readKeys(bool *resized)
                         mouse.kind = Mouse::RightPress;
                     else if (event.bstate & BUTTON4_PRESSED)
                         mouse.kind = Mouse::WheelUp;
+                    else if (event.bstate & REPORT_MOUSE_POSITION)
+                        mouse.kind = Mouse::Move;
 #if defined(BUTTON5_PRESSED)
                     else if (event.bstate & BUTTON5_PRESSED)
                         mouse.kind = Mouse::WheelDown;

@@ -114,6 +114,7 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
             });
     // The sidebar's places: drives and bookmarks change behind our back.
     m_sidebar = QSettings().value(QStringLiteral("tui/sidebar"), true).toBool();
+    m_effects = QSettings().value(QStringLiteral("tui/effects"), true).toBool();
     m_placesTimer.setInterval(3000);
     connect(&m_placesTimer, &QTimer::timeout, this, &App::refreshPlaces);
     m_placesTimer.start();
@@ -628,6 +629,70 @@ void App::setView(View view)
 // F4: one pane or two. The second pane opens on the folder you are in the
 // first time, and keeps its own folder after that. Going back to one pane
 // keeps the pane you are in.
+void App::setEffects(bool on)
+{
+    if (m_effects == on)
+        return;
+    m_effects = on;
+    QSettings().setValue(QStringLiteral("tui/effects"), on);
+    for (Pane &p : m_panes)
+        p.hover = -1;
+    m_sideHover = -1;
+    setTheme(m_themeKey); // its colours exact, or the nearest again
+    say(on ? QStringLiteral("Effects on") : QStringLiteral("Effects off: the plain look"));
+}
+
+// The mouse moved: the row of the list or of the places under it lights
+// up, and in a menu or the palette the item under it is the chosen one.
+// Nothing is drawn again unless that changed.
+void App::hoverAt(int x, int y)
+{
+    if (!m_effects)
+        return;
+    if (m_mode == Mode::Menu) {
+        if (m_menuOpen < 0 || x <= m_menuX || x >= m_menuX + m_menuWidth - 1 || y < m_menuY || y >= m_menuY + m_menuShown)
+            return;
+        const int row = m_menuTop + (y - m_menuY);
+        const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
+        if (row < items.size() && !items.at(row).separator && items.at(row).enabled && row != m_menuCursor) {
+            m_menuCursor = row;
+            emit changed();
+        }
+        return;
+    }
+    if (m_mode == Mode::Palette) {
+        const int row = m_paletteTop + (y - m_paletteY);
+        if (x > m_paletteX && x < m_paletteX + m_paletteWidth - 1 && y >= m_paletteY && y < m_paletteY + m_paletteShown
+            && row < m_paletteHits.size() && row != m_paletteCursor) {
+            m_paletteCursor = row;
+            emit changed();
+        }
+        return;
+    }
+    if (m_mode != Mode::Normal)
+        return;
+    bool moved = false;
+    const int side = m_sideWidth > 0 && x < m_sideWidth && y >= m_sideY && y < m_sideY + m_sideShown ? m_sideTop + (y - m_sideY) : -1;
+    if (side != m_sideHover) {
+        m_sideHover = side;
+        moved = true;
+    }
+    for (Pane &p : m_panes) {
+        int row = -1;
+        if (p.width > 0 && p.view == View::List && x >= p.x && x < p.x + p.width - 1 && y >= p.rowsY && y < p.rowsY + p.rowsShown) {
+            row = p.top + (y - p.rowsY);
+            if (row >= rowCount(p))
+                row = -1;
+        }
+        if (row != p.hover) {
+            p.hover = row;
+            moved = true;
+        }
+    }
+    if (moved)
+        emit changed();
+}
+
 void App::setSplit(bool on)
 {
     if (m_split == on)
@@ -983,6 +1048,10 @@ void App::scrollTo(Pane &p, int top)
 
 void App::mouse(const Mouse &mouse)
 {
+    if (mouse.kind == Mouse::Move) {
+        hoverAt(mouse.x, mouse.y);
+        return;
+    }
     if (m_mode == Mode::Help) {
         // The wheel moves through a help longer than the screen.
         if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
@@ -1352,6 +1421,7 @@ void App::render(Screen &screen)
 {
     screen.clear();
     screen.setPalette(m_palette);
+    screen.setWantsMotion(m_effects);
     const int w = screen.width();
     const int h = screen.height();
     if (w < 40 || h < 8) {
@@ -1490,7 +1560,8 @@ void App::drawSidebar(Screen &screen, int top, int height)
         const bool here = !open.isEmpty() && place.path == open; // where the pane is
         const bool cursor = m_inSidebar && m_sideTop + i == m_sideCursor;
         Style style;
-        style.paper = cursor ? Paper::Cursor : here ? Paper::CursorIdle : Paper::Side;
+        const bool hover = m_effects && !cursor && !here && m_sideTop + i == m_sideHover;
+        style.paper = cursor ? Paper::Cursor : here ? Paper::CursorIdle : hover ? Paper::Hover : Paper::Side;
         style.ink = place.group == Places::Group::Standard || place.group == Places::Group::Bookmarks ? Ink::Normal : Ink::Folder;
         style.bold = here;
         screen.fill(0, y, width, 1, style);
@@ -1652,23 +1723,34 @@ void App::setTheme(const QString &key)
     Palette palette;
     if (known) {
         const Theme t = themeForKey(key);
-        auto index = [](const QColor &c) { return nearest256(c.rgb()); };
         palette.themed = true;
-        palette.ink[int(Ink::Normal)] = index(t.fg);
-        palette.ink[int(Ink::Dim)] = index(laid(t.dimFg, t.window));
-        palette.ink[int(Ink::Accent)] = index(t.accent);
-        palette.ink[int(Ink::Folder)] = index(t.accent);
+        palette.exact = m_effects; // the very colours, where the terminal can show them
+        auto ink = [&palette](Ink which, const QColor &c) {
+            palette.ink[int(which)] = nearest256(c.rgb());
+            palette.inkRgb[int(which)] = c.rgb() & 0xffffff;
+        };
+        auto paper = [&palette](Paper which, const QColor &c) {
+            palette.paper[int(which)] = nearest256(c.rgb());
+            palette.paperRgb[int(which)] = c.rgb() & 0xffffff;
+        };
+        auto tint = [&t](const QColor &c, int alpha) { return laid(QColor(c.red(), c.green(), c.blue(), alpha), t.window); };
+        ink(Ink::Normal, t.fg);
+        ink(Ink::Dim, laid(t.dimFg, t.window));
+        ink(Ink::Accent, t.accent);
+        ink(Ink::Folder, t.accent);
         // The same meanings in every theme, in a shade that reads on its background.
-        palette.ink[int(Ink::Good)] = index(t.dark ? QColor(0x57, 0xe3, 0x89) : QColor(0x1a, 0x7f, 0x4b));
-        palette.ink[int(Ink::Warning)] = index(t.dark ? QColor(0xf8, 0xe4, 0x5c) : QColor(0x9a, 0x6a, 0x00));
-        palette.ink[int(Ink::Bad)] = index(t.dark ? QColor(0xff, 0x7b, 0x63) : QColor(0xc0, 0x1c, 0x28));
-        palette.ink[int(Ink::Selected)] = palette.ink[int(Ink::Warning)];
-        palette.paper[int(Paper::Normal)] = index(t.window);
-        palette.paper[int(Paper::Side)] = index(t.sidebar);
-        palette.paper[int(Paper::Bar)] = index(t.dark ? t.popup : t.sidebar.darker(106));
-        palette.paper[int(Paper::Cursor)] = index(laid(QColor(t.accent.red(), t.accent.green(), t.accent.blue(), t.dark ? 110 : 90), t.window));
-        palette.paper[int(Paper::CursorIdle)] = index(laid(QColor(t.fg.red(), t.fg.green(), t.fg.blue(), 40), t.window));
-        palette.paper[int(Paper::Field)] = index(laid(QColor(t.fg.red(), t.fg.green(), t.fg.blue(), 36), t.window));
+        ink(Ink::Good, t.dark ? QColor(0x57, 0xe3, 0x89) : QColor(0x1a, 0x7f, 0x4b));
+        ink(Ink::Warning, t.dark ? QColor(0xf8, 0xe4, 0x5c) : QColor(0x9a, 0x6a, 0x00));
+        ink(Ink::Bad, t.dark ? QColor(0xff, 0x7b, 0x63) : QColor(0xc0, 0x1c, 0x28));
+        ink(Ink::Selected, t.dark ? QColor(0xf8, 0xe4, 0x5c) : QColor(0x9a, 0x6a, 0x00));
+        paper(Paper::Normal, t.window);
+        paper(Paper::Side, t.sidebar);
+        paper(Paper::Bar, t.dark ? t.popup : t.sidebar.darker(106));
+        paper(Paper::Cursor, tint(t.accent, t.dark ? 110 : 90));
+        paper(Paper::CursorIdle, tint(t.fg, 40));
+        paper(Paper::Field, tint(t.fg, 36));
+        paper(Paper::Hover, tint(t.fg, 18));
+        paper(Paper::Shadow, t.dark ? t.window.darker(170) : t.window.darker(125));
     }
     m_palette = palette;
     QSettings().setValue(QStringLiteral("tui/theme"), m_themeKey);
@@ -1776,6 +1858,8 @@ QList<App::Menu> App::menus()
                              QStringLiteral("Hide the Places"), QStringLiteral("Show the Places")));
     view.items.append(ticked(QStringLiteral("Terminal"), m_shell != nullptr, QStringLiteral("F12"), [this] { toggleShell(); },
                              QStringLiteral("Go to the Terminal"), QStringLiteral("Open the Terminal")));
+    view.items.append(ticked(QStringLiteral("Effects"), m_effects, QString(), [this] { setEffects(!m_effects); },
+                             QStringLiteral("Effects Off: The Plain Look"), QStringLiteral("Effects On")));
     view.items.append(line());
     view.items.append(item(QStringLiteral("Read the Folder Again"), QStringLiteral("Ctrl+R"), press(Key::control('r'))));
     MenuItem theme = item(QStringLiteral("Theme…"), QString(), [this] {
@@ -2118,9 +2202,16 @@ void App::drawMenu(Screen &screen)
     const Style box{Ink::Normal, Paper::Bar, false};
     const Style edge{Ink::Accent, Paper::Bar, false};
     const QString rule(width - 2, QChar(0x2500));
+    if (m_effects) {
+        // The rest steps back (the menu's own titles stay as they are), and
+        // the menu throws a shadow to the right and below.
+        screen.dim(0, m_popup ? 0 : 1, w, h);
+        screen.shade(x + 2, top + rows + 2, width, 1);
+        screen.shade(x + width, top + 1, 2, rows + 1);
+    }
     screen.fill(x, top, width, rows + 2, box);
-    screen.put(x, top, QStringLiteral("┌") + rule + QStringLiteral("┐"), edge);
-    screen.put(x, top + 1 + rows, QStringLiteral("└") + rule + QStringLiteral("┘"), edge);
+    screen.put(x, top, (m_effects ? QStringLiteral("╭") : QStringLiteral("┌")) + rule + (m_effects ? QStringLiteral("╮") : QStringLiteral("┐")), edge);
+    screen.put(x, top + 1 + rows, (m_effects ? QStringLiteral("╰") : QStringLiteral("└")) + rule + (m_effects ? QStringLiteral("╯") : QStringLiteral("┘")), edge);
     for (int i = 0; i < rows; ++i) {
         const int row = m_menuTop + i;
         const int y = m_menuY + i;
@@ -2264,12 +2355,17 @@ void App::drawPalette(Screen &screen)
     const int rows = qBound(1, qMin(count, 12), qMax(1, h - top - 6));
     const Style box{Ink::Normal, Paper::Bar, false};
     const Style edge{Ink::Accent, Paper::Bar, false};
+    if (m_effects) { // the rest steps back, and the palette throws a shadow
+        screen.dim(0, 0, w, h);
+        screen.shade(x + 2, top + rows + 4, width, 1);
+        screen.shade(x + width, top + 1, 2, rows + 3);
+    }
     screen.fill(x, top, width, rows + 4, box);
     const QString line(width - 2, QChar(0x2500));
-    screen.put(x, top, QStringLiteral("┌") + line + QStringLiteral("┐"), edge);
+    screen.put(x, top, (m_effects ? QStringLiteral("╭") : QStringLiteral("┌")) + line + (m_effects ? QStringLiteral("╮") : QStringLiteral("┐")), edge);
     screen.put(x + 2, top, QStringLiteral(" Commands "), {Ink::Accent, Paper::Bar, true});
     screen.put(x, top + 2, QStringLiteral("├") + line + QStringLiteral("┤"), edge);
-    screen.put(x, top + 3 + rows, QStringLiteral("└") + line + QStringLiteral("┘"), edge);
+    screen.put(x, top + 3 + rows, (m_effects ? QStringLiteral("╰") : QStringLiteral("└")) + line + (m_effects ? QStringLiteral("╯") : QStringLiteral("┘")), edge);
     for (int y = top + 1; y < top + 3 + rows; ++y) {
         if (y == top + 2)
             continue;
@@ -2918,6 +3014,11 @@ void App::drawShell(Screen &screen, int left, int w, int y, int height)
     m_shell->draw(screen, left, y + 1);
 }
 
+namespace {
+// The ink of a file's kind, by its name (and red for a program in disguise).
+Ink kindInk(const QString &name, const QModelIndex &index);
+} // namespace
+
 void App::drawPane(Screen &screen, int index, int x, int width, int top, int height)
 {
     Pane &p = m_panes[index];
@@ -2993,12 +3094,15 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         const bool selected = p.selected.contains(path);
         const bool cursor = row + up == p.cursor;
         Style style;
-        style.paper = cursor ? (active ? Paper::Cursor : Paper::CursorIdle) : Paper::Normal;
-        style.ink = selected ? Ink::Selected : dir ? Ink::Folder : Ink::Normal;
+        const bool hover = m_effects && !cursor && row + up == p.hover; // under the mouse
+        style.paper = cursor ? (active ? Paper::Cursor : Paper::CursorIdle) : hover ? Paper::Hover : Paper::Normal;
+        QString name = p.model->fileName(index0);
+        // With the effects, a name is in the colour of its kind (pictures,
+        // archives, code…), as the big icons are; the cursor's row stays plain.
+        style.ink = selected ? Ink::Selected : dir ? Ink::Folder : m_effects && !cursor ? kindInk(name, index0) : Ink::Normal;
         style.bold = dir || selected;
         screen.fill(x, y, width, 1, style);
         screen.put(x, y, selected ? QStringLiteral("*") : QStringLiteral(" "), style);
-        QString name = p.model->fileName(index0);
         if (dir)
             name += QLatin1Char('/');
         else if (index0.data(DirectoryModel::SymLinkRole).toBool())
@@ -3019,7 +3123,14 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         detail.bold = false;
         if (sizeWidth) {
             const QString size = p.model->index(row, DirectoryModel::SizeColumn).data().toString();
-            screen.put(sizeX + qMax(0, sizeWidth - Screen::widthOf(size)), y, Screen::elided(size, sizeWidth, false), detail);
+            // The big ones stand out: a megabyte and more is in the text's
+            // own colour, a gigabyte and more in the warning's.
+            Style sizeStyle = detail;
+            if (m_effects && !dir && !selected && !cursor) {
+                const qint64 bytes = QFileInfo(path).size();
+                sizeStyle.ink = bytes >= 1000000000 ? Ink::Warning : bytes >= 1000000 ? Ink::Normal : Ink::Dim;
+            }
+            screen.put(sizeX + qMax(0, sizeWidth - Screen::widthOf(size)), y, Screen::elided(size, sizeWidth, false), sizeStyle);
         }
         if (dateWidth)
             screen.put(dateX, y, p.model->index(row, DirectoryModel::ModifiedColumn).data().toString(), detail, dateWidth);
@@ -3111,7 +3222,9 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
             const QModelIndex index0 = p.model->index(at - up, 0);
             const bool dir = p.model->isDir(index0);
             const bool selected = p.selected.contains(p.model->filePath(index0));
-            const Style style{selected ? Ink::Selected : dir ? Ink::Folder : Ink::Normal, paper, dir || selected};
+            const Style style{selected ? Ink::Selected : dir ? Ink::Folder
+                                  : m_effects && paper == Paper::Normal ? kindInk(p.model->fileName(index0), index0) : Ink::Normal,
+                              paper, dir || selected};
             screen.fill(cx, y, p.cellWidth - 1, 1, style);
             if (selected)
                 screen.put(cx, y, QStringLiteral("*"), style);
@@ -3152,9 +3265,34 @@ void App::drawScrollbar(Screen &screen, Pane &p, bool active, int x, int y, int 
     const int at = most > 0 ? int(qint64(height - thumb) * qBound(0, p.top, most) / most) : 0;
     const Style track{Ink::Dim, Paper::Normal, false};
     const Style handle{active ? Ink::Accent : Ink::Dim, Paper::Normal, false};
+    if (!m_effects) {
+        for (int i = 0; i < height; ++i) {
+            const bool on = i >= at && i < at + thumb;
+            screen.put(x, y + i, on ? QStringLiteral("█") : QStringLiteral("│"), on ? handle : track);
+        }
+        return;
+    }
+    // With the effects the handle moves by eighths of a cell: its ends are
+    // part blocks. A block filled from below is a character; one filled
+    // from above is the same character with its colours swapped.
+    const int whole = height * 8;
+    const int size = qBound(8, int(qint64(whole) * shown / total), whole - 8);
+    const int from = most > 0 ? int(qint64(whole - size) * qBound(0, p.top, most) / most) : 0;
+    const int to = from + size;
     for (int i = 0; i < height; ++i) {
-        const bool on = i >= at && i < at + thumb;
-        screen.put(x, y + i, on ? QStringLiteral("█") : QStringLiteral("│"), on ? handle : track);
+        const int cellFrom = i * 8, cellTo = cellFrom + 8;
+        const int covered = qMin(to, cellTo) - qMax(from, cellFrom);
+        if (covered <= 0) {
+            screen.put(x, y + i, QStringLiteral("│"), track);
+        } else if (covered >= 8) {
+            screen.put(x, y + i, QStringLiteral("█"), handle);
+        } else if (from > cellFrom) { // the handle begins in this cell: its lower part
+            screen.put(x, y + i, QString(QChar(0x2580 + covered)), handle);
+        } else {                      // it ends here: the upper part
+            Style swapped = handle;
+            swapped.reverse = true;
+            screen.put(x, y + i, QString(QChar(0x2580 + (8 - covered))), swapped);
+        }
     }
 }
 
@@ -3202,6 +3340,24 @@ Sort sortOf(const QString &suffix)
            : films.contains(suffix) ? Sort::Film
            : archives.contains(suffix) ? Sort::Archive
            : code.contains(suffix) ? Sort::Code : Sort::Document;
+}
+
+Ink kindInk(const QString &name, const QModelIndex &index)
+{
+    if (index.data(DirectoryModel::VerdictRole).toInt() == int(ContentType::Verdict::Dangerous))
+        return Ink::Bad;
+    const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+    if (dot <= 0)
+        return Ink::Normal;
+    switch (sortOf(name.mid(dot + 1).toLower())) {
+    case Sort::Picture: return Ink::Good;
+    case Sort::Sound:
+    case Sort::Film: return Ink::Accent;
+    case Sort::Archive: return Ink::Warning;
+    case Sort::Code: return Ink::Folder;
+    case Sort::Document: break;
+    }
+    return Ink::Normal;
 }
 
 // The first cells of `text` that fit in `width`, and what is left.
@@ -3364,12 +3520,12 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
         const int y = p.rowsY + (cursorLine - p.top) * CellHeight;
         const Style frame{active ? Ink::Accent : Ink::Dim, Paper::Normal, active};
         const int right = cx + p.cellWidth - 1;
-        screen.put(cx, y, QStringLiteral("┌") + QString(p.cellWidth - 2, QChar(0x2500)) + QStringLiteral("┐"), frame);
+        screen.put(cx, y, (m_effects ? QStringLiteral("╭") : QStringLiteral("┌")) + QString(p.cellWidth - 2, QChar(0x2500)) + (m_effects ? QStringLiteral("╮") : QStringLiteral("┐")), frame);
         for (int line = 1; line < CellHeight; ++line) {
             screen.put(cx, y + line, QStringLiteral("│"), frame);
             screen.put(right, y + line, QStringLiteral("│"), frame);
         }
-        screen.put(cx, y + CellHeight, QStringLiteral("└") + QString(p.cellWidth - 2, QChar(0x2500)) + QStringLiteral("┘"), frame);
+        screen.put(cx, y + CellHeight, (m_effects ? QStringLiteral("╰") : QStringLiteral("└")) + QString(p.cellWidth - 2, QChar(0x2500)) + (m_effects ? QStringLiteral("╯") : QStringLiteral("┘")), frame);
     }
     if (items == 0)
         screen.put(x + 2, p.rowsY + (up ? CellHeight + 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);

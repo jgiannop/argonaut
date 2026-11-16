@@ -63,6 +63,7 @@ private slots:
     void menus();
     void extensionResultInThePreview();
     void themes();
+    void effects();
     void shellInTheFolder();
     void shellPanel();
 
@@ -696,8 +697,8 @@ void TestTui::bigIcons()
     QVERIFY2(text.contains("archive.tar") && text.contains(".gz"), qPrintable(text));
     // The frame is round the item under the cursor (the first item, not "..").
     QCOMPARE(app->cursorPath(), m_left + "/Documents");
-    const int frameX = int(lines.at(2).indexOf("┌"));
-    QVERIFY2(frameX > 0 && lines.at(8).indexOf("└") == frameX, qPrintable(text));
+    const int frameX = int(lines.at(2).indexOf("╭"));
+    QVERIFY2(frameX > 0 && lines.at(8).indexOf("╰") == frameX, qPrintable(text));
     QVERIFY(lines.at(6).indexOf("Documents/") > frameX);
     QVERIFY(text.contains("F9 List"));
 
@@ -1232,7 +1233,7 @@ void TestTui::mouseClicksAndDoubleClicks()
     QVERIFY(app->menuNames().contains("Move to Trash") && app->menuNames().contains("Delete Permanently…"));
     QVERIFY(!app->menuNames().contains("New Folder…"));
     QString menuText = screen(100, 30);
-    QVERIFY2(menuText.section('\n', 6, 6).contains("┌──") && menuText.section('\n', 7, 7).contains("Open"), qPrintable(menuText));
+    QVERIFY2(menuText.section('\n', 6, 6).contains("╭──") && menuText.section('\n', 7, 7).contains("Open"), qPrintable(menuText));
     // A right click elsewhere while it is open only closes it; so does Esc.
     app->mouse({Mouse::RightPress, 10, 6});
     QVERIFY(!app->isContextMenuOpen());
@@ -1811,6 +1812,106 @@ void TestTui::menus()
     QVERIFY(app->menuNames().contains("Home") && app->menuNames().contains("Trash") && app->menuNames().contains("(Back)"));
     keys({Key::of(Key::Escape), alt('h'), Key::of(Key::Enter)});
     QVERIFY(screen(100, 30).contains("Argonaut in the terminal"));
+}
+
+// The effects (on unless switched off): what is under the mouse lights up,
+// names are in the colour of their kind, a menu has rounded corners, a
+// shadow, and the rest of the screen dimmed under it, a theme carries its
+// exact colours. Switched off, it is the plain look again.
+void TestTui::effects()
+{
+    make("photo.jpg", "x");
+    make("bundle.zip", "x");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(app->effects());
+    auto rowOf = [](const Screen &s, const QString &text) {
+        for (int y = 0; y < s.height(); ++y) {
+            if (s.line(y).contains(text))
+                return y;
+        }
+        return -1;
+    };
+    Screen s(100, 30);
+    app->render(s);
+    QVERIFY(s.wantsMotion()); // the terminal is asked to say where the mouse is
+    const int photoY = rowOf(s, "photo.jpg"), zipY = rowOf(s, "bundle.zip"), betaY = rowOf(s, "beta.txt");
+    QVERIFY(photoY > 0 && zipY > 0 && betaY > 0);
+    const int nameX = int(s.line(photoY).indexOf("photo.jpg"));
+    // A name is in the colour of its kind.
+    QCOMPARE(s.at(nameX, photoY).style.ink, Tui::Ink::Good);
+    QCOMPARE(s.at(nameX, zipY).style.ink, Tui::Ink::Warning);
+    QCOMPARE(s.at(nameX, betaY).style.ink, Tui::Ink::Normal);
+    // The mouse over a row: it lights up; moved on, the next one does.
+    QCOMPARE(s.at(nameX, photoY).style.paper, Tui::Paper::Normal);
+    app->mouse({Tui::Mouse::Move, nameX + 2, photoY});
+    app->render(s);
+    QCOMPARE(s.at(nameX, photoY).style.paper, Tui::Paper::Hover);
+    QCOMPARE(s.at(nameX, betaY).style.paper, Tui::Paper::Normal);
+    const QString cursorBefore = app->cursorPath();
+    app->mouse({Tui::Mouse::Move, nameX + 2, betaY});
+    app->render(s);
+    QCOMPARE(s.at(nameX, photoY).style.paper, Tui::Paper::Normal);
+    QCOMPARE(s.at(nameX, betaY).style.paper, Tui::Paper::Hover);
+    QCOMPARE(app->cursorPath(), cursorBefore); // moving the mouse moves nothing else
+    QVERIFY(app->selectedPaths().isEmpty());
+
+    // A menu: rounded, with a shadow, over a screen that steps back; the
+    // item under the mouse is the chosen one.
+    Key alt = Key::character('f');
+    alt.alt = true;
+    keys({alt});
+    app->render(s);
+    QString text = s.text();
+    QVERIFY2(text.contains("╭") && text.contains("╮") && text.contains("╰") && text.contains("╯") && !text.contains("┌"), qPrintable(text));
+    QCOMPARE(s.at(nameX + 60, photoY).style.ink, Tui::Ink::Dim); // beside the menu: dimmed
+    bool shadow = false;
+    for (int y = 0; y < s.height(); ++y) {
+        for (int x = 0; x < s.width(); ++x)
+            shadow = shadow || s.at(x, y).style.paper == Tui::Paper::Shadow;
+    }
+    QVERIFY(shadow);
+    const int renameY = rowOf(s, "Rename…");
+    QVERIFY(renameY > 0);
+    const int renameX = int(s.line(renameY).indexOf("Rename…"));
+    QVERIFY(s.at(renameX, renameY).style.paper != Tui::Paper::Cursor);
+    app->mouse({Tui::Mouse::Move, renameX + 1, renameY});
+    app->render(s);
+    QCOMPARE(s.at(renameX, renameY).style.paper, Tui::Paper::Cursor);
+    keys({Key::of(Key::Escape)});
+
+    // A theme carries its very colours, for a terminal that can show them.
+    app->setTheme("forest");
+    app->render(s);
+    QVERIFY(s.palette().themed && s.palette().exact);
+    QVERIFY(s.palette().paperRgb[int(Tui::Paper::Normal)] != s.palette().paperRgb[int(Tui::Paper::Hover)]);
+    QVERIFY(s.palette().paperRgb[int(Tui::Paper::Normal)] != s.palette().paperRgb[int(Tui::Paper::Shadow)]);
+    QVERIFY(s.palette().inkRgb[int(Tui::Ink::Normal)] != s.palette().paperRgb[int(Tui::Paper::Normal)]);
+
+    // Off, from the View menu's own item: the plain look.
+    keys({Key::control('p')});
+    type("effects off");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Effects Off: The Plain Look"));
+    keys({Key::of(Key::Enter)});
+    QVERIFY(!app->effects());
+    app->render(s);
+    QVERIFY(!s.wantsMotion());
+    QVERIFY(s.palette().themed && !s.palette().exact);
+    QCOMPARE(s.at(nameX, photoY).style.ink, Tui::Ink::Normal);
+    app->mouse({Tui::Mouse::Move, nameX + 2, photoY});
+    app->render(s);
+    QCOMPARE(s.at(nameX, photoY).style.paper, Tui::Paper::Normal);
+    keys({alt});
+    app->render(s);
+    text = s.text();
+    QVERIFY2(text.contains("┌") && !text.contains("╭"), qPrintable(text));
+    QCOMPARE(s.at(nameX + 60, photoY).style.paper, Tui::Paper::Normal);
+    keys({Key::of(Key::Escape)});
+    // And it is remembered.
+    app = std::make_unique<App>(m_left, QString());
+    QVERIFY(!app->effects());
+    app->setEffects(true);
+    app->setTheme("terminal");
 }
 
 // Themes: the terminal's own colours unless one of Argonaut's themes is

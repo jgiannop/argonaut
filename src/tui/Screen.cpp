@@ -71,6 +71,36 @@ int Screen::put(int x, int y, const QString &text, const Style &style, int maxWi
     return used;
 }
 
+void Screen::dim(int x, int y, int width, int height)
+{
+    for (int row = qMax(0, y); row < qMin(m_height, y + height); ++row) {
+        for (int column = qMax(0, x); column < qMin(m_width, x + width); ++column) {
+            Style &style = m_cells[row * m_width + column].style;
+            if (style.raw) { // a shell's or a dashboard's own colours: only less bold
+                style.bold = false;
+                continue;
+            }
+            style.ink = Ink::Dim;
+            style.bold = false;
+            if (style.paper == Paper::Cursor) // the cursor's bar would outshine the menu
+                style.paper = Paper::CursorIdle;
+        }
+    }
+}
+
+void Screen::shade(int x, int y, int width, int height)
+{
+    for (int row = qMax(0, y); row < qMin(m_height, y + height); ++row) {
+        for (int column = qMax(0, x); column < qMin(m_width, x + width); ++column) {
+            Style &style = m_cells[row * m_width + column].style;
+            const bool wasRaw = style.raw;
+            style = Style{Ink::Dim, Paper::Shadow, false};
+            if (wasRaw) // its colours meant something else: the shadow is plain there
+                m_cells[row * m_width + column].ch = U' ';
+        }
+    }
+}
+
 void Screen::fill(int x, int y, int width, int height, const Style &style, char32_t ch)
 {
     for (int row = qMax(0, y); row < qMin(m_height, y + height); ++row) {
