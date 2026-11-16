@@ -18,8 +18,19 @@ struct Style
     Ink ink = Ink::Normal;
     Paper paper = Paper::Normal;
     bool bold = false;
+    // A cell of the shell panel carries the shell's own colours instead:
+    // two of the terminal's 256 (-1: the terminal's default).
+    bool raw = false;
+    bool underline = false;
+    bool reverse = false;
+    qint16 fg = -1;
+    qint16 bg = -1;
 
-    bool operator==(const Style &o) const { return ink == o.ink && paper == o.paper && bold == o.bold; }
+    bool operator==(const Style &o) const
+    {
+        return ink == o.ink && paper == o.paper && bold == o.bold && raw == o.raw && underline == o.underline
+               && reverse == o.reverse && fg == o.fg && bg == o.bg;
+    }
 };
 
 struct Cell
@@ -44,6 +55,12 @@ public:
     // Returns the cells used. Anything outside the grid is dropped.
     int put(int x, int y, const QString &text, const Style &style = {}, int maxWidth = -1);
     void fill(int x, int y, int width, int height, const Style &style, char32_t ch = U' ');
+    // One cell as it is (the shell panel's); outside the grid it is dropped.
+    void set(int x, int y, const Cell &cell)
+    {
+        if (x >= 0 && y >= 0 && x < m_width && y < m_height)
+            m_cells[y * m_width + x] = cell;
+    }
 
     const Cell &at(int x, int y) const { return m_cells.at(y * m_width + x); }
     // One row as text (what a test compares), without trailing spaces.

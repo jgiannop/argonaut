@@ -199,8 +199,10 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | Arrows, PgUp/PgDn, Home/End | move |
 | Enter / Backspace | into a folder, or open the file with its app / up (Enter on `..` goes up too) |
 | F3 | read a text file in the terminal |
+| F12 or Ctrl+` | a terminal in the lower half, in this folder; again: back to the files (the terminal stays). In it, Ctrl+Up brings the files to its folder and `exit` closes it |
 | F4 | a second pane beside the first, or back to one |
 | Tab | the other pane |
+| F9 | the pane as a grid of names, or as a list with sizes and dates (in a grid the arrows move four ways, Enter opens and Backspace goes up) |
 | Space or Insert | select |
 | F5 / F6 | copy / move to the other pane |
 | F7 / F2 | new folder / rename |

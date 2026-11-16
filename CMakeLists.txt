@@ -226,9 +226,20 @@ qt_add_library(argonaut_tui STATIC
     src/tui/Screen.cpp
     src/tui/App.h
     src/tui/App.cpp
+    src/tui/Shell.h
+    src/tui/Shell.cpp
 )
 target_include_directories(argonaut_tui PUBLIC src/tui)
 target_link_libraries(argonaut_tui PUBLIC argonaut_core)
+# The shell panel under the panes needs libvterm, like the window's terminal.
+# Without it the whole terminal is handed to a shell instead.
+if(VTERM_FOUND AND UNIX)
+    target_compile_definitions(argonaut_tui PRIVATE ARGONAUT_TUI_SHELL=1)
+    target_link_libraries(argonaut_tui PUBLIC PkgConfig::VTERM)
+    if(UTIL_LIBRARY)
+        target_link_libraries(argonaut_tui PUBLIC ${UTIL_LIBRARY})
+    endif()
+endif()
 
 set(CURSES_NEED_NCURSES TRUE)
 set(CURSES_NEED_WIDE TRUE)
