@@ -223,6 +223,7 @@ void QuickLook::showItem(const Item &item)
     m_details->setText(item.details);
     m_note->clear();
     m_open->setEnabled(item.verdict != ContentType::Verdict::Dangerous);
+    m_open->show();
     if (m_movie) {
         m_movie->stop();
         m_movie->deleteLater();
@@ -374,6 +375,7 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
     if (content.update)
         return false; // for a result that isn't shown (any more)
     clear(); // no file: nothing to open, nothing still loading
+    m_open->hide(); // …so no button that would open it
     m_title->setText(title);
     m_details->setText(details);
     if (!applyExtension(content)) {
@@ -476,6 +478,11 @@ void QuickLook::resizeEvent(QResizeEvent *event)
         m_resultTimer->start(); // the extension draws for the new size
 }
 
+bool QuickLook::hasOpenButton() const
+{
+    return m_open->isVisibleTo(this);
+}
+
 int QuickLook::pictureScrollRange() const
 {
     return m_pages->currentWidget() == m_scroll ? m_scroll->verticalScrollBar()->maximum() : -1;
@@ -518,6 +525,7 @@ void QuickLook::clear()
     m_infoIcon->clear();
     m_infoText->setStyleSheet(QString());
     m_open->setEnabled(false);
+    m_open->show();
     showInfo(tr("Select a file to preview it"));
 }
 

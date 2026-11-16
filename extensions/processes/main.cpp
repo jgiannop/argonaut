@@ -152,7 +152,7 @@ ListHead headOf(const Processes &p)
     head.beside = QStringLiteral("%1 yours · %2 others").arg(p.mine).arg(p.others);
     head.share = p.memoryTotal > 0 ? double(p.memoryUsed) / double(p.memoryTotal) : 0;
     head.line = p.memoryTotal > 0 ? QStringLiteral("Memory in use:\n%1 of %2").arg(formatSize(p.memoryUsed), formatSize(p.memoryTotal)) : QString();
-    head.listTitle = QStringLiteral("BY MEMORY");
+    head.listTitle = QStringLiteral("BY MEMORY · NAME, PROCESS ID, MEMORY");
     head.empty = p.problem;
     return head;
 }
@@ -168,11 +168,13 @@ QList<ListRow> rowsOf(const Processes &p, bool asText)
         ListRow row;
         row.name = process.name;
         row.mark = process.mine ? QString() : userName(process.uid); // whose it is, when it isn't yours
-        row.about = QStringLiteral("%1 · %2").arg(process.pid).arg(process.command);
-        if (process.command.isEmpty())
-            row.about = QString::number(process.pid);
+        row.about = process.command;
+        // The process's number: always there (a column of its own in the
+        // picture, with the name in a line of text) and searched like the name.
         if (asText)
             row.mark = row.mark.isEmpty() ? QString::number(process.pid) : row.mark + QLatin1Char(' ') + QString::number(process.pid);
+        else
+            row.tag = QString::number(process.pid);
         row.size = formatSize(process.bytes);
         row.share = double(process.bytes) / double(biggest);
         row.faint = !process.mine;

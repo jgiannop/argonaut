@@ -144,21 +144,21 @@ void TestVolumes::offInTests()
 
 void TestVolumes::listedAndMounted()
 {
-    // A pretend gio: lists what kListing says, "mounts" /dev/sdb1 by making
-    // a folder, refuses /dev/sdc2, and writes down what it was asked.
+    // A pretend gio: lists what kListing says, "mounts" /dev/argonaut-test-sdb1 by making
+    // a folder, refuses /dev/argonaut-test-sdc2, and writes down what it was asked.
     QDir().mkpath(m_root + "/gio");
     const QString log = m_root + "/gio/asked";
     const QString mountPoint = m_root + "/gio/media/HITACHI";
     {
         QFile listing(m_root + "/gio/listing");
         QVERIFY(listing.open(QIODevice::WriteOnly));
-        listing.write(kListing);
+        listing.write(QByteArray(kListing).replace("/dev/sd", "/dev/argonaut-test-sd").replace("/dev/bus/usb", "/dev/argonaut-test-usb")); // no real machine has these
         QFile script(m_root + "/gio/gio");
         QVERIFY(script.open(QIODevice::WriteOnly));
         script.write(QStringLiteral(R"(#!/bin/sh
 echo "$@" >> '%1'
 if [ "$1 $2" = "mount -li" ]; then cat '%2/gio/listing'; exit 0; fi
-if [ "$1 $2 $3" = "mount -d /dev/sdb1" ]; then mkdir -p '%3'; echo "Mounted /dev/sdb1 at %3"; exit 0; fi
+if [ "$1 $2 $3" = "mount -d /dev/argonaut-test-sdb1" ]; then mkdir -p '%3'; echo "Mounted /dev/argonaut-test-sdb1 at %3"; exit 0; fi
 echo "gio: $3: Not authorized to perform operation" >&2
 exit 2
 )").arg(log, m_root, mountPoint).toUtf8());
@@ -184,35 +184,35 @@ exit 2
     QSignalSpy changed(Volumes::instance(), &Volumes::changed);
     rows();
     QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 1, 10000);
-    QCOMPARE(rows(), (QStringList{"HITACHI=volume:///dev/sdb1", "500 GB Volume=volume:///dev/sdc2", "KINGSTON=volume:///dev/sdd1",
-                                  "Phone=volume:///dev/bus/usb/001/004"}));
+    QCOMPARE(rows(), (QStringList{"HITACHI=volume:///dev/argonaut-test-sdb1", "500 GB Volume=volume:///dev/argonaut-test-sdc2", "KINGSTON=volume:///dev/argonaut-test-sdd1",
+                                  "Phone=volume:///dev/argonaut-test-usb/001/004"}));
     for (const Places::Entry &entry : Places::list()) {
-        if (entry.path != "volume:///dev/sdb1")
+        if (entry.path != "volume:///dev/argonaut-test-sdb1")
             continue;
         QCOMPARE(entry.group, Places::Group::Drives);
         QCOMPARE(entry.icon, Places::Icon::Drive);
         QVERIFY(!entry.eject);
-        QVERIFY2(entry.tooltip.contains("Not mounted") && entry.tooltip.contains("/dev/sdb1"), qPrintable(entry.tooltip));
+        QVERIFY2(entry.tooltip.contains("Not mounted") && entry.tooltip.contains("/dev/argonaut-test-sdb1"), qPrintable(entry.tooltip));
     }
-    QCOMPARE(Volumes::instance()->nameOf("/dev/sdd1"), QStringLiteral("KINGSTON"));
+    QCOMPARE(Volumes::instance()->nameOf("/dev/argonaut-test-sdd1"), QStringLiteral("KINGSTON"));
 
     // Choosing one mounts it: the folder it got is told.
     QSignalSpy mounted(Volumes::instance(), &Volumes::mounted);
     QSignalSpy failed(Volumes::instance(), &Volumes::failed);
-    Volumes::instance()->mount("/dev/sdb1");
-    Volumes::instance()->mount("/dev/sdb1"); // twice is once
+    Volumes::instance()->mount("/dev/argonaut-test-sdb1");
+    Volumes::instance()->mount("/dev/argonaut-test-sdb1"); // twice is once
     QTRY_COMPARE_WITH_TIMEOUT(mounted.size(), 1, 10000);
-    QCOMPARE(mounted.first().at(0).toString(), QStringLiteral("/dev/sdb1"));
+    QCOMPARE(mounted.first().at(0).toString(), QStringLiteral("/dev/argonaut-test-sdb1"));
     QCOMPARE(mounted.first().at(1).toString(), mountPoint);
     QVERIFY(QFileInfo(mountPoint).isDir());
     QCOMPARE(failed.size(), 0);
     // One the desktop refuses: said in its words, without gio's own prefix.
-    Volumes::instance()->mount("/dev/sdc2");
+    Volumes::instance()->mount("/dev/argonaut-test-sdc2");
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
     QCOMPARE(failed.first().at(1).toString(), QStringLiteral("Not authorized to perform operation"));
     QCOMPARE(mounted.size(), 1);
     // Not a device: gio is never asked.
-    Volumes::instance()->mount("/dev/sdb1 -o exec");
+    Volumes::instance()->mount("/dev/argonaut-test-sdb1 -o exec");
     QCOMPARE(failed.size(), 2);
 
     // gio was only ever asked to list, and to mount those two by name.
@@ -220,11 +220,11 @@ exit 2
     QFile asked(log);
     QVERIFY(asked.open(QIODevice::ReadOnly));
     QStringList questions = QString::fromUtf8(asked.readAll()).split('\n', Qt::SkipEmptyParts);
-    QCOMPARE(int(questions.count("mount -d /dev/sdb1")), 1);
-    QCOMPARE(int(questions.count("mount -d /dev/sdc2")), 1);
+    QCOMPARE(int(questions.count("mount -d /dev/argonaut-test-sdb1")), 1);
+    QCOMPARE(int(questions.count("mount -d /dev/argonaut-test-sdc2")), 1);
     questions.removeAll("mount -li");
-    questions.removeAll("mount -d /dev/sdb1");
-    questions.removeAll("mount -d /dev/sdc2");
+    questions.removeAll("mount -d /dev/argonaut-test-sdb1");
+    questions.removeAll("mount -d /dev/argonaut-test-sdc2");
     QVERIFY2(questions.isEmpty(), qPrintable(questions.join('|')));
 }
 

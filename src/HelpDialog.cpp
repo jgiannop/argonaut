@@ -599,8 +599,8 @@ own session (marked <i>user</i>), with what each is and a bar against the bigges
 seconds until you select a file or close the pane. It only shows: nothing is started or stopped. A service's memory
 is that of all its programs together, as systemd counts it.</p>
 <p><b>Running Processes</b>: choose <b>View → Running Processes</b>, or find it in the command palette. The preview
-pane lists every process that is running now, the one using the most memory first, with its number, how it was
-started and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
+pane lists every process that is running now, the one using the most memory first, with how it was
+started, its process ID in a column of its own and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
 stopped. The memory is what a process has in RAM now; memory that several processes share is counted for each of
 them, so the rows add up to more than the memory in use, which the bar at the top shows.</p>
 <p>Both lists can be searched: click the field over the list and type a part of a name (for a process also its

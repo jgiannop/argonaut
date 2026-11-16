@@ -60,6 +60,7 @@ public:
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
     QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
+    bool hasOpenButton() const;                          // "Open" is there: not for an extension's result, which is no file (tests)
 
 signals:
     void keysBackRequested(); // Esc or Enter in the search field: the keys are the files' again

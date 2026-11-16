@@ -151,6 +151,7 @@ struct ListRow
     QString name;
     QString mark;    // a word that belongs to the name ("user"); kept when the name is cut
     QString about;   // what it is, where there is room
+    QString tag;     // a short text of its own column, left of the size (a process's number); searched too
     QString size;    // at the right ("1.1 GB")
     double share = 0; // its bar, 0…1
     bool faint = false; // drawn lighter (not the system's, not yours)
@@ -185,6 +186,7 @@ inline QList<ListRow> plainRows(QList<ListRow> rows)
     for (ListRow &row : rows) {
         row.name = plainText(row.name);
         row.mark = plainText(row.mark);
+        row.tag = plainText(row.tag);
         row.about = plainText(row.about);
     }
     return rows;
@@ -202,7 +204,7 @@ inline void narrowList(ListHead *head, QList<ListRow> *rows, const QString &sear
         double biggest = 0;
         for (const ListRow &row : std::as_const(*rows)) {
             if (row.name.contains(wanted, Qt::CaseInsensitive) || row.mark.contains(wanted, Qt::CaseInsensitive)
-                || row.about.contains(wanted, Qt::CaseInsensitive)) {
+                || row.about.contains(wanted, Qt::CaseInsensitive) || row.tag.contains(wanted, Qt::CaseInsensitive)) {
                 kept.append(row);
                 biggest = qMax(biggest, row.share);
             }
@@ -279,13 +281,23 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
         p.setFont(fontOf(u));
         text(y, u * 1.6, Qt::AlignLeft, head.empty);
     }
+    // The sizes are a column at the right, and the tags (a process's
+    // number) a column of their own left of it: each as wide as its widest.
+    p.setFont(fontOf(u));
+    int sizeColumn = 0, tagColumn = 0;
+    for (const ListRow &row : rows) {
+        sizeColumn = qMax(sizeColumn, p.fontMetrics().horizontalAdvance(row.size));
+        tagColumn = qMax(tagColumn, p.fontMetrics().horizontalAdvance(row.tag));
+    }
+    const double rightColumns = sizeColumn + (tagColumn > 0 ? tagColumn + u * 1.2 : 0);
     for (const ListRow &row : rows) {
         p.setFont(fontOf(u));
-        const int sizeWidth = p.fontMetrics().horizontalAdvance(row.size);
         p.setPen(look.dim);
         p.drawText(QRectF(left, y, room, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, row.size);
+        if (tagColumn > 0)
+            p.drawText(QRectF(left, y, room - sizeColumn - u * 1.2, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, row.tag);
         // The name, then what it is in the room that is left.
-        const double nameRoom = room - sizeWidth - u;
+        const double nameRoom = room - rightColumns - u;
         const QString name = p.fontMetrics().elidedText(row.name, Qt::ElideMiddle, qMax(10, int(nameRoom)));
         p.setPen(look.text);
         p.drawText(QRectF(left, y, nameRoom, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter, name);

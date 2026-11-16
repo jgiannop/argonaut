@@ -1324,6 +1324,10 @@ void TestExtensions::runningProcesses()
     }
     QVERIFY(card);   // its panels
     QVERIFY(accent); // its bars
+    // A process's number is in the picture too, and searched like its name: one row is left.
+    host.searchResult("running-processes", "processes", "200");
+    QTRY_VERIFY_WITH_TIMEOUT(QImage(shown.last().at(2).value<Extensions::PreviewReply>().image).height() < image.height() / 3, 10000);
+    QVERIFY(QImage(shown.last().at(2).value<Extensions::PreviewReply>().image).height() <= short5);
     host.resultShown("running-processes", "processes", false);
     host.setEnabled("running-processes", false);
 }

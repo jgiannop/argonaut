@@ -1688,6 +1688,7 @@ void TestMainWindow::extensionResultCanBeSearched()
     QLineEdit *field = w->m_quickLook->searchField();
     QVERIFY(field->isVisibleTo(w->m_quickLook));
     QCOMPARE(field->placeholderText(), QStringLiteral("Search the fake")); // its text is data: one line
+    QVERIFY(!w->m_quickLook->hasOpenButton()); // a result is no file: nothing to open
     QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().startsWith("live 2 for "), 10000);
 
     // Typing: told once the typing pauses, and the answer replaces the result where it is.
@@ -1703,6 +1704,7 @@ void TestMainWindow::extensionResultCanBeSearched()
     w->m_pane->view->setCurrentIndex(QModelIndex());
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
     QTRY_VERIFY(w->m_quickLook->resultId().isEmpty());
+    QVERIFY(w->m_quickLook->hasOpenButton()); // a file again: it can be opened
     QVERIFY(!field->isVisibleTo(w->m_quickLook));
     QVERIFY(field->text().isEmpty());
 
@@ -1733,18 +1735,18 @@ void TestMainWindow::unmountedDriveInTheSidebar()
 {
     const QString tools = m_dir + "/pretend";
     QDir().mkpath(tools);
-    const QString mountPoint = m_dir + "/media/HITACHI";
+    const QString mountPoint = m_dir + "/media/PRETEND-ONE";
     {
         QFile script(tools + "/gio");
         QVERIFY(script.open(QIODevice::WriteOnly));
         script.write(QStringLiteral(R"(#!/bin/sh
 if [ "$1 $2" = "mount -li" ]; then
-printf 'Drive(0): Disk\n  ids:\n   unix-device: \047/dev/sdb\047\n  is_removable=0\n'
-printf '  Volume(0): HITACHI\n    ids:\n     unix-device: \047/dev/sdb1\047\n    can_mount=1\n'
-printf '  Volume(1): LOCKED\n    ids:\n     unix-device: \047/dev/sdb2\047\n    can_mount=1\n'
+printf 'Drive(0): Disk\n  ids:\n   unix-device: \047/dev/argonaut-test\047\n  is_removable=0\n'
+printf '  Volume(0): PRETEND-ONE\n    ids:\n     unix-device: \047/dev/argonaut-test1\047\n    can_mount=1\n'
+printf '  Volume(1): PRETEND-TWO\n    ids:\n     unix-device: \047/dev/argonaut-test2\047\n    can_mount=1\n'
 exit 0
 fi
-if [ "$1 $2 $3" = "mount -d /dev/sdb1" ]; then mkdir -p '%1'; echo "Mounted /dev/sdb1 at %1"; exit 0; fi
+if [ "$1 $2 $3" = "mount -d /dev/argonaut-test1" ]; then mkdir -p '%1'; echo "Mounted /dev/argonaut-test1 at %1"; exit 0; fi
 echo "gio: $3: Not authorized to perform operation" >&2
 exit 2
 )").arg(mountPoint).toUtf8());
@@ -1766,20 +1768,20 @@ exit 2
         return nullptr;
     };
     w->m_sidebar->refresh();
-    QTRY_VERIFY_WITH_TIMEOUT(row("HITACHI") && row("LOCKED"), 10000);
-    QCOMPARE(Sidebar::pathOf(row("HITACHI")), QStringLiteral("volume:///dev/sdb1"));
-    QCOMPARE(Sidebar::kindOf(row("HITACHI")), Sidebar::DriveItem);
-    QVERIFY(!Sidebar::canEject(row("HITACHI"))); // nothing to eject yet
-    QVERIFY(row("HITACHI")->toolTip().contains("Not mounted"));
+    QTRY_VERIFY_WITH_TIMEOUT(row("PRETEND-ONE") && row("PRETEND-TWO"), 10000);
+    QCOMPARE(Sidebar::pathOf(row("PRETEND-ONE")), QStringLiteral("volume:///dev/argonaut-test1"));
+    QCOMPARE(Sidebar::kindOf(row("PRETEND-ONE")), Sidebar::DriveItem);
+    QVERIFY(!Sidebar::canEject(row("PRETEND-ONE"))); // nothing to eject yet
+    QVERIFY(row("PRETEND-ONE")->toolTip().contains("Not mounted"));
 
     // One that the desktop refuses: said, and the window stays where it is.
-    emit w->m_sidebar->itemClicked(row("LOCKED"));
+    emit w->m_sidebar->itemClicked(row("PRETEND-TWO"));
     QTRY_VERIFY_WITH_TIMEOUT(w->m_pane->message.contains("could not be mounted"), 10000);
-    QVERIFY2(w->m_pane->message.contains("LOCKED") && w->m_pane->message.contains("Not authorized"), qPrintable(w->m_pane->message));
+    QVERIFY2(w->m_pane->message.contains("PRETEND-TWO") && w->m_pane->message.contains("Not authorized"), qPrintable(w->m_pane->message));
     QCOMPARE(w->m_pane->current, m_dir);
 
     // A click on the other: mounted, and opened here.
-    emit w->m_sidebar->itemClicked(row("HITACHI"));
+    emit w->m_sidebar->itemClicked(row("PRETEND-ONE"));
     QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, mountPoint, 10000);
     QVERIFY(QFileInfo(mountPoint).isDir());
 }

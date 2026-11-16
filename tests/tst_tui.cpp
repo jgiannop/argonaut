@@ -1421,16 +1421,16 @@ void TestTui::unmountedDrive()
 {
     const QString tools = m_tmp->path() + "/pretend";
     QDir().mkpath(tools);
-    const QString mountPoint = QDir::cleanPath(m_tmp->path()) + "/media/HITACHI";
+    const QString mountPoint = QDir::cleanPath(m_tmp->path()) + "/media/PRETEND-ONE";
     {
         QFile script(tools + "/gio");
         QVERIFY(script.open(QIODevice::WriteOnly));
         script.write(QStringLiteral(R"(#!/bin/sh
 if [ "$1 $2" = "mount -li" ]; then
-printf 'Volume(0): HITACHI\n  ids:\n   unix-device: \047/dev/sdb1\047\n  can_mount=1\n'
+printf 'Volume(0): PRETEND-ONE\n  ids:\n   unix-device: \047/dev/argonaut-test1\047\n  can_mount=1\n'
 exit 0
 fi
-if [ "$1 $2 $3" = "mount -d /dev/sdb1" ]; then mkdir -p '%1'; echo "Mounted /dev/sdb1 at %1"; exit 0; fi
+if [ "$1 $2 $3" = "mount -d /dev/argonaut-test1" ]; then mkdir -p '%1'; echo "Mounted /dev/argonaut-test1 at %1"; exit 0; fi
 exit 2
 )").arg(mountPoint).toUtf8());
         script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
@@ -1445,11 +1445,11 @@ exit 2
     app = std::make_unique<App>(m_left, QString());
     app->setSidebarShown(true);
     settle();
-    QTRY_VERIFY_WITH_TIMEOUT(screen(110, 40).contains("HITACHI"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(screen(110, 40).contains("PRETEND-ONE"), 10000);
     // From the command palette, as any place.
     keys({Key::control('p')});
-    type("go to hitachi");
-    QCOMPARE(app->paletteNames().first(), QStringLiteral("Go to HITACHI"));
+    type("go to pretend-one");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Go to PRETEND-ONE"));
     keys({Key::of(Key::Enter)});
     QVERIFY2(app->message().contains("Mounting"), qPrintable(app->message()));
     QTRY_COMPARE_WITH_TIMEOUT(app->folder(0), mountPoint, 10000);
