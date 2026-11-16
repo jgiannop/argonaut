@@ -83,6 +83,10 @@ public:
     bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
     bool isPreviewLoading() const { return m_previewLoading; }
     QString resultId() const { return m_resultId; } // the extension's result the preview shows, if any (tests)
+    // The theme: "terminal" (the terminal's own colours, the default) or
+    // the key of one of Argonaut's themes ("forest", "file:My Theme").
+    QString themeKey() const { return m_themeKey; }
+    void setTheme(const QString &key);
     bool isSidebarShown() const { return m_sidebar; } // the list of places at the left (Ctrl+B)
     bool isInSidebar() const { return m_inSidebar; }  // and the keys go to it
     void setSidebarShown(bool on);
@@ -289,6 +293,8 @@ private:
     QList<int> m_paletteHits;    // into m_paletteAll, best first
     int m_paletteCursor = 0, m_paletteTop = 0;
     int m_paletteX = 0, m_paletteY = 0, m_paletteWidth = 0, m_paletteShown = 0; // its rows, from the last frame
+    QString m_themeKey = QStringLiteral("terminal");
+    Palette m_palette;           // its colours, for every frame
     int m_helpTop = 0;           // the help's first line shown
     int m_helpLines = 0, m_helpShown = 0; // from the last frame
     Mode m_mode = Mode::Normal;

@@ -40,6 +40,8 @@ qt_add_library(argonaut_core STATIC
     src/Bookmarks.cpp
     src/Places.h
     src/Places.cpp
+    src/Theme.h
+    src/Theme.cpp
     src/OpenWith.h
     src/OpenWith.cpp
     src/FileJob.h
@@ -110,8 +112,6 @@ endif()
 qt_add_library(argonaut_app STATIC
     src/MainWindow.h
     src/MainWindow.cpp
-    src/Theme.h
-    src/Theme.cpp
     src/StyleSheet.h
     src/StyleSheet.cpp
     src/HeaderBar.h

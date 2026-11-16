@@ -203,7 +203,7 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | F3 | the preview at the right: what is in the file under the cursor (text, an archive's contents, a rough picture). Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel |
 | F12 or Ctrl+` | a terminal under the files (about a third of the height), in this folder; again: back to the files (the terminal stays). In it, Ctrl+Up brings the files to its folder and `exit` closes it |
 | F4 | a second pane beside the first, or back to one |
-| Ctrl+P | the command palette: type a few letters of what you want ("new", "trash", "big") and press Enter |
+| Ctrl+P | the command palette: type a few letters of what you want ("new", "trash", "big") and press Enter. Themes are there too ("theme forest"): the window's themes and your own theme files, or the terminal's own colours |
 | Tab / Shift+Tab | the next of the panes and the places at the left |
 | Ctrl+B | show or hide the places at the left (Recent, Starred, Home…, Trash, bookmarks, drives); in them Enter, or a click, opens one in the pane |
 | F9 | the pane as a list with sizes and dates, a grid of names, or big icons, in turn (in a grid the arrows move four ways, Enter opens and Backspace goes up) |

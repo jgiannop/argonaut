@@ -11,7 +11,33 @@
 namespace Tui {
 
 enum class Ink : quint8 { Normal, Dim, Accent, Folder, Good, Warning, Bad, Selected };
-enum class Paper : quint8 { Normal, Bar, Cursor, CursorIdle, Field };
+enum class Paper : quint8 { Normal, Bar, Cursor, CursorIdle, Field, Side };
+
+// The colours the inks and papers stand for. Not themed (the default): the
+// terminal's own text and background, and a few of its basic colours. Themed
+// (one of Argonaut's themes): each is one of the terminal's 256 colours,
+// the nearest to the theme's, and every cell is painted, background too.
+struct Palette
+{
+    bool themed = false;
+    qint16 ink[8] = {};
+    qint16 paper[6] = {};
+
+    bool operator==(const Palette &o) const
+    {
+        if (themed != o.themed)
+            return false;
+        for (int i = 0; i < 8; ++i) {
+            if (ink[i] != o.ink[i])
+                return false;
+        }
+        for (int i = 0; i < 6; ++i) {
+            if (paper[i] != o.paper[i])
+                return false;
+        }
+        return true;
+    }
+};
 
 struct Style
 {
@@ -68,6 +94,10 @@ public:
     QString text() const; // all rows, one per line
 
     // Where the text cursor is shown (a prompt being typed); hidden when x < 0.
+    // The frame's colours (the theme), for the terminal to show it in.
+    void setPalette(const Palette &palette) { m_palette = palette; }
+    const Palette &palette() const { return m_palette; }
+
     void setCursor(int x, int y) { m_cursorX = x; m_cursorY = y; }
     int cursorX() const { return m_cursorX; }
     int cursorY() const { return m_cursorY; }
@@ -82,6 +112,7 @@ private:
     int m_height = 0;
     int m_cursorX = -1;
     int m_cursorY = -1;
+    Palette m_palette;
     QList<Cell> m_cells;
 };
 

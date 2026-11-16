@@ -16,6 +16,7 @@
 #include "RecentFiles.h"
 #include "ContentType.h"
 #include "Starred.h"
+#include "Theme.h"
 #include "Trash.h"
 
 #include <QDir>
@@ -148,6 +149,7 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
             [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
                 showResult(title.isEmpty() ? extension : title, content);
             });
+    setTheme(QSettings().value(QStringLiteral("tui/theme"), QStringLiteral("terminal")).toString());
     m_embeddedShell = Shell::available();
     m_split = !rightFolder.isEmpty();
     m_secondUsed = m_split;
@@ -1276,6 +1278,7 @@ void App::normalKey(const Key &key)
 void App::render(Screen &screen)
 {
     screen.clear();
+    screen.setPalette(m_palette);
     const int w = screen.width();
     const int h = screen.height();
     if (w < 40 || h < 8) {
@@ -1376,10 +1379,14 @@ void App::drawSidebar(Screen &screen, int top, int height)
             m_sideRows.append(-1);
         m_sideRows.append(i);
     }
-    const Style heading{m_inSidebar ? Ink::Accent : Ink::Dim, Paper::Normal, m_inSidebar};
+    // Its own background, as the window's sidebar has (the same as the
+    // files' where the terminal's own colours are used).
+    const Style side{Ink::Dim, Paper::Side, false};
+    screen.fill(0, top, m_sideWidth, height, side);
+    const Style heading{m_inSidebar ? Ink::Accent : Ink::Dim, Paper::Side, m_inSidebar};
     screen.put(1, top, QStringLiteral("Places"), heading);
     for (int y = top; y < top + height; ++y)
-        screen.put(m_sideWidth - 1, y, QStringLiteral("│"), kDim);
+        screen.put(m_sideWidth - 1, y, QStringLiteral("│"), side);
 
     const int rows = qMax(1, height - 1);
     m_sideY = top + 1;
@@ -1398,14 +1405,14 @@ void App::drawSidebar(Screen &screen, int top, int height)
         const int y = m_sideY + i;
         const int entry = m_sideRows.at(m_sideTop + i);
         if (entry < 0) {
-            screen.put(1, y, QString(width - 2, QChar(0x2500)), kDim);
+            screen.put(1, y, QString(width - 2, QChar(0x2500)), side);
             continue;
         }
         const Places::Entry &place = m_places.at(entry);
         const bool here = !open.isEmpty() && place.path == open; // where the pane is
         const bool cursor = m_inSidebar && m_sideTop + i == m_sideCursor;
         Style style;
-        style.paper = cursor ? Paper::Cursor : here ? Paper::CursorIdle : Paper::Normal;
+        style.paper = cursor ? Paper::Cursor : here ? Paper::CursorIdle : Paper::Side;
         style.ink = place.group == Places::Group::Standard || place.group == Places::Group::Bookmarks ? Ink::Normal : Ink::Folder;
         style.bold = here;
         screen.fill(0, y, width, 1, style);
@@ -1416,9 +1423,9 @@ void App::drawSidebar(Screen &screen, int top, int height)
     }
     // More places than fit: a mark at the bottom corner says so.
     if (count > m_sideTop + rows)
-        screen.put(width - 1, m_sideY + rows - 1, QStringLiteral("↓"), kDim);
+        screen.put(width - 1, m_sideY + rows - 1, QStringLiteral("↓"), side);
     if (m_sideTop > 0)
-        screen.put(width - 1, m_sideY, QStringLiteral("↑"), kDim);
+        screen.put(width - 1, m_sideY, QStringLiteral("↑"), side);
 }
 
 // A place chosen: the pane you are in goes there. A row of an extension's
@@ -1528,6 +1535,58 @@ void App::nextArea(bool backwards)
     emit changed();
 }
 
+// --------------------------------------------------------------- theme ---
+
+namespace {
+
+qint16 nearest256(QRgb c);
+
+// `over` laid on `under`: a theme's translucent colours, as the one colour a cell can have.
+QColor laid(const QColor &over, const QColor &under)
+{
+    const qreal a = over.alphaF();
+    return QColor::fromRgbF(over.redF() * a + under.redF() * (1 - a), over.greenF() * a + under.greenF() * (1 - a),
+                            over.blueF() * a + under.blueF() * (1 - a));
+}
+
+} // namespace
+
+// The theme: the window's themes (the built-in ones and the files in the
+// themes folders) as a palette of the terminal's 256 colours, or
+// "terminal": the terminal's own colours, as it always was. Remembered.
+void App::setTheme(const QString &key)
+{
+    bool known = false;
+    const QList<ThemeChoice> themes = allThemes();
+    for (const ThemeChoice &theme : themes)
+        known = known || (theme.key == key && key != QLatin1String("system")); // "system" is a window's notion
+    m_themeKey = known ? key : QStringLiteral("terminal");
+    Palette palette;
+    if (known) {
+        const Theme t = themeForKey(key);
+        auto index = [](const QColor &c) { return nearest256(c.rgb()); };
+        palette.themed = true;
+        palette.ink[int(Ink::Normal)] = index(t.fg);
+        palette.ink[int(Ink::Dim)] = index(laid(t.dimFg, t.window));
+        palette.ink[int(Ink::Accent)] = index(t.accent);
+        palette.ink[int(Ink::Folder)] = index(t.accent);
+        // The same meanings in every theme, in a shade that reads on its background.
+        palette.ink[int(Ink::Good)] = index(t.dark ? QColor(0x57, 0xe3, 0x89) : QColor(0x1a, 0x7f, 0x4b));
+        palette.ink[int(Ink::Warning)] = index(t.dark ? QColor(0xf8, 0xe4, 0x5c) : QColor(0x9a, 0x6a, 0x00));
+        palette.ink[int(Ink::Bad)] = index(t.dark ? QColor(0xff, 0x7b, 0x63) : QColor(0xc0, 0x1c, 0x28));
+        palette.ink[int(Ink::Selected)] = palette.ink[int(Ink::Warning)];
+        palette.paper[int(Paper::Normal)] = index(t.window);
+        palette.paper[int(Paper::Side)] = index(t.sidebar);
+        palette.paper[int(Paper::Bar)] = index(t.dark ? t.popup : t.sidebar.darker(106));
+        palette.paper[int(Paper::Cursor)] = index(laid(QColor(t.accent.red(), t.accent.green(), t.accent.blue(), t.dark ? 110 : 90), t.window));
+        palette.paper[int(Paper::CursorIdle)] = index(laid(QColor(t.fg.red(), t.fg.green(), t.fg.blue(), 40), t.window));
+        palette.paper[int(Paper::Field)] = index(laid(QColor(t.fg.red(), t.fg.green(), t.fg.blue(), 36), t.window));
+    }
+    m_palette = palette;
+    QSettings().setValue(QStringLiteral("tui/theme"), m_themeKey);
+    emit changed();
+}
+
 // ----------------------------------------------------- command palette ---
 
 // Everything that can be done now, by name, with the key that does the
@@ -1596,6 +1655,16 @@ QList<App::Command> App::commands()
         if (place.path == p.current || Extensions::Host::isPlacePath(place.path))
             continue;
         list.append({QStringLiteral("Go to %1").arg(place.name), QString(), [this, i] { openPlace(i); }});
+    }
+    // The themes: the terminal's own colours, and every theme the window has.
+    if (m_themeKey != QLatin1String("terminal"))
+        list.append({QStringLiteral("Theme: The Terminal's Own Colours"), QString(), [this] { setTheme(QStringLiteral("terminal")); }});
+    const QList<ThemeChoice> themes = allThemes();
+    for (const ThemeChoice &theme : themes) {
+        if (theme.key == QLatin1String("system") || theme.key == m_themeKey)
+            continue;
+        const QString key = theme.key;
+        list.append({QStringLiteral("Theme: %1").arg(theme.name), QString(), [this, key] { setTheme(key); }});
     }
     // What extensions put in the window's menus (System Dashboard in View).
     for (const char *menu : {"file", "edit", "view", "go"}) {

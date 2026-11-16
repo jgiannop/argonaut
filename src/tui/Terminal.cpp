@@ -49,6 +49,8 @@ short colorOf(Paper paper)
         return COLORS >= 256 ? 238 : COLOR_BLACK;
     case Paper::Field:
         return COLORS >= 256 ? 238 : COLOR_BLACK;
+    case Paper::Side:
+        return -1; // the places: the terminal's background too
     }
     return -1;
 }
@@ -132,11 +134,12 @@ int Terminal::pairFor(Ink ink, Paper paper)
     int &pair = m_pairs[int(ink)][int(paper)];
     if (pair == 0 && m_nextPair < COLOR_PAIRS) {
         pair = m_nextPair++;
-        short fg = colorOf(ink);
-        const short bg = colorOf(paper);
+        const bool themed = m_palette.themed && COLORS >= 256; // a theme needs the 256 colours
+        short fg = themed ? m_palette.ink[int(ink)] : colorOf(ink);
+        const short bg = themed ? m_palette.paper[int(paper)] : colorOf(paper);
         // Folder blue on the blue cursor bar would vanish.
         if (paper == Paper::Cursor && (ink == Ink::Folder || ink == Ink::Dim))
-            fg = COLOR_WHITE;
+            fg = themed ? m_palette.ink[int(Ink::Normal)] : short(COLOR_WHITE);
         ::init_pair(short(pair), fg, bg);
     }
     return pair;
@@ -150,6 +153,14 @@ int Terminal::rawPair(int fg, int bg)
         fg = -1;
     if (bg >= COLORS)
         bg = -1;
+    // "The terminal's own colour" inside a themed frame is the theme's: a
+    // shell panel or a dashboard doesn't sit there as a patch of another colour.
+    if (m_palette.themed && COLORS >= 256) {
+        if (fg < 0)
+            fg = m_palette.ink[int(Ink::Normal)];
+        if (bg < 0)
+            bg = m_palette.paper[int(Paper::Normal)];
+    }
     if (fg < 0 && bg < 0)
         return 0;
     const int id = (fg + 1) * 300 + (bg + 1);
@@ -171,6 +182,20 @@ int Terminal::rawPair(int fg, int bg)
 
 void Terminal::show(const Screen &screen)
 {
+    if (!(screen.palette() == m_palette)) {
+        // Another theme: every pair of colours is made again, and the whole
+        // screen painted again (the numbers mean other colours now).
+        m_palette = screen.palette();
+        for (auto &row : m_pairs) {
+            for (int &pair : row)
+                pair = 0;
+        }
+        m_rawPairs.clear();
+        m_nextPair = 1;
+        ::clearok(stdscr, TRUE);
+    }
+    // What is left blank is the theme's background too.
+    ::bkgdset(chtype(' ') | COLOR_PAIR(pairFor(Ink::Normal, Paper::Normal)));
     ::erase();
     const int rows = qMin(screen.height(), LINES);
     const int columns = qMin(screen.width(), COLS);

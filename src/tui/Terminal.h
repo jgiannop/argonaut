@@ -32,7 +32,8 @@ private:
     int pairFor(Ink ink, Paper paper);
     int rawPair(int fg, int bg); // for a cell with the shell's own colours
 
-    int m_pairs[8][5] = {};
+    int m_pairs[8][6] = {};
+    Palette m_palette; // the colours the pairs were made for
     int m_nextPair = 1;
     bool m_colors = false;
     QHash<int, int> m_rawPairs;

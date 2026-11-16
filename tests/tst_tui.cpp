@@ -60,6 +60,7 @@ private slots:
     void previewAtTheRight();
     void commandPalette();
     void extensionResultInThePreview();
+    void themes();
     void shellInTheFolder();
     void shellPanel();
 
@@ -886,7 +887,7 @@ void TestTui::placesAtTheLeft()
     QVERIFY(!app->isInSidebar());
     app->render(s);
     QCOMPARE(s.at(2, rowOf("Home")).style.paper, Tui::Paper::CursorIdle);
-    QCOMPARE(s.at(2, rowOf("Trash")).style.paper, Tui::Paper::Normal);
+    QCOMPARE(s.at(2, rowOf("Trash")).style.paper, Tui::Paper::Side); // an ordinary row: the places' own background
     // A click on a file still lands on the file.
     app->mouse({Tui::Mouse::Press, 4, rowOf("Documents")}); // the bookmark
     settle();
@@ -1553,6 +1554,90 @@ void TestTui::extensionResultInThePreview()
     QVERIFY(!app->isPreviewShown());
     QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 shown\nt1 hidden\n"), 10000);
     host->setEnabled("fake", false);
+}
+
+// Themes: the terminal's own colours unless one of Argonaut's themes is
+// chosen in the command palette; then every cell has the theme's colours
+// (the nearest of the terminal's 256), the places their own background.
+void TestTui::themes()
+{
+    const QString folder = QDir::cleanPath(m_tmp->path()) + "/themes";
+    QDir().mkpath(folder);
+    QFile file(folder + "/Deep Sea.json");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"name": "Deep Sea", "window": "#0b1d2a", "sidebar": "#12303f", "text": "#e0f0ff", "accent": "#00c2a8"})");
+    file.close();
+    qputenv("ARGONAUT_THEMES_PATH", QFile::encodeName(folder));
+    struct Restore
+    {
+        ~Restore() { qputenv("ARGONAUT_THEMES_PATH", ""); }
+    } restore;
+    app = std::make_unique<App>(m_left, QString());
+    app->setSidebarShown(true);
+    settle();
+    QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
+    Screen s(100, 30);
+    app->render(s);
+    QVERIFY(!s.palette().themed);
+    QCOMPARE(s.at(2, 3).style.paper, Tui::Paper::Side); // the places have a paper of their own (the same colour, unthemed)
+
+    // The palette offers the window's themes, built in and from files; not
+    // "Follow System" (a window's notion), not the one in use.
+    keys({Key::control('p')});
+    QStringList names = app->paletteNames();
+    for (const char *name : {"Theme: Light", "Theme: Dark", "Theme: Midnight Blue", "Theme: Forest", "Theme: Deep Sea"})
+        QVERIFY2(names.contains(QLatin1String(name)), name);
+    QVERIFY(!names.contains("Theme: Follow System"));
+    QVERIFY(!names.contains("Theme: The Terminal's Own Colours"));
+    type("theme forest");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Theme: Forest"));
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->themeKey(), QStringLiteral("forest"));
+    app->render(s);
+    Tui::Palette forest = s.palette();
+    QVERIFY(forest.themed);
+    const int window = forest.paper[int(Tui::Paper::Normal)];
+    QVERIFY(window >= 16 && window <= 255);
+    QVERIFY(forest.ink[int(Tui::Ink::Normal)] != window);                 // text reads on its background
+    QVERIFY(forest.paper[int(Tui::Paper::Side)] != window);                // the places stand apart
+    QVERIFY(forest.paper[int(Tui::Paper::Cursor)] != window);              // and the cursor row
+    QVERIFY(forest.ink[int(Tui::Ink::Accent)] != forest.ink[int(Tui::Ink::Normal)]);
+    QVERIFY(forest.ink[int(Tui::Ink::Bad)] != forest.ink[int(Tui::Ink::Good)]);
+
+    // Remembered; and now the way back is offered.
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QCOMPARE(app->themeKey(), QStringLiteral("forest"));
+    app->render(s);
+    QVERIFY(s.palette() == forest);
+    keys({Key::control('p')});
+    QVERIFY(app->paletteNames().contains("Theme: The Terminal's Own Colours"));
+    QVERIFY(!app->paletteNames().contains("Theme: Forest"));
+    // A theme from a file: its colours, as the nearest of the 256.
+    type("deep sea");
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->themeKey(), QStringLiteral("file:Deep Sea"));
+    app->render(s);
+    QVERIFY(s.palette().themed);
+    QVERIFY(!(s.palette() == forest));
+    QCOMPARE(int(s.palette().ink[int(Tui::Ink::Accent)]), 37); // #00c2a8 in the 6×6×6 cube: 0, 3, 3
+    // A light one: dark text on a light background.
+    app->setTheme("light");
+    app->render(s);
+    QVERIFY(s.palette().paper[int(Tui::Paper::Normal)] > 250 || s.palette().paper[int(Tui::Paper::Normal)] == 231);
+    QVERIFY(s.palette().ink[int(Tui::Ink::Normal)] < 245);
+
+    // Back to the terminal's own; a key that is no theme (any more) is that too.
+    keys({Key::control('p')});
+    type("terminal's own");
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
+    app->render(s);
+    QVERIFY(!s.palette().themed);
+    app->setTheme("file:Gone");
+    QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
+    app->setTheme("system");
+    QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
 }
 
 // F3: the preview at the right, of the item under the cursor: a text

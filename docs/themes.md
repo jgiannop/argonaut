@@ -75,5 +75,10 @@ colour often looks best, written `"#aarrggbb"` (alpha first):
   stand out on both.
 - Extensions that draw their own pictures (the System Dashboard) are told
   the theme's colours, so they follow your theme too.
+- The terminal version (`argonaut --tui`) uses the same themes: Ctrl+P, then
+  "theme" and the name. There each colour is the nearest of the terminal's
+  256, so it is a little off, and only the first eight keys of this page
+  are used (window, sidebar, text, accent, dim and what is worked out for
+  the cursor and the bars).
 - A theme is only colours. It can't run anything, so a theme file from
   someone else is safe to try.
