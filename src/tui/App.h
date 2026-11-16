@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Extensions.h"
 #include "FileRules.h"
 #include "Places.h"
 #include "Screen.h"
@@ -81,6 +82,7 @@ public:
     bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
     bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
     bool isPreviewLoading() const { return m_previewLoading; }
+    QString resultId() const { return m_resultId; } // the extension's result the preview shows, if any (tests)
     bool isSidebarShown() const { return m_sidebar; } // the list of places at the left (Ctrl+B)
     bool isInSidebar() const { return m_inSidebar; }  // and the keys go to it
     void setSidebarShown(bool on);
@@ -183,6 +185,14 @@ private:
     void rename();
     void goTo();
     void setPreviewShown(bool on);
+    // An extension's result in the preview (a dashboard): shown until the
+    // cursor goes to another item or the preview closes; its extension is
+    // told when it is shown, with how many characters there is room for,
+    // and when it no longer is.
+    void showResult(const QString &title, const Extensions::PreviewReply &content);
+    void closeResult();
+    void reportResult();
+    void runExtensionCommand(const Extensions::Command &command);
     void syncPreview();              // the preview is of the item under the cursor
     void drawPreview(Screen &screen, int x, int width, int top, int height);
     bool previewKey(const Key &key); // false: not the preview's key
@@ -263,6 +273,11 @@ private:
     QStringList m_previewLines;  // text, an archive's entries, or a line of explanation
     bool m_previewWarning = false; // the lines are a warning (a program in disguise)
     QImage m_previewImage;       // a picture, at a few pixels to the cell
+    QList<QList<Cell>> m_previewCells; // text with colours of its own (an extension's "ansi"), a list a line
+    QString m_resultExtension, m_resultId; // an extension's named result is what is shown
+    QString m_resultCursor;      // the item the cursor was on when it came: it stays while that is so
+    bool m_resultShown = false;  // a result (named or not) has the pane
+    QSize m_resultRoom;          // the room its extension was last told of
     QStringList m_previewWrapped; // m_previewLines cut to the pane's width…
     int m_previewWrapWidth = -1;  // …which was this
     int m_previewTop = 0;

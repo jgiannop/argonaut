@@ -81,6 +81,7 @@ endif()
 argonaut_test(mainwindow LIBRARY argonaut_app TIMEOUT 300)
 # The terminal interface, drawn into a grid of cells (no terminal needed).
 argonaut_test(tui LIBRARY argonaut_tui TIMEOUT 300)
+target_compile_definitions(tst_tui PRIVATE FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
 if(TARGET argonaut-tui)
     # The real program in a pseudo-terminal: the ncurses layer draws and lets go.
     find_package(Python3 COMPONENTS Interpreter QUIET)

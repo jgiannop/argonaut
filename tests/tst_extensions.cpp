@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QProcess>
 #include <QImage>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -740,6 +741,51 @@ void TestExtensions::systemDashboard()
     const int count = int(shown.size());
     QTest::qWait(2600);
     QCOMPARE(int(shown.size()), count);
+    host.setEnabled("system-dashboard", false);
+
+    // In the terminal interface it is told so, and draws with characters:
+    // text with colour codes, as wide as the room it is told of.
+    Host terminal;
+    terminal.setInterface("terminal");
+    terminal.setEnabled("system-dashboard", true);
+    terminal.watch(m_dir);
+    QSignalSpy text(&terminal, &Host::showRequested);
+    Extensions::Command inTerminal;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : terminal.menuCommands("view"))
+            inTerminal = c;
+        return !inTerminal.id.isEmpty();
+    }(), 10000);
+    terminal.invoke(inTerminal, m_dir, {});
+    QTRY_COMPARE_WITH_TIMEOUT(text.size(), 1, 10000);
+    content = text.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Ansi);
+    QCOMPARE(content.resultId, QStringLiteral("dashboard"));
+    for (const char *part : {"CPU", "MEMORY", "DISK", "SYSTEM INFO", "Hostname", "DOWNLOAD", "UPLOAD", "Total: "})
+        QVERIFY2(content.text.contains(QLatin1String(part)), part);
+    QVERIFY(content.text.contains(QChar(0x2580)) || content.text.contains(QChar(0x2584))); // the gauges' rings
+    QVERIFY(content.text.contains(QStringLiteral("\x1b[")));
+    auto widest = [](const QString &ansi) {
+        static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
+        int most = 0;
+        for (const QString &line : QString(ansi).remove(codes).split(QLatin1Char('\n')))
+            most = qMax(most, int(line.size()));
+        return most;
+    };
+    const int narrow = widest(content.text);
+    QVERIFY2(narrow <= 44, qPrintable(QString::number(narrow)));
+    Extensions::ResultLook cells;
+    cells.columns = 30;
+    cells.rows = 20;
+    terminal.resultShown("system-dashboard", "dashboard", true, QSize(), cells);
+    QTRY_COMPARE_WITH_TIMEOUT(text.size(), 2, 10000);
+    content = text.last().at(2).value<Extensions::PreviewReply>();
+    QVERIFY(content.update);
+    QCOMPARE(content.kind, Extensions::PreviewReply::Ansi);
+    QVERIFY2(widest(content.text) <= 30 + 12, qPrintable(QString::number(widest(content.text)))); // a long system line may be longer: it is cut
+    QVERIFY(widest(content.text.section(QStringLiteral("SYSTEM INFO"), 0, 0)) <= 30);         // the gauges fit
+    terminal.resultShown("system-dashboard", "dashboard", false);
+    terminal.setEnabled("system-dashboard", false);
 }
 
 void TestExtensions::documentPreview()

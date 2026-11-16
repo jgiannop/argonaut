@@ -78,7 +78,10 @@ struct Command
 // text or a picture for Argonaut to show; an extension never draws itself.
 struct PreviewReply
 {
-    enum Kind { None, Text, Markdown, Html, Diff, Image } kind = None; // None: "not from me", the built-in preview is used
+    // None: "not from me", the built-in preview is used. Ansi: text with
+    // colour codes (ESC [ … m), for the terminal interface, which shows the
+    // colours; the window shows the text without them.
+    enum Kind { None, Text, Markdown, Html, Diff, Image, Ansi } kind = None;
     QString text;          // Text, Markdown, Html (Qt's rich-text subset, no scripts, nothing loaded), Diff (a unified diff, coloured by Argonaut)
     bool monospace = false; // Text: in a fixed-width font
     QString image;         // Image: a picture file the extension wrote
@@ -103,6 +106,11 @@ struct ResultLook
     QString accent;
     QString border;
     QString font;    // the family the window's text is in
+    // In the terminal interface there are no pixels: the room is in
+    // character cells, and a picture would be a blur. An extension that
+    // wants to look right there answers with text ("ansi").
+    int columns = 0;
+    int rows = 0;
 };
 
 // A list of files an extension keeps (Git: the changed files), shown in the
@@ -235,6 +243,11 @@ public:
     void invoke(const Command &command, const QString &folder, const QStringList &selection,
                 const QString &input = QString());
     QString nameOf(const QString &id) const;
+    // Which of Argonaut's interfaces this is: "window" (the default) or
+    // "terminal". Extensions are told in "hello", so one that draws can
+    // draw for it. Set before the first folder is shown.
+    void setInterface(const QString &name) { m_interface = name; }
+    QString interfaceName() const { return m_interface; }
     // A named result of `extension` is on screen now (with room for
     // `pixels`, in a window that looks like `look`), or no longer is. The
     // extension is told: {"type":"result","id":…,"shown":…,"width":…,
@@ -352,6 +365,7 @@ private:
     QHash<QString, int> m_watched;
     bool m_quitting = false;
     int m_previewRequest = 0;
+    QString m_interface = QStringLiteral("window");
 };
 
 } // namespace Extensions

@@ -2,6 +2,7 @@
 import json, os, sys
 with open(os.path.join(os.path.dirname(__file__), "starts"), "a") as f:
     f.write("x")
+interface = "?"
 def say(obj):
     sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
 for line in sys.stdin:
@@ -11,6 +12,7 @@ for line in sys.stdin:
         continue
     folder = m.get("folder", "")
     if m.get("type") == "hello":
+        interface = m.get("interface", "?")
         say({"type": "commands", "commands": [
             {"id": "hello", "label": "Fake: Say Hello"},
             {"id": "one-image", "label": "One Image", "kind": "files", "multiple": False, "types": ["image/*"]},
@@ -95,7 +97,12 @@ for line in sys.stdin:
         # the room there is) or no longer is. Written down for the tests.
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "results"), "a") as f:
             f.write("%s %s\n" % (m.get("id"), "shown" if m.get("shown") else "hidden"))
-        if m.get("shown"):
+        if m.get("shown") and m.get("id") == "t1":
+            # In the terminal interface: text with colours, for the room in characters.
+            say({"type": "show", "id": "t1", "update": True, "title": "In Menu", "kind": "ansi", "note": "made again",
+                 "text": "\x1b[32mupdated\x1b[0m cols=%d rows=%d\x1b[2J\x1b]0;title\x07 \x1b[1;38;5;196mhot\x1b[0m\n"
+                         % (m.get("columns", 0), m.get("rows", 0)) + "\n".join("row %d" % i for i in range(60))})
+        elif m.get("shown"):
             say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
                  "text": "live 2 for %dx%d %s" % (m.get("width", 0), m.get("height", 0), "dark" if m.get("dark") else "light")
                  + " " + ",".join(sorted(m.get("colors", {}))) + " font=" + ("yes" if m.get("font") else "no")})
@@ -114,6 +121,9 @@ for line in sys.stdin:
                      {"id": "user", "label": "Twice"},
                      {"label": "No id"}]})
             say({"type": "form", "id": "second", "text": "one at a time"})
+        if m.get("command") == "inmenu" and os.environ.get("FAKE_SHOWS_IN_MENU"):
+            say({"type": "show", "id": "t1", "title": "In Menu", "kind": "ansi", "note": "interface=" + interface,
+                 "text": "plain \x1b[31mred\x1b[0m"})
         if m.get("command") == "live":
             say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1"})
         if m.get("command") == "late":

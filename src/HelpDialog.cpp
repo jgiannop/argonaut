@@ -649,7 +649,9 @@ moves to the Trash, [[Shift+Delete]] deletes for good (it asks, and only <b>y</b
 text file, what is inside an archive, a rough picture of an image. It follows the cursor. [[Tab]] goes to it, where
 the arrows and [[PgUp]] / [[PgDn]] scroll; the wheel and its scrollbar work too.</li>
 <li><b>Command palette:</b> [[Ctrl+P]] opens a list of everything you can do. Type a few letters ("new", "trash",
-"big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same.</li>
+"big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same. Commands that
+extensions add to this window's menus are there too: <b>System Dashboard</b> opens in the preview at the right,
+drawn with characters, and updates as it does here.</li>
 <li><b>Mouse:</b> click, double-click, right-click to select, the wheel, and the words on the bottom line.</li>
 <li>[[F1]] lists every key; [[q]] or [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>

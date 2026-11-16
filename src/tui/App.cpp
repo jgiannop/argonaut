@@ -23,6 +23,7 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QMimeDatabase>
+#include <QTextDocument>
 #include <QThreadPool>
 #include <QPointer>
 #include <QSettings>
@@ -140,6 +141,13 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
 
     // One pane to start with; two when a second folder was asked for. The
     // second pane is there all along (hidden), so splitting is instant.
+    // Extensions are told this is the terminal: one that draws can draw
+    // with characters. And what one wants shown goes to the preview.
+    Extensions::Host::instance()->setInterface(QStringLiteral("terminal"));
+    connect(Extensions::Host::instance(), &Extensions::Host::showRequested, this,
+            [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
+                showResult(title.isEmpty() ? extension : title, content);
+            });
     m_embeddedShell = Shell::available();
     m_split = !rightFolder.isEmpty();
     m_secondUsed = m_split;
@@ -1589,6 +1597,12 @@ QList<App::Command> App::commands()
             continue;
         list.append({QStringLiteral("Go to %1").arg(place.name), QString(), [this, i] { openPlace(i); }});
     }
+    // What extensions put in the window's menus (System Dashboard in View).
+    for (const char *menu : {"file", "edit", "view", "go"}) {
+        const QList<Extensions::Command> added = Extensions::Host::instance()->menuCommands(QString::fromLatin1(menu));
+        for (const Extensions::Command &command : added)
+            list.append({command.label, QString(), [this, command] { runExtensionCommand(command); }});
+    }
     list.append({QStringLiteral("Quit Argonaut"), QStringLiteral("q"), press(Key::character('q'))});
     return list;
 }
@@ -1814,6 +1828,7 @@ void App::setPreviewShown(bool on)
     m_preview = on;
     m_inPreview = false;
     if (!on) {
+        closeResult();
         ++m_previewRequest; // an answer still on its way is dropped
         m_previewPath.clear();
         m_previewLoading = false;
@@ -1838,8 +1853,15 @@ void App::syncPreview()
 {
     const Pane &p = pane();
     const QString path = cursorPath();
+    if (m_resultShown) {
+        // An extension's result has the pane until the cursor goes elsewhere.
+        if (path == m_resultCursor)
+            return;
+        closeResult();
+    }
     if (path == m_previewPath)
         return;
+    m_previewCells.clear();
     m_previewPath = path;
     const quint64 request = ++m_previewRequest;
     m_previewTop = 0;
@@ -1928,6 +1950,249 @@ void App::syncPreview()
     });
 }
 
+namespace {
+
+// Text with colour codes (ESC [ … m, the usual ones: bold, underline,
+// reverse, the 16 and the 256 colours, and full colour as the nearest of
+// 256) as cells. Every other escape sequence is dropped: an extension
+// colours its text, it doesn't drive the terminal.
+QList<QList<Cell>> cellsOf(const QString &text)
+{
+    QList<QList<Cell>> lines;
+    QList<Cell> line;
+    Style style;
+    style.raw = true;
+    const QList<uint> points = text.toUcs4();
+    for (qsizetype i = 0; i < points.size(); ++i) {
+        const uint c = points.at(i);
+        if (c == '\n') {
+            lines.append(line);
+            line.clear();
+            continue;
+        }
+        if (c == 0x1b) {
+            if (i + 1 >= points.size())
+                continue;
+            if (points.at(i + 1) == ']' || points.at(i + 1) == 'P' || points.at(i + 1) == '_' || points.at(i + 1) == '^') {
+                // A string for the terminal (a window title…): all of it
+                // goes, up to its end (BEL, or ESC and a backslash).
+                qsizetype end = i + 2;
+                while (end < points.size() && points.at(end) != 0x07 && !(points.at(end) == 0x1b && end + 1 < points.size() && points.at(end + 1) == '\\'))
+                    ++end;
+                i = end < points.size() && points.at(end) == 0x1b ? end + 1 : end;
+                continue;
+            }
+            if (points.at(i + 1) != '[') {
+                ++i; // a two-character sequence: both go
+                continue;
+            }
+            qsizetype end = i + 2;
+            while (end < points.size() && !(points.at(end) >= 0x40 && points.at(end) <= 0x7e))
+                ++end;
+            if (end < points.size() && points.at(end) == 'm') {
+                QList<int> codes;
+                int value = 0;
+                for (qsizetype k = i + 2; k <= end; ++k) {
+                    const uint d = points.at(k);
+                    if (d >= '0' && d <= '9') {
+                        value = qMin(value * 10 + int(d - '0'), 9999);
+                    } else {
+                        codes.append(value);
+                        value = 0;
+                    }
+                }
+                for (qsizetype k = 0; k < codes.size(); ++k) {
+                    const int code = codes.at(k);
+                    const bool fore = code == 38;
+                    if (code == 0) {
+                        style = Style();
+                        style.raw = true;
+                    } else if (code == 1) {
+                        style.bold = true;
+                    } else if (code == 22) {
+                        style.bold = false;
+                    } else if (code == 4) {
+                        style.underline = true;
+                    } else if (code == 24) {
+                        style.underline = false;
+                    } else if (code == 7) {
+                        style.reverse = true;
+                    } else if (code == 27) {
+                        style.reverse = false;
+                    } else if (code >= 30 && code <= 37) {
+                        style.fg = qint16(code - 30);
+                    } else if (code >= 90 && code <= 97) {
+                        style.fg = qint16(code - 90 + 8);
+                    } else if (code == 39) {
+                        style.fg = -1;
+                    } else if (code >= 40 && code <= 47) {
+                        style.bg = qint16(code - 40);
+                    } else if (code >= 100 && code <= 107) {
+                        style.bg = qint16(code - 100 + 8);
+                    } else if (code == 49) {
+                        style.bg = -1;
+                    } else if ((code == 38 || code == 48) && k + 2 < codes.size() && codes.at(k + 1) == 5) {
+                        (fore ? style.fg : style.bg) = qint16(qBound(0, codes.at(k + 2), 255));
+                        k += 2;
+                    } else if ((code == 38 || code == 48) && k + 4 < codes.size() && codes.at(k + 1) == 2) {
+                        (fore ? style.fg : style.bg) = nearest256(qRgb(qBound(0, codes.at(k + 2), 255), qBound(0, codes.at(k + 3), 255),
+                                                                         qBound(0, codes.at(k + 4), 255)));
+                        k += 4;
+                    }
+                }
+            }
+            i = end;
+            continue;
+        }
+        if (c < 0x20 || c == 0x7f)
+            continue; // no other control characters
+        Cell cell;
+        cell.ch = char32_t(c);
+        cell.style = style;
+        line.append(cell);
+        if (line.size() >= 400)
+            continue;
+    }
+    lines.append(line);
+    return lines;
+}
+
+} // namespace
+
+// What an extension wants shown: in the preview, which opens for it. A
+// result with a name replaces itself while it is shown (an "update" for
+// anything else does nothing), and its extension hears how it fares.
+void App::showResult(const QString &title, const Extensions::PreviewReply &content)
+{
+    using Extensions::PreviewReply;
+    const bool same = m_resultShown && !content.resultId.isEmpty() && content.resultId == m_resultId
+                      && content.extension == m_resultExtension && m_preview;
+    if (content.update && !same)
+        return; // for a result that isn't shown (any more)
+    if (!same) {
+        closeResult();
+        ++m_previewRequest; // a file's preview still on its way is dropped
+        m_preview = true;
+        m_previewTop = 0;
+        m_resultShown = true;
+        m_resultCursor = cursorPath();
+        m_previewPath = QStringLiteral("\x01result"); // not a file's: the next file loads afresh
+    }
+    m_previewLoading = false;
+    m_previewTitle = title;
+    m_previewInfo = content.note;
+    m_previewWarning = false;
+    m_previewLines.clear();
+    m_previewCells.clear();
+    m_previewImage = QImage();
+    m_previewWrapWidth = -1;
+    switch (content.kind) {
+    case PreviewReply::Ansi:
+        m_previewCells = cellsOf(content.text.left(400000));
+        break;
+    case PreviewReply::Image: {
+        QImageReader reader(content.image);
+        const QSize size = reader.size();
+        if (size.isValid() && size.width() <= 16384 && size.height() <= 16384)
+            m_previewImage = reader.read().convertToFormat(QImage::Format_RGB32);
+        if (m_previewImage.isNull())
+            m_previewLines = {QStringLiteral("Nothing to show.")};
+        break;
+    }
+    case PreviewReply::Html: {
+        QTextDocument document;
+        document.setHtml(content.text);
+        m_previewLines = document.toPlainText().split(QLatin1Char('\n'));
+        break;
+    }
+    case PreviewReply::Diff: {
+        // The added lines green, the removed ones red, as text with codes.
+        QString coloured;
+        const QStringList lines = content.text.split(QLatin1Char('\n'));
+        for (const QString &line : lines) {
+            const int colour = line.startsWith(QLatin1String("+++")) || line.startsWith(QLatin1String("---")) ? -1
+                               : line.startsWith(QLatin1Char('+')) ? 2 : line.startsWith(QLatin1Char('-')) ? 1
+                               : line.startsWith(QLatin1String("@@")) ? 6 : -1;
+            QString plain = line;
+            plain.remove(QChar(0x1b)); // a diff is text: no codes of its own
+            coloured += (colour < 0 ? QStringLiteral("\x1b[0m") : QStringLiteral("\x1b[0;3%1m").arg(colour)) + plain + QLatin1Char('\n');
+        }
+        m_previewCells = cellsOf(coloured);
+        break;
+    }
+    case PreviewReply::Text:
+    case PreviewReply::Markdown:
+        m_previewLines = content.text.split(QLatin1Char('\n'));
+        break;
+    case PreviewReply::None:
+        m_previewLines = {QStringLiteral("Nothing to show.")};
+        break;
+    }
+    if (!same && !content.resultId.isEmpty()) {
+        m_resultExtension = content.extension;
+        m_resultId = content.resultId;
+        m_resultRoom = QSize(); // told once the pane has been laid out
+    }
+    emit changed();
+}
+
+void App::closeResult()
+{
+    if (!m_resultShown)
+        return;
+    m_resultShown = false;
+    m_previewCells.clear();
+    m_previewPath.clear();
+    if (!m_resultId.isEmpty())
+        Extensions::Host::instance()->resultShown(m_resultExtension, m_resultId, false);
+    m_resultExtension.clear();
+    m_resultId.clear();
+    m_resultRoom = QSize();
+}
+
+// The named result's extension is told the room there is, in characters
+// (again when that changes): it draws for it.
+void App::reportResult()
+{
+    if (m_resultId.isEmpty() || m_previewWidth <= 0)
+        return;
+    const QSize room(qMax(1, m_previewWidth - 3), qMax(1, m_previewShown));
+    if (room == m_resultRoom)
+        return;
+    m_resultRoom = room;
+    Extensions::ResultLook look;
+    look.dark = true; // unknown: most terminals are, and text keeps the terminal's own colours anyway
+    look.columns = room.width();
+    look.rows = room.height();
+    Extensions::Host::instance()->resultShown(m_resultExtension, m_resultId, true, QSize(), look);
+}
+
+// A command an extension put in the menu bar of the window: here it is in
+// the command palette. What it wants asked first is asked here too.
+void App::runExtensionCommand(const Extensions::Command &command)
+{
+    const Pane &p = pane();
+    const QString folder = p.model->extensionsFolder();
+    auto invoke = [this, command, folder](const QString &input) {
+        Extensions::Host::instance()->invoke(command, folder, {}, input);
+    };
+    auto typed = [this, command, invoke] {
+        if (!command.asks) {
+            invoke(QString());
+            return;
+        }
+        prompt(command.askLabel.isEmpty() ? command.label : command.askLabel, command.askText, int(command.askText.size()),
+               [invoke](const QString &text) {
+                   if (!text.trimmed().isEmpty())
+                       invoke(text);
+               });
+    };
+    if (!command.confirm.isEmpty())
+        ask({command.label, command.confirm, QString(), command.label}, typed);
+    else
+        typed();
+}
+
 // The preview pane: the item's name, what it is, then its content with a
 // scrollbar: text as lines (long ones go on to the next), an archive's
 // entries, or a picture made of half blocks, two "pixels" to the cell.
@@ -1964,6 +2229,43 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
         screen.put(x + 2, top + height - 1, QStringLiteral("a rough picture: Enter opens the real one"), kDim, inner);
         return;
     }
+    if (!m_previewCells.isEmpty()) {
+        // Text with its own colours: a line a line, cut at the pane's edge.
+        const int count = int(m_previewCells.size());
+        m_previewTotal = count;
+        m_previewTop = qBound(0, m_previewTop, qMax(0, count - rows));
+        for (int i = 0; i < rows && m_previewTop + i < count; ++i) {
+            const QList<Cell> &line = m_previewCells.at(m_previewTop + i);
+            int cx = 0;
+            for (const Cell &cell : line) {
+                const int cells = Screen::widthOf(QString::fromUcs4(&cell.ch, 1));
+                if (cx + cells > inner)
+                    break;
+                if (cells > 0)
+                    screen.set(x + 2 + cx, contentY + i, cell);
+                if (cells == 2) {
+                    Cell tail = cell;
+                    tail.ch = U' ';
+                    tail.tail = true;
+                    screen.set(x + 2 + cx + 1, contentY + i, tail);
+                }
+                cx += cells;
+            }
+        }
+        if (count > rows) {
+            const int thumb = qBound(1, rows * rows / count, rows - 1);
+            const int at = (rows - thumb) * m_previewTop / (count - rows);
+            for (int i = 0; i < rows; ++i) {
+                const bool on = i >= at && i < at + thumb;
+                screen.put(x + width - 1, contentY + i, on ? QStringLiteral("█") : QStringLiteral("│"),
+                           {on ? (m_inPreview ? Ink::Accent : Ink::Normal) : Ink::Dim, Paper::Normal, false});
+            }
+        }
+        reportResult();
+        return;
+    }
+    if (m_resultShown)
+        reportResult();
     if (m_previewWrapWidth != inner) {
         m_previewWrapped.clear();
         for (const QString &line : std::as_const(m_previewLines))

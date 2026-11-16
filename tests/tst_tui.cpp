@@ -6,6 +6,7 @@
 #include "Shell.h"
 #include "Bookmarks.h"
 #include "DirectoryModel.h"
+#include "Extensions.h"
 #include "FileOperations.h"
 #include "Screen.h"
 #include "TestSupport.h"
@@ -16,6 +17,8 @@
 #include <QFile>
 #include <QSettings>
 #include <QImage>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -56,6 +59,7 @@ private slots:
     void placesAtTheLeft();
     void previewAtTheRight();
     void commandPalette();
+    void extensionResultInThePreview();
     void shellInTheFolder();
     void shellPanel();
 
@@ -1467,6 +1471,90 @@ void TestTui::commandPalette()
     QVERIFY(!app->isPaletteOpen());
 }
 
+// What an extension shows (the System Dashboard) is in the preview here
+// too: its command is in the palette, it is told this is the terminal and
+// how many characters there is room for, its text keeps its colours, and it
+// hears when the result is no longer shown.
+void TestTui::extensionResultInThePreview()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString fakeFolder = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake";
+    QFile::remove(fakeFolder + "/results");
+    auto logged = [&] {
+        QFile file(fakeFolder + "/results");
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    host->setEnabled("fake", true);
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QCOMPARE(host->interfaceName(), QStringLiteral("terminal"));
+    // Its command for the window's View menu is in the palette here.
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        keys({Key::control('p')});
+        const bool there = app->paletteNames().contains("In The & Menu");
+        keys({Key::of(Key::Escape)});
+        return there;
+    }(), 10000);
+    QVERIFY(!app->isPreviewShown());
+    keys({Key::control('p')});
+    type("in the");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("In The & Menu"));
+    keys({Key::of(Key::Enter)});
+
+    // The preview opens for it; told the room in characters, it sends a
+    // version made for it, which replaces the first where it is.
+    QTRY_VERIFY_WITH_TIMEOUT(app->isPreviewShown() && app->resultId() == "t1", 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("updated cols="), 10000);
+    Screen s(120, 30);
+    app->render(s);
+    QStringList lines = s.text().split('\n');
+    const int edge = int(lines.at(5).lastIndexOf(QChar(0x2502)));
+    QVERIFY(lines.at(1).mid(edge).contains("In Menu"));
+    QVERIFY(lines.at(2).mid(edge).contains("made again"));
+    const QRegularExpressionMatch room = QRegularExpression("cols=(\\d+) rows=(\\d+)").match(lines.at(4));
+    QVERIFY2(room.hasMatch(), qPrintable(lines.at(4)));
+    QVERIFY2(room.captured(1).toInt() >= 30 && room.captured(1).toInt() < 60, qPrintable(lines.at(4))); // the pane's, not the screen's
+    QVERIFY(room.captured(2).toInt() >= 10);
+    // Its colours are its own; what isn't a colour code is dropped, not obeyed.
+    const int at = int(lines.at(4).indexOf("updated"));
+    QVERIFY(s.at(at, 4).style.raw);
+    QCOMPARE(int(s.at(at, 4).style.fg), 2);
+    const int hot = int(lines.at(4).indexOf("hot"));
+    QVERIFY(hot > at);
+    QCOMPARE(int(s.at(hot, 4).style.fg), 196);
+    QVERIFY(s.at(hot, 4).style.bold);
+    QVERIFY(!lines.at(4).contains("title") && !lines.at(4).contains("2J"));
+    QVERIFY(lines.at(4).mid(edge).contains("rows=")); // and the files beside it are still there
+    QVERIFY(lines.at(4).left(edge).contains("Documents/"));
+    QCOMPARE(logged(), QStringLiteral("t1 shown\n"));
+
+    // Longer than the pane: it scrolls like any preview.
+    QVERIFY(screen(120, 30).contains("row 5") && !screen(120, 30).contains("row 59"));
+    keys({Key::of(Key::Tab)});
+    QVERIFY(app->isInPreview());
+    keys({Key::of(Key::End)});
+    QVERIFY(screen(120, 30).contains("row 59"));
+    keys({Key::of(Key::Escape)});
+
+    // The cursor on another item: the file's preview takes the pane back, and the extension is told.
+    keys({Key::of(Key::Down)});
+    QTRY_VERIFY_WITH_TIMEOUT((screen(120, 30), app->resultId().isEmpty()), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 hidden\n"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!screen(120, 30).contains("updated cols="), 10000);
+
+    // Shown again, then F3 closes the preview: told again.
+    keys({Key::control('p')});
+    type("in the");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("updated cols="), 10000);
+    keys({Key::of(Key::F3)});
+    QVERIFY(!app->isPreviewShown());
+    QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 shown\nt1 hidden\n"), 10000);
+    host->setEnabled("fake", false);
+}
+
 // F3: the preview at the right, of the item under the cursor: a text
 // file's lines with a scrollbar, an archive's entries, a rough picture, a
 // warning for a program in disguise (never its content).
@@ -1610,6 +1698,20 @@ int main(int argc, char **argv)
         QFile::setPermissions(root + "/gio", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
         qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(root + "/gio"));
         qputenv("ARGONAUT_REMEMBER_RECENT", "1");
+    }
+    // One extension, the tests' own, off until a test switches it on.
+    {
+        const QString root = sandbox.path();
+        QDir().mkpath(root + "/extensions/fake");
+        QFile manifest(root + "/extensions/fake/extension.json");
+        if (!manifest.open(QIODevice::WriteOnly))
+            return 1;
+        manifest.write(R"({"id": "fake", "name": "Fake", "protocol": 1, "exec": ["fake.py"]})");
+        manifest.close();
+        QFile::copy(QStringLiteral(FAKE_EXTENSION), root + "/extensions/fake/fake.py");
+        QFile::setPermissions(root + "/extensions/fake/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("ARGONAUT_EXTENSIONS_PATH", QFile::encodeName(root + "/extensions"));
+        qputenv("FAKE_SHOWS_IN_MENU", "1");
     }
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("argonaut-test");

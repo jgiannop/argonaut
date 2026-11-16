@@ -111,7 +111,7 @@ Ignore message types and keys you don't know; newer versions may add some.
 ### From Argonaut
 
 ```json
-{"type": "hello", "protocol": 1, "app": "argonaut", "version": "0.8.0"}
+{"type": "hello", "protocol": 1, "app": "argonaut", "version": "0.8.0", "interface": "window"}
 {"type": "watch", "folder": "/home/me/Documents"}
 {"type": "refresh", "folder": "/home/me/Documents"}
 {"type": "unwatch", "folder": "/home/me/Documents"}
@@ -266,6 +266,35 @@ While it is shown, send a new version as often as you need, with
 {"type": "show", "id": "dashboard", "update": true, "title": "System Dashboard",
  "kind": "image", "image": "/run/user/1000/my-dashboard.png"}
 ```
+
+#### In the terminal interface
+
+Argonaut also runs in a terminal (`argonaut --tui`), where there are
+character cells and no pixels. `hello` says which it is: `"interface"` is
+`"window"` or `"terminal"`. There, a result or preview is shown as text, and
+a picture only as a rough mosaic, so an extension that draws should answer
+with text of its own colours instead:
+
+```json
+{"type": "show", "id": "dashboard", "title": "System Dashboard", "kind": "ansi",
+ "text": "\u001b[1mCPU\u001b[0m  \u001b[38;5;6m████\u001b[38;5;238m██████\u001b[0m  42%"}
+```
+
+`ansi` is text with colour codes (`ESC [ … m`: bold, underline, reverse, the
+16 and the 256 colours, and full colour, shown as the nearest of 256). Every
+other escape sequence is dropped, so you colour your text but don't drive
+the terminal. A line longer than the pane is cut; more lines than fit
+scroll. In the terminal, the `result` message has the room in characters
+instead of pixels:
+
+```json
+{"type": "result", "id": "dashboard", "shown": true, "width": 0, "height": 0, "dark": true,
+ "columns": 44, "rows": 23}
+```
+
+If you send `ansi` to the window, it shows the text without the colours.
+The terminal's command palette (Ctrl+P) lists the commands you put in the
+window's menus, and asks their `confirm` and `ask` questions itself.
 
 An update only replaces your result where it is shown. It never opens the
 pane and never takes it from a file, so a late one does no harm; but stop

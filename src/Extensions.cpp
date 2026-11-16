@@ -426,6 +426,8 @@ PreviewReply Host::readContent(const QJsonObject &message)
         reply.kind = PreviewReply::Html;
     } else if (kind == QLatin1String("diff")) {
         reply.kind = PreviewReply::Diff;
+    } else if (kind == QLatin1String("ansi")) {
+        reply.kind = PreviewReply::Ansi;
     } else if (kind == QLatin1String("image")) {
         // A picture file of its own making: an absolute path to a plain file.
         const QString image = message.value(QLatin1String("image")).toString();
@@ -840,7 +842,8 @@ void Host::start(Running *ext)
     send(ext, {{QStringLiteral("type"), QStringLiteral("hello")},
                {QStringLiteral("protocol"), ProtocolVersion},
                {QStringLiteral("app"), QStringLiteral("argonaut")},
-               {QStringLiteral("version"), QCoreApplication::applicationVersion()}});
+               {QStringLiteral("version"), QCoreApplication::applicationVersion()},
+               {QStringLiteral("interface"), m_interface}});
     for (auto it = m_watched.constBegin(); it != m_watched.constEnd(); ++it)
         send(ext, {{QStringLiteral("type"), QStringLiteral("watch")}, {QStringLiteral("folder"), it.key()}});
 }
@@ -885,6 +888,10 @@ void Host::resultShown(const QString &extension, const QString &id, bool shown, 
                 message.insert(QStringLiteral("colors"), colors);
             if (!look.font.isEmpty())
                 message.insert(QStringLiteral("font"), look.font);
+            if (look.columns > 0 && look.rows > 0) {
+                message.insert(QStringLiteral("columns"), look.columns);
+                message.insert(QStringLiteral("rows"), look.rows);
+            }
         }
         send(ext, message);
     }

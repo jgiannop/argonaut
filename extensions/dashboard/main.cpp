@@ -11,6 +11,8 @@
 //   argonaut-dashboard-extension             the extension (talks on stdin/stdout)
 //   argonaut-dashboard-extension --png FILE [WIDTH HEIGHT [dark|light]]
 //                                            draws once into FILE (to look at it)
+//   argonaut-dashboard-extension --text [COLUMNS]
+//                                            prints it once as the terminal interface shows it
 
 #include "Format.h"
 
@@ -377,6 +379,144 @@ QImage draw(const Numbers &n, const QList<QPair<QString, QString>> &info, int wi
     return image;
 }
 
+// ---------------------------------------------- the same, in a terminal ---
+// Argonaut's terminal interface has character cells, not pixels: a picture
+// there would be a blur. So for it the dashboard is text with colour codes
+// ("ansi"): the same three gauges, drawn as rings of half blocks (two
+// "pixels" to the cell), the same system lines, the same network bars.
+
+QString sgr(int fg, int bg = -1)
+{
+    QString code = QStringLiteral("\x1b[0");
+    if (fg >= 0)
+        code += QStringLiteral(";38;5;%1").arg(fg);
+    if (bg >= 0)
+        code += QStringLiteral(";48;5;%1").arg(bg);
+    return code + QLatin1Char('m');
+}
+
+const QString kReset = QStringLiteral("\x1b[0m");
+const QString kBold = QStringLiteral("\x1b[0;1m");
+const QString kDim = QStringLiteral("\x1b[0;38;5;8m");
+constexpr int kTrack = 238;  // the empty part of a gauge: a dark grey
+constexpr int kAccent = 6;   // the terminal's own cyan, as the rest of the interface
+constexpr int kNearlyFull = 208;
+constexpr int kFull = 196;
+
+int levelIndex(double share)
+{
+    return share >= 0.9 ? kFull : share >= 0.75 ? kNearlyFull : kAccent;
+}
+
+// A gauge's ring, `cells` wide: one string a screen line. Painted small
+// (a pixel to half a cell) with the colours as numbers, then read back.
+QStringList ring(int cells, double share)
+{
+    const int rows = qMax(2, cells / 2);
+    QImage image(cells, rows * 2, QImage::Format_RGB32);
+    image.fill(Qt::black); // black: nothing here
+    {
+        QPainter p(&image);
+        const double thickness = qMax(1.6, cells * 0.17);
+        const QRectF circle(thickness / 2 + 0.5, thickness / 2 + 0.5, cells - thickness - 1, rows * 2 - thickness - 1);
+        QPen pen(QColor(0, 0, 1), thickness, Qt::SolidLine, Qt::FlatCap); // blue 1: the track
+        p.setPen(pen);
+        p.drawArc(circle, 225 * 16, -270 * 16);
+        pen.setColor(QColor(0, 0, 2)); // blue 2: the filled part
+        p.setPen(pen);
+        p.drawArc(circle, 225 * 16, -int(270 * 16 * qBound(0.0, share, 1.0)));
+    }
+    const int value = levelIndex(share);
+    auto colorAt = [&](int x, int y) {
+        const int mark = qBlue(image.pixel(x, y));
+        return mark == 2 ? value : mark == 1 ? kTrack : -1;
+    };
+    QStringList lines;
+    for (int row = 0; row < rows; ++row) {
+        QString line;
+        for (int x = 0; x < cells; ++x) {
+            const int top = colorAt(x, row * 2);
+            const int bottom = colorAt(x, row * 2 + 1);
+            if (top < 0 && bottom < 0)
+                line += kReset + QLatin1Char(' ');
+            else if (top >= 0 && bottom >= 0)
+                line += sgr(top, bottom) + QChar(0x2580);
+            else if (top >= 0)
+                line += sgr(top) + QChar(0x2580); // the upper half
+            else
+                line += sgr(bottom) + QChar(0x2584); // the lower half
+        }
+        lines << line + kReset;
+    }
+    return lines;
+}
+
+QString centred(const QString &text, int width)
+{
+    const QString cut = text.left(width);
+    const int left = (width - int(cut.size())) / 2;
+    return QString(left, QLatin1Char(' ')) + cut + QString(width - left - int(cut.size()), QLatin1Char(' '));
+}
+
+// "6.9 / 33.6 GB" where both are in the same unit, and "579 / 983 GB"
+// where that is still too long: it has to fit under a gauge.
+QString usedOfTotal(qint64 used, qint64 total, int width)
+{
+    const QString a = formatSize(used), b = formatSize(total);
+    const QString unitA = a.section(QLatin1Char(' '), -1), unitB = b.section(QLatin1Char(' '), -1);
+    const QString text = (unitA == unitB ? a.section(QLatin1Char(' '), 0, 0) : a) + QStringLiteral(" / ") + b;
+    if (text.size() <= width)
+        return text;
+    auto whole = [](const QString &size) {
+        return QString::number(qRound(size.section(QLatin1Char(' '), 0, 0).toDouble())) + QLatin1Char(' ') + size.section(QLatin1Char(' '), -1);
+    };
+    const QString shortA = whole(a), shortB = whole(b);
+    return (unitA == unitB ? shortA.section(QLatin1Char(' '), 0, 0) : shortA) + QStringLiteral(" / ") + shortB;
+}
+
+QString drawAnsi(const Numbers &n, const QList<QPair<QString, QString>> &info, int columns)
+{
+    columns = qBound(24, columns, 200);
+    const int gauge = qBound(6, (columns - 2) / 3, 18);
+    const int gap = qMax(1, qMin(3, (columns - 3 * gauge) / 2));
+    const QString between(gap, QLatin1Char(' '));
+    const double shares[3] = {n.cpu, n.memoryTotal > 0 ? double(n.memoryUsed) / double(n.memoryTotal) : 0,
+                              n.diskTotal > 0 ? double(n.diskUsed) / double(n.diskTotal) : 0};
+    const QString names[3] = {QStringLiteral("CPU"), QStringLiteral("MEMORY"), QStringLiteral("DISK")};
+    const QString values[3] = {QStringLiteral("%1%").arg(qRound(n.cpu * 100)), usedOfTotal(n.memoryUsed, n.memoryTotal, gauge),
+                               usedOfTotal(n.diskUsed, n.diskTotal, gauge)};
+    QStringList out;
+    QString line;
+    for (int i = 0; i < 3; ++i)
+        line += kBold + centred(names[i], gauge) + kReset + (i < 2 ? between : QString());
+    out << line;
+    const QStringList rings[3] = {ring(gauge, shares[0]), ring(gauge, shares[1]), ring(gauge, shares[2])};
+    for (int row = 0; row < rings[0].size(); ++row)
+        out << rings[0].at(row) + between + rings[1].at(row) + between + rings[2].at(row);
+    line.clear();
+    for (int i = 0; i < 3; ++i)
+        line += centred(values[i], gauge) + (i < 2 ? between : QString());
+    out << line << QString();
+
+    out << kBold + QStringLiteral("SYSTEM INFO") + kReset;
+    for (const auto &row : info)
+        out << kDim + row.first + QStringLiteral(": ") + kReset + row.second;
+    out << QString();
+
+    const int width = qMax(10, gauge * 3 + gap * 2);
+    auto network = [&](const QString &name, double rate, double peak, qint64 total) {
+        const QString speed = formatSize(qint64(rate)) + QStringLiteral("/s");
+        out << kBold + name + kReset + QString(qMax(1, width - int(name.size()) - int(speed.size())), QLatin1Char(' ')) + speed;
+        const int filled = int(width * qBound(0.0, peak > 0 ? rate / peak : 0.0, 1.0) + 0.5);
+        out << sgr(kAccent) + QString(filled, QChar(0x2588)) + sgr(kTrack) + QString(width - filled, QChar(0x2588)) + kReset;
+        out << kDim + QStringLiteral("Total: %1").arg(formatSize(total)) + kReset;
+    };
+    network(QStringLiteral("DOWNLOAD"), n.downRate, n.downPeak, n.downTotal);
+    out << QString();
+    network(QStringLiteral("UPLOAD"), n.upRate, n.upPeak, n.upTotal);
+    return out.join(QLatin1Char('\n'));
+}
+
 bool save(const QImage &image, const QString &path)
 {
     // Whole or not at all: Argonaut reads it as soon as it is told.
@@ -397,6 +537,11 @@ int main(int argc, char **argv)
     Sampler sampler;
     const QList<QPair<QString, QString>> info = systemInfo();
 
+    if (app.arguments().value(1) == QLatin1String("--text")) { // as the terminal interface shows it
+        QThread::msleep(400);
+        std::printf("%s\n", qPrintable(drawAnsi(sampler.sample(QDir::homePath()), info, app.arguments().value(2, QStringLiteral("44")).toInt())));
+        return 0;
+    }
     if (app.arguments().value(1) == QLatin1String("--png")) {
         QThread::msleep(400); // two readings, for the rates
         const QImage image = draw(sampler.sample(QDir::homePath()), info, app.arguments().value(3, QStringLiteral("900")).toInt(),
@@ -414,17 +559,24 @@ int main(int argc, char **argv)
     int width = 560, height = 760;
     Look look = lookFor(true);
     bool shown = false;       // Argonaut has it on screen
+    bool terminal = false;    // it is Argonaut's terminal interface: text, not a picture
+    int columns = 44;         // …with room for this many characters
 
     auto show = [&](bool update) {
         const Numbers &numbers = sampler.sample(folder);
-        if (!save(draw(numbers, info, width, height, look), picture))
-            return;
         QJsonObject message{{QStringLiteral("type"), QStringLiteral("show")},
                             {QStringLiteral("id"), id},
                             {QStringLiteral("title"), QStringLiteral("System Dashboard")},
-                            {QStringLiteral("kind"), QStringLiteral("image")},
-                            {QStringLiteral("image"), picture},
                             {QStringLiteral("note"), QStringLiteral("Disk: %1 · every 2 seconds").arg(numbers.diskName)}};
+        if (terminal) {
+            message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
+            message.insert(QStringLiteral("text"), drawAnsi(numbers, info, columns));
+        } else {
+            if (!save(draw(numbers, info, width, height, look), picture))
+                return;
+            message.insert(QStringLiteral("kind"), QStringLiteral("image"));
+            message.insert(QStringLiteral("image"), picture);
+        }
         if (update)
             message.insert(QStringLiteral("update"), true);
         send(message);
@@ -457,6 +609,7 @@ int main(int argc, char **argv)
             buffer.remove(0, end + 1);
             const QString type = message.value(QLatin1String("type")).toString();
             if (type == QLatin1String("hello")) {
+                terminal = message.value(QLatin1String("interface")).toString() == QLatin1String("terminal");
                 send({{QStringLiteral("type"), QStringLiteral("commands")},
                       {QStringLiteral("commands"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("dashboard")},
                                                                           {QStringLiteral("label"), QStringLiteral("System Dashboard")},
@@ -472,6 +625,8 @@ int main(int argc, char **argv)
                 }
                 width = message.value(QLatin1String("width")).toInt();
                 height = message.value(QLatin1String("height")).toInt();
+                if (message.value(QLatin1String("columns")).toInt() > 0)
+                    columns = message.value(QLatin1String("columns")).toInt();
                 look = lookFor(message.value(QLatin1String("dark")).toBool(), message.value(QLatin1String("colors")).toObject(),
                                message.value(QLatin1String("font")).toString().left(100));
                 show(true); // drawn for this room, in this theme

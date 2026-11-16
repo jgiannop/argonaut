@@ -19,6 +19,7 @@
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTimer>
+#include <QRegularExpression>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -263,6 +264,16 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
         m_pages->setCurrentWidget(m_text);
         m_kind = Preview::Kind::Text;
         break;
+    case PreviewReply::Ansi: {
+        // Made for the terminal interface: here, its text without the colour codes.
+        static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;?]*[ -/]*[@-~]"));
+        m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        m_text->setPlainText(QString(reply.text).remove(codes));
+        m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
+        m_pages->setCurrentWidget(m_text);
+        m_kind = Preview::Kind::Text;
+        break;
+    }
     case PreviewReply::Diff:
         RichTextStyle::setDiff(m_rich->document(), reply.text, currentTheme());
         m_rich->moveCursor(QTextCursor::Start); // from the top, not where the last line landed
