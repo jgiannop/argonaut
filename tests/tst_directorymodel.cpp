@@ -62,6 +62,7 @@ private slots:
     void naturalOrderInCLocale();
     void realTypesInBackground();
     void bigFolder();
+    void modifiedColumnText();
     void searchMatching();
     void searchFindsInSubfolders();
     void searchHiddenAndSymlinks();
@@ -366,6 +367,78 @@ void TestDirectoryModel::bigFolder()
     QCOMPARE(m_model->index(0, 0).data().toString(), QStringLiteral("f0.txt"));
     QCOMPARE(m_model->index(10, 0).data().toString(), QStringLiteral("f10.txt"));
     QCOMPARE(m_model->index(count - 1, 0).data().toString(), QStringLiteral("f19999.txt"));
+
+    // What a view asks for every row it paints, every time it paints: the
+    // texts of the columns. Painting must stay cheap (a scroll through a big
+    // folder asks for thousands of these a second).
+    for (const auto &[column, name] : {std::pair{int(DirectoryModel::ModifiedColumn), "Modified"}, std::pair{int(DirectoryModel::SizeColumn), "Size"},
+                                       std::pair{int(DirectoryModel::TypeColumn), "Type"}, std::pair{int(DirectoryModel::NameColumn), "Name"}}) {
+        timer.start();
+        qsizetype length = 0;
+        for (int row = 0; row < count; ++row)
+            length += m_model->index(row, column).data().toString().size();
+        const double each = timer.nsecsElapsed() / 1000.0 / count;
+        qInfo("%s: %.2f microseconds a cell", name, each);
+        QVERIFY(length > 0);
+        QVERIFY2(each < 100.0, name); // far more than it takes: only something badly wrong fails this
+    }
+}
+
+// The Modified column: the time of day for a file changed today, the date
+// for an older one, as the user's locale writes them. The texts are kept
+// once made (painting asks for them over and over), and a file that changes
+// gets its new one.
+void TestDirectoryModel::modifiedColumnText()
+{
+    const QString fresh = m_dir + "/fresh.txt", old = m_dir + "/old.txt";
+    touch(fresh);
+    touch(old);
+    const QDateTime now = QDateTime::currentDateTime();
+    const QDateTime longAgo = now.addDays(-40);
+    {
+        QFile file(old);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.setFileTime(longAgo, QFileDevice::FileModificationTime));
+        QFile today(fresh);
+        QVERIFY(today.open(QIODevice::ReadWrite));
+        QVERIFY(today.setFileTime(now, QFileDevice::FileModificationTime));
+    }
+    QVERIFY(load(m_dir));
+    auto text = [this](const QString &path) {
+        return m_model->index(m_model->indexForPath(path).row(), DirectoryModel::ModifiedColumn).data().toString();
+    };
+    const QLocale locale;
+    QCOMPARE(text(fresh), locale.toString(now.time(), QLocale::ShortFormat));
+    QCOMPARE(text(old), locale.toString(longAgo.date(), QLocale::ShortFormat));
+    QVERIFY(text(fresh) != text(old));
+    for (int i = 0; i < 3; ++i) { // asked again: the same
+        QCOMPARE(text(fresh), locale.toString(now.time(), QLocale::ShortFormat));
+        QCOMPARE(text(old), locale.toString(longAgo.date(), QLocale::ShortFormat));
+    }
+    // Two files of the same second share a text; one of another day doesn't get it.
+    const QString twin = m_dir + "/twin.txt", other = m_dir + "/other.txt";
+    touch(twin);
+    touch(other);
+    {
+        QFile file(twin);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.setFileTime(longAgo, QFileDevice::FileModificationTime));
+        QFile another(other);
+        QVERIFY(another.open(QIODevice::ReadWrite));
+        QVERIFY(another.setFileTime(longAgo.addDays(-1), QFileDevice::FileModificationTime));
+    }
+    QVERIFY(load(m_dir));
+    QCOMPARE(text(twin), text(old));
+    QCOMPARE(text(other), locale.toString(longAgo.addDays(-1).date(), QLocale::ShortFormat));
+    QVERIFY(text(other) != text(old));
+    // The old file is written to now: it shows a time of day.
+    {
+        QFile file(old);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.setFileTime(now, QFileDevice::FileModificationTime));
+    }
+    QVERIFY(load(m_dir));
+    QCOMPARE(text(old), locale.toString(now.time(), QLocale::ShortFormat));
 }
 
 // Dragging out: one URL per item even when every column is selected.

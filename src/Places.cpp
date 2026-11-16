@@ -9,8 +9,16 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QStorageInfo>
+#include <QTimer>
+
+#if defined(Q_OS_LINUX)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace Places {
 
@@ -29,7 +37,7 @@ bool isAddress(const QString &path)
     return Extensions::Host::isPlacePath(path) || Volumes::isVolumePath(path);
 }
 
-QList<Entry> list(QStringList *mounts)
+QList<Entry> list()
 {
     QList<Entry> out;
     const struct {
@@ -80,8 +88,6 @@ QList<Entry> list(QStringList *mounts)
             continue;
         const QString root = vol.rootPath();
         mountedDevices << QString::fromLocal8Bit(vol.device());
-        if (mounts)
-            *mounts << root;
 #if defined(Q_OS_LINUX)
         // Skip system/snap mounts; keep "/" and user-visible drives.
         if (root != QLatin1String("/") && !root.startsWith(QLatin1String("/media/")) && !root.startsWith(QLatin1String("/mnt/"))
@@ -140,6 +146,54 @@ QList<Entry> list(QStringList *mounts)
         out.append(entry);
     }
     return out;
+}
+
+Watcher::Watcher(QObject *parent)
+    : QObject(parent)
+{
+    // Bookmarks: the file is saved by replacing it, so its folder is watched.
+    auto *bookmarks = new QFileSystemWatcher(this);
+    const QString bookmarksFolder = QFileInfo(Bookmarks::filePath()).absolutePath();
+    QDir().mkpath(bookmarksFolder);
+    bookmarks->addPath(bookmarksFolder);
+    connect(bookmarks, &QFileSystemWatcher::directoryChanged, this, &Watcher::changed);
+#if defined(Q_OS_LINUX)
+    m_mountsFd = ::open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
+    if (m_mountsFd >= 0) {
+        auto *mounts = new QSocketNotifier(m_mountsFd, QSocketNotifier::Exception, this);
+        connect(mounts, &QSocketNotifier::activated, this, &Watcher::changed);
+    }
+#endif
+    if (m_mountsFd < 0) { // no such signal here: the mounted volumes are compared now and then
+        auto mounted = [] {
+            QStringList roots;
+            const QList<QStorageInfo> volumes = QStorageInfo::mountedVolumes();
+            for (const QStorageInfo &volume : volumes)
+                roots << volume.rootPath();
+            return roots;
+        };
+        m_lastMounts = mounted();
+        auto *poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this, mounted] {
+            const QStringList now = mounted();
+            if (now != m_lastMounts) {
+                m_lastMounts = now;
+                emit changed();
+            }
+        });
+        poll->start(3000);
+    }
+    // Rows of extensions, and drives that are there but not mounted.
+    connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &Watcher::changed);
+    connect(Volumes::instance(), &Volumes::changed, this, &Watcher::changed);
+}
+
+Watcher::~Watcher()
+{
+#if defined(Q_OS_LINUX)
+    if (m_mountsFd >= 0)
+        ::close(m_mountsFd);
+#endif
 }
 
 } // namespace Places

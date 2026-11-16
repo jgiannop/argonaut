@@ -116,6 +116,7 @@ endif()
 qt_add_library(argonaut_app STATIC
     src/MainWindow.h
     src/MainWindow.cpp
+    src/MainWindowExtensions.cpp
     src/StyleSheet.h
     src/StyleSheet.cpp
     src/HeaderBar.h

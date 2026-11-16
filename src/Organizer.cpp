@@ -68,11 +68,18 @@ void Organizer::scan()
     m_items.clear();
     m_skipped = 0;
     static const QMimeDatabase mimes;
-    QFileInfoList infos = QDir(m_folder).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
-    // Newest first, so a huge folder keeps what's most likely in use.
-    std::sort(infos.begin(), infos.end(),
-              [](const QFileInfo &a, const QFileInfo &b) { return a.lastModified() > b.lastModified(); });
-    for (const QFileInfo &info : infos) {
+    const QFileInfoList listed = QDir(m_folder).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    // Newest first, so a huge folder keeps what's most likely in use. Each
+    // item's time is read once, not once for every comparison of the sort:
+    // reading it converts to local time, which is a system call each.
+    QList<QPair<qint64, QFileInfo>> dated;
+    dated.reserve(listed.size());
+    for (const QFileInfo &info : listed)
+        dated.append({info.lastModified().toMSecsSinceEpoch(), info});
+    std::sort(dated.begin(), dated.end(),
+              [](const QPair<qint64, QFileInfo> &a, const QPair<qint64, QFileInfo> &b) { return a.first > b.first; });
+    for (const auto &[changed, info] : std::as_const(dated)) {
+        Q_UNUSED(changed);
         if (m_items.size() >= MaxItems) {
             ++m_skipped;
             continue;

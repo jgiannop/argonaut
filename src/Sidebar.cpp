@@ -11,21 +11,13 @@
 
 #include <QDir>
 #include <QFileInfo>
-#include <QFileSystemWatcher>
 #include <QPainter>
 #include <QScrollBar>
 #include <QSet>
-#include <QSocketNotifier>
 #include <QStandardPaths>
-#include <QStorageInfo>
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QUrl>
-
-#if defined(Q_OS_LINUX)
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -36,7 +28,6 @@ constexpr int EjectRole = Qt::UserRole + 3; // bool: show an eject button
 constexpr int ExtensionRole = Qt::UserRole + 4; // an extension's row: its place address
 
 constexpr int RefreshDelayMs = 250; // one rebuild for a burst of changes
-constexpr int MountPollMs = 3000;   // where mount changes can't be watched
 
 // The eject button's area inside a row.
 QRect ejectRect(const QRect &row)
@@ -95,48 +86,9 @@ Sidebar::Sidebar(QWidget *parent) : QListWidget(parent), m_refreshTimer(new QTim
     m_refreshTimer->setSingleShot(true);
     m_refreshTimer->setInterval(RefreshDelayMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &Sidebar::refresh);
-    watchForChanges();
-    // Extensions add and take away rows of their own.
-    connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &Sidebar::refreshSoon);
-    connect(Volumes::instance(), &Volumes::changed, this, &Sidebar::refreshSoon); // a drive that isn't mounted came or went
-}
-
-Sidebar::~Sidebar()
-{
-#if defined(Q_OS_LINUX)
-    if (m_mountsFd >= 0)
-        ::close(m_mountsFd);
-#endif
-}
-
-// Bookmark edits (also Nautilus's), drives plugged in or removed, servers
-// connected or disconnected.
-void Sidebar::watchForChanges()
-{
-    auto *bookmarksWatcher = new QFileSystemWatcher(this);
-    const QString bookmarksFile = Bookmarks::filePath();
-    QDir().mkpath(QFileInfo(bookmarksFile).absolutePath());
-    bookmarksWatcher->addPath(QFileInfo(bookmarksFile).absolutePath()); // atomic saves replace the file
-    connect(bookmarksWatcher, &QFileSystemWatcher::directoryChanged, this, &Sidebar::refreshSoon);
-#if defined(Q_OS_LINUX)
-    // The kernel flags this file as "exceptional" whenever a mount changes.
-    m_mountsFd = ::open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
-    if (m_mountsFd >= 0) {
-        auto *mounts = new QSocketNotifier(m_mountsFd, QSocketNotifier::Exception, this);
-        connect(mounts, &QSocketNotifier::activated, this, &Sidebar::refreshSoon);
-    }
-#endif
-    if (m_mountsFd < 0) {
-        auto *poll = new QTimer(this);
-        connect(poll, &QTimer::timeout, this, [this] {
-            QStringList now;
-            for (const QStorageInfo &vol : QStorageInfo::mountedVolumes())
-                now << vol.rootPath();
-            if (now != m_lastMounts)
-                refreshSoon();
-        });
-        poll->start(MountPollMs);
-    }
+    // Bookmark edits (also Nautilus's), drives mounted or taken away, drives
+    // that aren't mounted, rows of extensions: Places::Watcher knows them all.
+    connect(new Places::Watcher(this), &Places::Watcher::changed, this, &Sidebar::refreshSoon);
 }
 
 void Sidebar::setTheme(const Theme &theme)
@@ -176,8 +128,7 @@ void Sidebar::refresh()
 
     // What the places are is Places' business (shared with the terminal
     // interface); here they become rows, with a line between the groups.
-    m_lastMounts.clear();
-    const QList<Places::Entry> entries = Places::list(&m_lastMounts);
+    const QList<Places::Entry> entries = Places::list();
     bool first = true;
     Places::Group group = Places::Group::Standard;
     for (const Places::Entry &entry : entries) {

@@ -83,6 +83,7 @@ private slots:
     void claudeThroughArgonaut();
     void plansAreProposedNotDone();
     void organizeWithClaude();
+    void conversationWithAnExtensionProgram();
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
@@ -1035,10 +1036,7 @@ void TestExtensions::runningServices()
     QVERIFY(dir.isValid());
     // What it is asked is written down; "--user" gets the user's services.
     const QString script = dir.filePath("systemctl");
-    {
-        QFile file(script);
-        QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write(QStringLiteral(R"(#!/bin/sh
+    QVERIFY(TestSupport::writeScript(script, QStringLiteral(R"(#!/bin/sh
 echo "$@" >> '%1/asked'
 if [ "$1" = "--user" ]; then
 printf 'MainPID=11\nControlGroup=/none\nMemoryCurrent=2000000000\nId=music.service\nDescription=A Music Player\n\n'
@@ -1049,9 +1047,7 @@ printf 'MemoryCurrent=3000000000\nId=database.service\nDescription=The <b>Databa
 printf 'MemoryCurrent=90000000000\nId=user@1000.service\nDescription=User Manager for UID 1000\n\n'
 printf 'MemoryCurrent=1000000\nId=tiny.service\nDescription=Tiny\n'
 fi
-)").arg(dir.path()).toUtf8());
-        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    }
+)").arg(dir.path())));
     qputenv("ARGONAUT_SYSTEMCTL_PROGRAM", script.toLocal8Bit());
     const auto restore = qScopeGuard([] { qunsetenv("ARGONAUT_SYSTEMCTL_PROGRAM"); });
     static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
@@ -1463,6 +1459,34 @@ void TestExtensions::claudeThroughArgonaut()
     QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude c1 error: Stopped: you chose not to wait"), 10000);
     QTest::qWait(2500); // the second try answers meanwhile
     QVERIFY(!heard("Asker", "Too late"));
+
+    // One thing the user chose is not a licence to ask without end: after a
+    // dozen questions the rest are refused, and nothing more is sent (or paid for).
+    writeFile(m_dir + "/ask-many.txt", "x");
+    for (int i = 0; i < 20; ++i)
+        api.replies.append({200, R"({"id":"m","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+            "content":[{"type":"text","text":"one of many"}],"usage":{"input_tokens":10,"output_tokens":5}})", {}});
+    const int sentBefore = int(api.requests.size());
+    said.clear();
+    host.invoke(hello, m_dir, {m_dir + "/ask-many.txt"});
+    auto count = [&](const QString &part) {
+        int n = 0;
+        for (const QList<QVariant> &line : said)
+            n += line.at(1).toString().contains(part) ? 1 : 0;
+        return n;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(count("claude said: one of many") + count("That is many questions"), 15, 20000);
+    QCOMPARE(count("claude said: one of many"), 12);
+    QCOMPARE(count("That is many questions"), 3);
+    QCOMPARE(int(api.requests.size()) - sentBefore, 12);
+    // The user chooses again: it may ask again.
+    said.clear();
+    api.replies.clear();
+    api.replies.append({200, R"({"input_tokens": 42})", {}});
+    api.replies.append({200, R"({"id":"msg_3","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Asked again"}],"usage":{"input_tokens":10,"output_tokens":5}})", {}});
+    host.invoke(hello, m_dir, {m_dir + "/ask-claude.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude said: Asked again"), 15000);
     host.setEnabled("asker", false);
     host.setEnabled("fake", false);
 }
@@ -1538,6 +1562,15 @@ void TestExtensions::plansAreProposedNotDone()
     host.answerPlan("fake", "p1", true); // again: nothing
     QTest::qWait(300);
     QVERIFY(!heard("plan p1"));
+
+    // A plan has a most it can carry: the rest of what was sent is left out.
+    writeFile(m_dir + "/many-moves.txt", "x");
+    plans.clear();
+    host.invoke(hello, m_dir, {m_dir + "/many-moves.txt"});
+    QTRY_COMPARE_WITH_TIMEOUT(plans.size(), 1, 10000);
+    QCOMPARE(int(plans.first().at(0).value<Extensions::Plan>().moves.size()), Host::MaxPlanMoves);
+    QVERIFY(host.takePlan("fake", "big"));
+    host.answerPlan("fake", "big", true);
 
     // The rules, on their own, as they are when Apply is pressed.
     QList<Extensions::PlanMove> moves{{"a.txt", "Texts", {}, {}, {}}, {"a.txt", "Other", {}, {}, {}}, {"b.txt", "/etc", {}, {}, {}},
@@ -1686,6 +1719,79 @@ void TestExtensions::organizeWithClaude()
     QCOMPARE(int(api.requests.size()), asked + 1); // the count only
     QCOMPARE(plans.size(), 1);
     host.setEnabled("organize-with-claude", false);
+}
+
+// The programs that come with Argonaut all hear it through the same code
+// (extensions/shared/Conversation.h). Talked to directly, one of them:
+// messages cut in the middle and several in one go are understood, what
+// isn't a message is skipped, of several previews asked for at once only
+// the newest is answered, and the program leaves when the pipe is closed.
+void TestExtensions::conversationWithAnExtensionProgram()
+{
+    const QString program = QStringLiteral(GIT_EXTENSION_FOLDER) + "/../argonaut-preview-extension";
+    if (!QFileInfo(program).isExecutable())
+        QSKIP("the Document Preview extension isn't built here");
+    writeFile(m_dir + "/one.md", "# One\n");
+    writeFile(m_dir + "/two.md", "# Two\n");
+    writeFile(m_dir + "/three.md", "# Three\n");
+    QProcess process;
+    process.setProgram(program);
+    process.start();
+    QVERIFY(process.waitForStarted(5000));
+    QByteArray heard;
+    auto lines = [&] {
+        QList<QJsonObject> out;
+        for (const QByteArray &line : heard.split('\n')) {
+            if (!line.trimmed().isEmpty())
+                out << QJsonDocument::fromJson(line).object();
+        }
+        return out;
+    };
+    auto wait = [&](int count) {
+        QElapsedTimer timer;
+        timer.start();
+        while (lines().size() < count && timer.elapsed() < 10000) {
+            process.waitForReadyRead(200);
+            heard += process.readAllStandardOutput();
+        }
+        return int(lines().size());
+    };
+    auto preview = [&](int id, const QString &name) {
+        return QJsonDocument(QJsonObject{{"type", "preview"}, {"id", id}, {"path", m_dir + "/" + name}, {"mime", "text/markdown"}})
+                   .toJson(QJsonDocument::Compact)
+               + '\n';
+    };
+    // A message that arrives in two pieces is one message.
+    process.write("{\"type\": \"he");
+    process.waitForBytesWritten(1000);
+    process.waitForReadyRead(300);
+    heard += process.readAllStandardOutput();
+    QCOMPARE(int(lines().size()), 0); // half a message: nothing yet
+    process.write("llo\", \"protocol\": 1}\n");
+    QCOMPARE(wait(1), 1);
+    QCOMPARE(lines().first().value("type").toString(), QStringLiteral("previews"));
+
+    // Three previews asked for in one go (arrow keys held down), with a line
+    // that is no message among them: one answer, for the newest.
+    process.write(preview(1, "one.md") + "this is not a message\n" + preview(2, "two.md") + preview(3, "three.md"));
+    QCOMPARE(wait(2), 2);
+    QTest::qWait(400);
+    heard += process.readAllStandardOutput();
+    QCOMPARE(int(lines().size()), 2);
+    QCOMPARE(lines().last().value("type").toString(), QStringLiteral("preview"));
+    QCOMPARE(lines().last().value("id").toInt(), 3);
+    QVERIFY(lines().last().value("text").toString().contains("Three"));
+    // The next one alone is answered as usual (the newest of before isn't answered again).
+    process.write(preview(4, "one.md"));
+    QCOMPARE(wait(3), 3);
+    QCOMPARE(lines().last().value("id").toInt(), 4);
+    QVERIFY(lines().last().value("text").toString().contains("One"));
+
+    // Argonaut closes the pipe: the program leaves by itself.
+    process.closeWriteChannel();
+    QVERIFY(process.waitForFinished(5000));
+    QCOMPARE(process.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(process.exitCode(), 0);
 }
 
 void TestExtensions::documentPreview()

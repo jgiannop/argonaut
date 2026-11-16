@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDate>
 #include <QAbstractTableModel>
 #include <QAtomicInteger>
 #include <QCollatorSortKey>
@@ -243,6 +244,7 @@ private:
 
     bool isLocked(const FileEntry &e) const;
     const QString &mimeFor(const FileEntry &e) const;     // effective: content if it knows better
+    QString dateText(qint64 msecs) const;                 // "14:05" for today, else the date; remembered
     const QString &nameMimeFor(const FileEntry &e) const; // from the name only
     // Content checks: cached results apply at once; the rest are read on a
     // worker (every file on local disks, visible ones on USB/network drives).
@@ -270,6 +272,12 @@ private:
     bool m_searchTruncated = false;
     Entries m_rows;   // shown entries, sorted
     Entries m_hidden; // hidden entries while they aren't shown
+    // dateText(): the texts made, by the second they are for, and the day
+    // that "today" was when they were made.
+    static constexpr int MaxDateTexts = 20000;
+    mutable QHash<qint64, QString> m_dateTexts;
+    mutable QDate m_today;
+    mutable qint64 m_todayAsked = 0;
     mutable QHash<QString, int> m_rowByPath; // full path -> row; built lazily
     mutable bool m_indexStale = false;
 

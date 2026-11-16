@@ -1277,97 +1277,11 @@ void Host::handle(Running *ext, const QByteArray &line)
         return;
     }
     if (type == QLatin1String("places")) { // its rows in the sidebar; replaces what it said before
-        QList<Place> places;
-        QSet<QString> ids;
-        const QJsonArray list = message.value(QLatin1String("places")).toArray();
-        for (const QJsonValue &entry : list) {
-            if (places.size() >= MaxPlaces)
-                break;
-            const QJsonObject o = entry.toObject();
-            Place place;
-            place.extension = ext->manifest.id;
-            place.id = o.value(QLatin1String("id")).toString().left(200);
-            place.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            if (place.id.isEmpty() || place.label.isEmpty() || ids.contains(place.id))
-                continue;
-            ids.insert(place.id);
-            place.tooltip = tidy(o.value(QLatin1String("tooltip")).toString(), MaxTooltipChars);
-            static const QStringList icons{QStringLiteral("network"), QStringLiteral("cloud"), QStringLiteral("drive"),
-                                           QStringLiteral("removable"), QStringLiteral("folder")};
-            place.icon = o.value(QLatin1String("icon")).toString();
-            if (!icons.contains(place.icon))
-                place.icon = QStringLiteral("folder");
-            // A folder to open directly must be a real one, by its full path.
-            const QString folder = o.value(QLatin1String("folder")).toString();
-            if (!folder.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir())
-                place.folder = QDir::cleanPath(folder);
-            place.eject = o.value(QLatin1String("eject")).toBool();
-            places.append(place);
-        }
-        ext->places = places;
-        emit placesChanged();
+        hearPlaces(ext, message);
         return;
     }
     if (type == QLatin1String("form")) { // it needs the user to fill something in, or to decide
-        const QString id = message.value(QLatin1String("id")).toString().left(64);
-        if (id.isEmpty())
-            return;
-        auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("form")}, {QStringLiteral("id"), id}, {QStringLiteral("cancelled"), true}}); };
-        // Like "open": only while it is doing what the user asked of it. A
-        // dialog out of the blue asking for a password is not something an
-        // extension gets to show. And one at a time.
-        if (!isActingForUser(ext) || !ext->formPending.isEmpty()) {
-            refuse();
-            return;
-        }
-        Form form;
-        form.extension = ext->manifest.id;
-        form.extensionName = ext->manifest.name;
-        form.id = id;
-        form.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        form.heading = tidy(message.value(QLatin1String("heading")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        form.text = tidy(message.value(QLatin1String("text")).toString(), 1000);
-        form.warning = tidy(message.value(QLatin1String("warning")).toString(), MaxTooltipChars);
-        QSet<QString> ids;
-        const QJsonArray fields = message.value(QLatin1String("fields")).toArray();
-        for (const QJsonValue &entry : fields) {
-            if (form.fields.size() >= 12)
-                break;
-            const QJsonObject o = entry.toObject();
-            FormField field;
-            field.id = o.value(QLatin1String("id")).toString().left(64);
-            if (field.id.isEmpty() || ids.contains(field.id))
-                continue;
-            ids.insert(field.id);
-            field.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            const QString kind = o.value(QLatin1String("kind")).toString();
-            field.kind = kind == QLatin1String("secret") ? FormField::Secret
-                         : kind == QLatin1String("check") ? FormField::Check
-                         : kind == QLatin1String("choice") ? FormField::Choice : FormField::Text;
-            const QJsonValue value = o.value(QLatin1String("value"));
-            field.value = value.isBool() ? (value.toBool() ? QStringLiteral("true") : QStringLiteral("false"))
-                                         : value.toString().left(2000).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            field.placeholder = tidy(o.value(QLatin1String("placeholder")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            const QJsonArray choices = o.value(QLatin1String("choices")).toArray();
-            for (const QJsonValue &choice : choices) {
-                const QString text = choice.toString().left(300).replace(QLatin1Char('\n'), QLatin1Char(' '));
-                if (field.choices.size() < 200 && !text.isEmpty())
-                    field.choices << text;
-            }
-            if (field.kind == FormField::Choice && field.choices.isEmpty())
-                continue; // nothing to choose from
-            field.alone = o.value(QLatin1String("alone")).toBool();
-            form.fields.append(field);
-        }
-        const QJsonArray buttons = message.value(QLatin1String("buttons")).toArray();
-        for (const QJsonValue &button : buttons) {
-            const QString text = tidy(button.toString(), 40).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            if (form.buttons.size() < 6 && !text.isEmpty())
-                form.buttons << text;
-        }
-        ext->formPending = id;
-        ext->formTaken = false;
-        emit formRequested(form);
+        hearForm(ext, message);
         return;
     }
     if (type == QLatin1String("open")) { // show this folder: the answer to what the user chose
@@ -1382,97 +1296,15 @@ void Host::handle(Running *ext, const QByteArray &line)
         return;
     }
     if (type == QLatin1String("listing")) { // a list of files it keeps
-        const QString id = message.value(QLatin1String("id")).toString().left(1000);
-        if (id.isEmpty())
-            return;
-        if (message.value(QLatin1String("remove")).toBool()) {
-            if (ext->listings.remove(id) > 0)
-                emit listingChanged(listingPath(ext->manifest.id, id));
-            return;
-        }
-        if (!ext->listings.contains(id) && ext->listings.size() >= MaxListings)
-            return;
-        Listing list;
-        list.valid = true;
-        list.extension = ext->manifest.id;
-        list.id = id;
-        list.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        if (list.title.isEmpty())
-            list.title = ext->manifest.name;
-        const QString folder = message.value(QLatin1String("folder")).toString();
-        if (QDir::isAbsolutePath(folder))
-            list.folder = QDir::cleanPath(folder);
-        list.previews = message.value(QLatin1String("previews")).toBool();
-        const QJsonArray files = message.value(QLatin1String("files")).toArray();
-        for (const QJsonValue &file : files) {
-            if (list.files.size() >= MaxListingFiles)
-                break;
-            const QString path = file.toString();
-            if (QDir::isAbsolutePath(path)) // a full path, as it is: no "..", no tricks
-                list.files << QDir::cleanPath(path);
-        }
-        ext->listings.insert(id, list);
-        emit listingChanged(listingPath(ext->manifest.id, id));
+        hearListing(ext, message);
         return;
     }
     if (type == QLatin1String("show")) { // a result for the preview pane
-        if (message.value(QLatin1String("kind")).toString() == QLatin1String("listing")) {
-            const QString id = message.value(QLatin1String("listing")).toString();
-            if (ext->listings.contains(id))
-                emit showListingRequested(listingPath(ext->manifest.id, id));
-            return;
-        }
-        PreviewReply content = readContent(message);
-        content.extension = ext->manifest.id;
-        content.resultId = message.value(QLatin1String("id")).toString().left(64);
-        content.update = !content.resultId.isEmpty() && message.value(QLatin1String("update")).toBool();
-        if (!content.resultId.isEmpty() && message.contains(QLatin1String("search"))) {
-            content.searchable = true;
-            content.searchHint = tidy(message.value(QLatin1String("search")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        }
-        if (content.kind != PreviewReply::None)
-            emit showRequested(ext->manifest.name,
-                               tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars)
-                                   .replace(QLatin1Char('\n'), QLatin1Char(' ')),
-                               content);
+        hearShow(ext, message);
         return;
     }
     if (type == QLatin1String("plan")) { // changes it proposes for a folder: Argonaut shows, checks and does them
-        const QString id = message.value(QLatin1String("id")).toString().left(64);
-        if (id.isEmpty())
-            return;
-        auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("plan")}, {QStringLiteral("id"), id}, {QStringLiteral("dismissed"), true}}); };
-        // Like a form: only while it is doing what the user asked of it, and one at a time.
-        Plan plan;
-        plan.folder = QDir::cleanPath(message.value(QLatin1String("folder")).toString());
-        if (!isActingForUser(ext) || !ext->planPending.isEmpty()
-            || !QDir::isAbsolutePath(plan.folder) || !QFileInfo(plan.folder).isDir()) {
-            refuse();
-            return;
-        }
-        plan.extension = ext->manifest.id;
-        plan.extensionName = ext->manifest.name;
-        plan.id = id;
-        plan.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        plan.report = message.value(QLatin1String("report")).toString().left(20000);
-        plan.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        const QJsonArray moves = message.value(QLatin1String("moves")).toArray();
-        for (const QJsonValue &value : moves) {
-            if (plan.moves.size() >= MaxPlanMoves)
-                break;
-            const QJsonObject o = value.toObject();
-            PlanMove move;
-            move.item = o.value(QLatin1String("item")).toString().left(255);
-            move.folder = o.value(QLatin1String("folder")).toString().left(1000);
-            move.newName = o.value(QLatin1String("new_name")).toString().left(255);
-            move.reason = tidy(o.value(QLatin1String("reason")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-            if (!move.item.isEmpty())
-                plan.moves.append(move);
-        }
-        checkPlan(plan.folder, &plan.moves);
-        ext->planPending = id;
-        ext->planTaken = false;
-        emit planRequested(plan);
+        hearPlan(ext, message);
         return;
     }
     if (type == QLatin1String("claude")) { // a question for Claude: Argonaut asks it, with the user's key
@@ -1486,8 +1318,211 @@ void Host::handle(Running *ext, const QByteArray &line)
             emit this->message(ext->manifest.name, text);
         return;
     }
-    if (type != QLatin1String("folder"))
+    if (type == QLatin1String("folder")) // its marks, its text and its commands for a folder that is shown
+        hearFolder(ext, message);
+}
+
+// "places": its rows in the sidebar; replaces what it said before
+void Host::hearPlaces(Running *ext, const QJsonObject &message)
+{
+    QList<Place> places;
+    QSet<QString> ids;
+    const QJsonArray list = message.value(QLatin1String("places")).toArray();
+    for (const QJsonValue &entry : list) {
+        if (places.size() >= MaxPlaces)
+            break;
+        const QJsonObject o = entry.toObject();
+        Place place;
+        place.extension = ext->manifest.id;
+        place.id = o.value(QLatin1String("id")).toString().left(200);
+        place.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (place.id.isEmpty() || place.label.isEmpty() || ids.contains(place.id))
+            continue;
+        ids.insert(place.id);
+        place.tooltip = tidy(o.value(QLatin1String("tooltip")).toString(), MaxTooltipChars);
+        static const QStringList icons{QStringLiteral("network"), QStringLiteral("cloud"), QStringLiteral("drive"),
+                                       QStringLiteral("removable"), QStringLiteral("folder")};
+        place.icon = o.value(QLatin1String("icon")).toString();
+        if (!icons.contains(place.icon))
+            place.icon = QStringLiteral("folder");
+        // A folder to open directly must be a real one, by its full path.
+        const QString folder = o.value(QLatin1String("folder")).toString();
+        if (!folder.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir())
+            place.folder = QDir::cleanPath(folder);
+        place.eject = o.value(QLatin1String("eject")).toBool();
+        places.append(place);
+    }
+    ext->places = places;
+    emit placesChanged();
+}
+
+// "form": it needs the user to fill something in, or to decide
+void Host::hearForm(Running *ext, const QJsonObject &message)
+{
+    const QString id = message.value(QLatin1String("id")).toString().left(64);
+    if (id.isEmpty())
         return;
+    auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("form")}, {QStringLiteral("id"), id}, {QStringLiteral("cancelled"), true}}); };
+    // Like "open": only while it is doing what the user asked of it. A
+    // dialog out of the blue asking for a password is not something an
+    // extension gets to show. And one at a time.
+    if (!isActingForUser(ext) || !ext->formPending.isEmpty()) {
+        refuse();
+        return;
+    }
+    Form form;
+    form.extension = ext->manifest.id;
+    form.extensionName = ext->manifest.name;
+    form.id = id;
+    form.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    form.heading = tidy(message.value(QLatin1String("heading")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    form.text = tidy(message.value(QLatin1String("text")).toString(), 1000);
+    form.warning = tidy(message.value(QLatin1String("warning")).toString(), MaxTooltipChars);
+    QSet<QString> ids;
+    const QJsonArray fields = message.value(QLatin1String("fields")).toArray();
+    for (const QJsonValue &entry : fields) {
+        if (form.fields.size() >= 12)
+            break;
+        const QJsonObject o = entry.toObject();
+        FormField field;
+        field.id = o.value(QLatin1String("id")).toString().left(64);
+        if (field.id.isEmpty() || ids.contains(field.id))
+            continue;
+        ids.insert(field.id);
+        field.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        const QString kind = o.value(QLatin1String("kind")).toString();
+        field.kind = kind == QLatin1String("secret") ? FormField::Secret
+                     : kind == QLatin1String("check") ? FormField::Check
+                     : kind == QLatin1String("choice") ? FormField::Choice : FormField::Text;
+        const QJsonValue value = o.value(QLatin1String("value"));
+        field.value = value.isBool() ? (value.toBool() ? QStringLiteral("true") : QStringLiteral("false"))
+                                     : value.toString().left(2000).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        field.placeholder = tidy(o.value(QLatin1String("placeholder")).toString(), 100).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        const QJsonArray choices = o.value(QLatin1String("choices")).toArray();
+        for (const QJsonValue &choice : choices) {
+            const QString text = choice.toString().left(300).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            if (field.choices.size() < 200 && !text.isEmpty())
+                field.choices << text;
+        }
+        if (field.kind == FormField::Choice && field.choices.isEmpty())
+            continue; // nothing to choose from
+        field.alone = o.value(QLatin1String("alone")).toBool();
+        form.fields.append(field);
+    }
+    const QJsonArray buttons = message.value(QLatin1String("buttons")).toArray();
+    for (const QJsonValue &button : buttons) {
+        const QString text = tidy(button.toString(), 40).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (form.buttons.size() < 6 && !text.isEmpty())
+            form.buttons << text;
+    }
+    ext->formPending = id;
+    ext->formTaken = false;
+    emit formRequested(form);
+}
+
+// "listing": a list of files it keeps
+void Host::hearListing(Running *ext, const QJsonObject &message)
+{
+    const QString id = message.value(QLatin1String("id")).toString().left(1000);
+    if (id.isEmpty())
+        return;
+    if (message.value(QLatin1String("remove")).toBool()) {
+        if (ext->listings.remove(id) > 0)
+            emit listingChanged(listingPath(ext->manifest.id, id));
+        return;
+    }
+    if (!ext->listings.contains(id) && ext->listings.size() >= MaxListings)
+        return;
+    Listing list;
+    list.valid = true;
+    list.extension = ext->manifest.id;
+    list.id = id;
+    list.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    if (list.title.isEmpty())
+        list.title = ext->manifest.name;
+    const QString folder = message.value(QLatin1String("folder")).toString();
+    if (QDir::isAbsolutePath(folder))
+        list.folder = QDir::cleanPath(folder);
+    list.previews = message.value(QLatin1String("previews")).toBool();
+    const QJsonArray files = message.value(QLatin1String("files")).toArray();
+    for (const QJsonValue &file : files) {
+        if (list.files.size() >= MaxListingFiles)
+            break;
+        const QString path = file.toString();
+        if (QDir::isAbsolutePath(path)) // a full path, as it is: no "..", no tricks
+            list.files << QDir::cleanPath(path);
+    }
+    ext->listings.insert(id, list);
+    emit listingChanged(listingPath(ext->manifest.id, id));
+}
+
+// "show": a result for the preview pane
+void Host::hearShow(Running *ext, const QJsonObject &message)
+{
+    if (message.value(QLatin1String("kind")).toString() == QLatin1String("listing")) {
+        const QString id = message.value(QLatin1String("listing")).toString();
+        if (ext->listings.contains(id))
+            emit showListingRequested(listingPath(ext->manifest.id, id));
+        return;
+    }
+    PreviewReply content = readContent(message);
+    content.extension = ext->manifest.id;
+    content.resultId = message.value(QLatin1String("id")).toString().left(64);
+    content.update = !content.resultId.isEmpty() && message.value(QLatin1String("update")).toBool();
+    if (!content.resultId.isEmpty() && message.contains(QLatin1String("search"))) {
+        content.searchable = true;
+        content.searchHint = tidy(message.value(QLatin1String("search")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    }
+    if (content.kind != PreviewReply::None)
+        emit showRequested(ext->manifest.name,
+                           tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars)
+                               .replace(QLatin1Char('\n'), QLatin1Char(' ')),
+                           content);
+}
+
+// "plan": changes it proposes for a folder: Argonaut shows, checks and does them
+void Host::hearPlan(Running *ext, const QJsonObject &message)
+{
+    const QString id = message.value(QLatin1String("id")).toString().left(64);
+    if (id.isEmpty())
+        return;
+    auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("plan")}, {QStringLiteral("id"), id}, {QStringLiteral("dismissed"), true}}); };
+    // Like a form: only while it is doing what the user asked of it, and one at a time.
+    Plan plan;
+    plan.folder = QDir::cleanPath(message.value(QLatin1String("folder")).toString());
+    if (!isActingForUser(ext) || !ext->planPending.isEmpty()
+        || !QDir::isAbsolutePath(plan.folder) || !QFileInfo(plan.folder).isDir()) {
+        refuse();
+        return;
+    }
+    plan.extension = ext->manifest.id;
+    plan.extensionName = ext->manifest.name;
+    plan.id = id;
+    plan.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    plan.report = message.value(QLatin1String("report")).toString().left(20000);
+    plan.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    const QJsonArray moves = message.value(QLatin1String("moves")).toArray();
+    for (const QJsonValue &value : moves) {
+        if (plan.moves.size() >= MaxPlanMoves)
+            break;
+        const QJsonObject o = value.toObject();
+        PlanMove move;
+        move.item = o.value(QLatin1String("item")).toString().left(255);
+        move.folder = o.value(QLatin1String("folder")).toString().left(1000);
+        move.newName = o.value(QLatin1String("new_name")).toString().left(255);
+        move.reason = tidy(o.value(QLatin1String("reason")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (!move.item.isEmpty())
+            plan.moves.append(move);
+    }
+    checkPlan(plan.folder, &plan.moves);
+    ext->planPending = id;
+    ext->planTaken = false;
+    emit planRequested(plan);
+}
+
+// "folder": what it has to say about a folder that is shown; replaces what it said before.
+void Host::hearFolder(Running *ext, const QJsonObject &message)
+{
     const QString folder = message.value(QLatin1String("folder")).toString();
     if (!m_watched.contains(folder))
         return; // about a folder nobody shows (any more)

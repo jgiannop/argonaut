@@ -7,7 +7,9 @@
 #include <QSizeF>
 #include <QString>
 
-class QThreadPool;
+#include <atomic>
+#include <memory>
+
 class QTimer;
 
 // The PDF reader of the preview pane: every page of the file, one under
@@ -67,13 +69,15 @@ private:
 
     QString m_path;
     quint64 m_file = 0;               // counts files: an answer for an earlier one is dropped
+    // The same number where the workers can read it: a page of a file we
+    // have left isn't drawn at all (0: the view itself is gone).
+    std::shared_ptr<std::atomic<quint64>> m_fileNow;
     int m_pages = 0;
     QSizeF m_pageSize{595, 842};
     qreal m_zoom = 1;
     QHash<int, Shown> m_shown;
     QList<int> m_wanted;              // most wanted first
     QSet<int> m_making;
-    QThreadPool *m_pool;
     QTimer *m_again;                  // after a resize or a zoom: made again at the new size
     int m_told = -1;
     int m_wheel = 0;

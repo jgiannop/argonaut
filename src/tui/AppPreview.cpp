@@ -537,13 +537,12 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
 bool App::previewKey(const Key &key)
 {
     const int page = qMax(1, m_previewShown - 1);
+    int top = m_previewTop;
+    if (scrollKey(key, page, m_previewTotal, &top)) {
+        scrollPreview(top); // it knows how far there is to go
+        return true;
+    }
     switch (key.code) {
-    case Key::Up: scrollPreview(m_previewTop - 1); return true;
-    case Key::Down: scrollPreview(m_previewTop + 1); return true;
-    case Key::PageUp: scrollPreview(m_previewTop - page); return true;
-    case Key::PageDown: scrollPreview(m_previewTop + page); return true;
-    case Key::Home: scrollPreview(0); return true;
-    case Key::End: scrollPreview(m_previewTotal); return true;
     case Key::Left:
     case Key::Escape:
     case Key::Backspace:

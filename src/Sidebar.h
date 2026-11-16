@@ -23,7 +23,6 @@ public:
     enum Kind { PlaceItem, BookmarkItem, DriveItem, ExtensionItem };
 
     explicit Sidebar(QWidget *parent = nullptr);
-    ~Sidebar() override;
 
     // Colours for the icons and separator lines; rebuilds the rows.
     void setTheme(const Theme &theme);
@@ -52,10 +51,7 @@ signals:
 private:
     QListWidgetItem *addRow(const QString &name, const QString &path, Glyph glyph, Kind kind);
     void addSeparator();
-    void watchForChanges();
 
     Theme m_theme;
     QTimer *m_refreshTimer;
-    int m_mountsFd = -1;      // /proc/self/mounts (Linux): signals when mounts change
-    QStringList m_lastMounts; // other platforms: compared every few seconds
 };

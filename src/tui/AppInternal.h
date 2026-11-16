@@ -3,6 +3,7 @@
 // What the files that make up Tui::App share among themselves (App.cpp,
 // AppMenus.cpp, AppPreview.cpp): not part of the interface's own header.
 
+#include "App.h"
 #include "ContentType.h"
 #include "Screen.h"
 
@@ -11,6 +12,25 @@
 #include <QRgb>
 
 namespace Tui {
+
+// A key that moves through something longer than its room (the help, the
+// preview): the arrows a line, the page keys a page, Home and End to the
+// ends. True: it was such a key, and `top` is where it leads (between 0 and
+// `most`).
+inline bool scrollKey(const Key &key, int page, int most, int *top)
+{
+    switch (key.code) {
+    case Key::Up: *top -= 1; break;
+    case Key::Down: *top += 1; break;
+    case Key::PageUp: *top -= page; break;
+    case Key::PageDown: *top += page; break;
+    case Key::Home: *top = 0; break;
+    case Key::End: *top = most; break;
+    default: return false;
+    }
+    *top = qBound(0, *top, qMax(0, most));
+    return true;
+}
 
 inline const Style kBar{Ink::Normal, Paper::Bar, false};
 inline const Style kDim{Ink::Dim, Paper::Normal, false};

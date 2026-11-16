@@ -70,7 +70,7 @@ struct Scanner
     QAtomicInteger<qint64> &itemsSeen;
 #if defined(Q_OS_UNIX)
     dev_t device = 0;
-    QSet<QPair<quint64, quint64>> hardLinks; // (dev, inode) of files seen with nlink > 1
+    QSet<QPair<quint64, quint64>> hardLinks{}; // (dev, inode) of files seen with nlink > 1
 #endif
 
     bool canceled() const { return generation.loadRelaxed() != mine; }

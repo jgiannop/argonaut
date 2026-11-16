@@ -10,8 +10,10 @@ namespace {
 // letter before them take none; East Asian wide characters and emoji two.
 int cellsOf(char32_t c)
 {
-    if (c < 0x20 || (c >= 0x7f && c < 0xa0))
-        return 1; // shown as a placeholder
+    // Almost every character drawn is plain Latin text: one cell, and no
+    // table to look anything up in (joining marks begin at U+0300).
+    if (c < 0x300)
+        return 1; // control characters too: they are shown as a placeholder
     const QChar::Category category = QChar::category(c);
     if (category == QChar::Mark_NonSpacing || category == QChar::Mark_Enclosing || c == 0x200b || c == 0x200d
         || (c >= 0xfe00 && c <= 0xfe0f))
@@ -21,6 +23,25 @@ int cellsOf(char32_t c)
         || (c >= 0xffe0 && c <= 0xffe6) || (c >= 0x1f300 && c <= 0x1faff) || (c >= 0x20000 && c <= 0x3fffd))
         return 2;
     return 1;
+}
+
+// Calls `each(character)` for every character of `text`: a pair of
+// surrogates is one. (Without making a list of them first, as toUcs4()
+// does: every text drawn comes through here, many times a frame.)
+template <typename Each>
+void forEachCharacter(const QString &text, Each each)
+{
+    const qsizetype size = text.size();
+    const QChar *chars = text.constData();
+    for (qsizetype i = 0; i < size; ++i) {
+        char32_t c = chars[i].unicode();
+        if (chars[i].isHighSurrogate() && i + 1 < size && chars[i + 1].isLowSurrogate()) {
+            c = QChar::surrogateToUcs4(chars[i], chars[i + 1]);
+            ++i;
+        }
+        if (!each(c))
+            return;
+    }
 }
 
 } // namespace
@@ -43,17 +64,14 @@ int Screen::put(int x, int y, const QString &text, const Style &style, int maxWi
 {
     const int limit = maxWidth < 0 ? m_width - x : qMin(maxWidth, m_width - x);
     int used = 0;
-    const QList<uint> points = text.toUcs4();
-    for (uint point : points) {
-        char32_t c = point;
+    forEachCharacter(text, [&](char32_t c) {
         if (c < 0x20 || (c >= 0x7f && c < 0xa0))
             c = U'?'; // a control character in a name must not reach the terminal
         const int w = cellsOf(c);
-        if (w == 0) {
-            continue; // joining marks are left out: one cell, one character
-        }
+        if (w == 0)
+            return true; // joining marks are left out: one cell, one character
         if (used + w > limit)
-            break;
+            return false;
         if (y >= 0 && y < m_height && x + used >= 0) {
             Cell &cell = m_cells[y * m_width + x + used];
             cell.ch = c;
@@ -67,7 +85,8 @@ int Screen::put(int x, int y, const QString &text, const Style &style, int maxWi
             }
         }
         used += w;
-    }
+        return true;
+    });
     return used;
 }
 
@@ -139,9 +158,10 @@ QString Screen::text() const
 int Screen::widthOf(const QString &text)
 {
     int width = 0;
-    const QList<uint> points = text.toUcs4();
-    for (uint point : points)
-        width += cellsOf(point);
+    forEachCharacter(text, [&width](char32_t c) {
+        width += cellsOf(c);
+        return true;
+    });
     return width;
 }
 

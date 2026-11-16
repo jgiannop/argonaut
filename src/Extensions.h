@@ -436,6 +436,13 @@ private:
     Claude::Client *m_claude = nullptr;
     void readFrom(Running *ext);
     void handle(Running *ext, const QByteArray &line);
+    // handle() tells what kind of message it is; the long ones are read here.
+    void hearPlaces(Running *ext, const QJsonObject &message);
+    void hearForm(Running *ext, const QJsonObject &message);
+    void hearListing(Running *ext, const QJsonObject &message);
+    void hearShow(Running *ext, const QJsonObject &message);
+    void hearPlan(Running *ext, const QJsonObject &message);
+    void hearFolder(Running *ext, const QJsonObject &message);
     QList<Command> readCommands(const Running *ext, const QJsonValue &value, int max) const;
     static PreviewReply readContent(const QJsonObject &message);
     void exited(Running *ext);

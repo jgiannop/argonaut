@@ -115,13 +115,15 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
     // The sidebar's places: drives and bookmarks change behind our back.
     m_sidebar = QSettings().value(QStringLiteral("tui/sidebar"), true).toBool();
     m_effects = QSettings().value(QStringLiteral("tui/effects"), true).toBool();
-    m_placesTimer.setInterval(3000);
+    // The places are read again when something about them changes (a
+    // bookmark, a mount, a drive, an extension's rows), a moment after, so a
+    // burst of changes is one reading. Nothing is read while nothing changes.
+    m_placesTimer.setSingleShot(true);
+    m_placesTimer.setInterval(250);
     connect(&m_placesTimer, &QTimer::timeout, this, &App::refreshPlaces);
-    m_placesTimer.start();
-    connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &App::refreshPlaces);
+    connect(new Places::Watcher(this), &Places::Watcher::changed, &m_placesTimer, qOverload<>(&QTimer::start));
     // Drives that aren't mounted are rows of the places too: choosing one
     // mounts it, and the pane goes there when it is.
-    connect(Volumes::instance(), &Volumes::changed, this, &App::refreshPlaces);
     connect(Volumes::instance(), &Volumes::mounted, this, [this](const QString &device, const QString &folder) {
         if (device != m_pendingVolume)
             return;
@@ -912,17 +914,9 @@ void App::key(const Key &key)
         // Longer than the screen: the arrows and the page keys move through
         // it. Any other key closes it.
         const int most = qMax(0, m_helpLines - m_helpShown);
-        const int page = qMax(1, m_helpShown - 1);
-        const int to = key.code == Key::Up ? m_helpTop - 1
-                       : key.code == Key::Down ? m_helpTop + 1
-                       : key.code == Key::PageUp ? m_helpTop - page
-                       : key.code == Key::PageDown ? m_helpTop + page
-                       : key.code == Key::Home ? 0
-                       : key.code == Key::End ? most : -1;
-        const bool moves = key.code == Key::Up || key.code == Key::Down || key.code == Key::PageUp || key.code == Key::PageDown
-                           || key.code == Key::Home || key.code == Key::End;
-        if (moves && most > 0)
-            m_helpTop = qBound(0, to, most);
+        int top = m_helpTop;
+        if (most > 0 && scrollKey(key, qMax(1, m_helpShown - 1), most, &top))
+            m_helpTop = top;
         else
             m_mode = Mode::Normal;
         emit changed();
@@ -1048,59 +1042,18 @@ void App::mouse(const Mouse &mouse)
     }
     if (m_mode == Mode::Help) {
         // The wheel moves through a help longer than the screen.
-        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
+        if (mouse.isWheel()) {
             m_helpTop = qBound(0, m_helpTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, m_helpLines - m_helpShown));
             emit changed();
         }
         return;
     }
     if (m_mode == Mode::Palette) {
-        // A click on a command runs it; one beside the palette closes it.
-        const int row = m_paletteTop + (mouse.y - m_paletteY);
-        const bool inside = mouse.x >= m_paletteX && mouse.x < m_paletteX + m_paletteWidth && mouse.y >= m_paletteY - 3
-                            && mouse.y <= m_paletteY + qMax(1, m_paletteShown);
-        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
-            m_paletteCursor = qBound(0, m_paletteCursor + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_paletteHits.size()) - 1));
-            emit changed();
-        } else if (mouse.kind == Mouse::Press && inside && mouse.y >= m_paletteY && row < m_paletteHits.size()) {
-            runPaletteRow(row);
-        } else if (mouse.kind == Mouse::Press && !inside) {
-            m_mode = Mode::Normal;
-            emit changed();
-        }
+        mouseInPalette(mouse);
         return;
     }
     if (m_mode == Mode::Menu || (m_mode == Mode::Normal && mouse.y == 0)) {
-        // A click on a menu's title opens it (again: closes it), one on an
-        // item chooses it, one anywhere else closes the menu.
-        if (mouse.kind != Mouse::Press) {
-            if (m_mode == Mode::Menu && mouse.kind == Mouse::RightPress)
-                closeMenu();
-            return;
-        }
-        if (mouse.y == 0) {
-            for (int i = 0; i < m_menuSpots.size(); ++i) {
-                if (mouse.x >= m_menuSpots.at(i).from && mouse.x < m_menuSpots.at(i).to) {
-                    if (m_mode == Mode::Menu && m_menuOpen == i && !m_popup)
-                        closeMenu();
-                    else
-                        openMenu(i);
-                    return;
-                }
-            }
-        }
-        if (m_mode != Mode::Menu)
-            return;
-        if (mouse.x > m_menuX && mouse.x < m_menuX + m_menuWidth - 1 && mouse.y >= m_menuY && mouse.y < m_menuY + m_menuShown) {
-            const int row = m_menuTop + (mouse.y - m_menuY);
-            if (row < m_menus.at(m_menuOpen).items.size() && !m_menus.at(m_menuOpen).items.at(row).separator) {
-                if (m_menus.at(m_menuOpen).items.at(row).enabled)
-                    runMenuRow(row);
-                return; // on an item that can't be chosen now: the menu stays
-            }
-            return;
-        }
-        closeMenu();
+        mouseInMenus(mouse);
         return;
     }
     if (m_mode != Mode::Normal)
@@ -1117,48 +1070,18 @@ void App::mouse(const Mouse &mouse)
     }
     // The sidebar: a click on a place opens it in the pane you are in (its
     // ⏏ disconnects, where an extension offers that); the wheel scrolls.
-    if (m_sideWidth > 0 && mouse.x < m_sideWidth && mouse.y >= m_sideY - 1 && mouse.y < m_sideY + m_sideShown
-) {
-        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
-            m_sideTop = qBound(0, m_sideTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_sideRows.size()) - m_sideShown));
-            emit changed();
-            return;
-        }
-        const int row = m_sideTop + (mouse.y - m_sideY);
-        if (mouse.kind != Mouse::Press || mouse.y < m_sideY || row < 0 || row >= m_sideRows.size() || m_sideRows.at(row) < 0)
-            return;
-        const int entry = m_sideRows.at(row);
-        m_inShell = false;
-        m_sideCursor = row;
-        const Places::Entry &place = m_places.at(entry);
-        if (place.eject && !place.extensionPlace.isEmpty() && mouse.x >= m_sideWidth - 4) {
-            Extensions::Host::instance()->activatePlace(place.extensionPlace, QStringLiteral("eject"));
-            emit changed();
-            return;
-        }
-        openPlace(entry);
+    if (m_sideWidth > 0 && mouse.x < m_sideWidth && mouse.y >= m_sideY - 1 && mouse.y < m_sideY + m_sideShown) {
+        mouseInSidebar(mouse);
+        return;
+    }
+    // The preview: the wheel scrolls it, a click on its scrollbar goes to
+    // that part, a click elsewhere in it gives it the keys.
+    if (m_previewWidth > 0 && mouse.x >= m_previewX) {
+        mouseInPreview(mouse);
         return;
     }
     // The shell panel: a click goes there to type. (The shell's programs
     // don't get the mouse.)
-    // The preview: the wheel scrolls it, a click on its scrollbar goes to
-    // that part, a click elsewhere in it gives it the keys.
-    if (m_previewWidth > 0 && mouse.x >= m_previewX) {
-        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
-            scrollPreview(m_previewTop + (mouse.kind == Mouse::WheelUp ? -3 : 3));
-        } else if (mouse.kind == Mouse::Press) {
-            const int most = qMax(0, m_previewTotal - m_previewShown);
-            if (mouse.x == m_previewX + m_previewWidth - 1 && most > 0 && mouse.y >= m_previewY && mouse.y < m_previewY + m_previewShown) {
-                scrollPreview(m_previewShown > 1 ? int(qint64(mouse.y - m_previewY) * most / (m_previewShown - 1)) : 0);
-            } else {
-                m_inShell = false;
-                m_inSidebar = false;
-                m_inPreview = true;
-                emit changed();
-            }
-        }
-        return;
-    }
     if (m_shell && mouse.x >= m_shellX && mouse.y >= m_shellY && mouse.y < m_shellY + m_shellHeight) {
         if (mouse.kind == Mouse::Press && !m_inShell) {
             m_inSidebar = false;
@@ -1169,88 +1092,188 @@ void App::mouse(const Mouse &mouse)
         return;
     }
     for (int i = 0; i < 2; ++i) {
-        Pane &p = m_panes[i];
-        if (mouse.x < p.x || mouse.x >= p.x + p.width)
-            continue;
-        if (mouse.kind != Mouse::WheelUp && mouse.kind != Mouse::WheelDown) {
-            m_inSidebar = false; // a click in a pane: the keys are the files' again
-            m_inPreview = false;
-        }
-        if (m_inShell && mouse.kind != Mouse::WheelUp && mouse.kind != Mouse::WheelDown) {
-            // Out of the shell, back to the files.
-            m_inShell = false;
-            for (Pane &each : m_panes)
-                each.model->refresh();
-            Extensions::Host::instance()->refreshAll();
-        }
-        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
-            // The list moves under the pointer; the cursor comes along only
-            // when it would leave the screen.
-            const int step = p.lineHeight > 1 ? 1 : 3; // a line of big icons is a screenful's third already
-            scrollTo(p, p.top + (mouse.kind == Mouse::WheelUp ? -step : step));
+        if (mouse.x >= m_panes[i].x && mouse.x < m_panes[i].x + m_panes[i].width) {
+            mouseInPane(i, mouse);
             return;
         }
-        // The scrollbar: a click on it goes to that part of the folder.
-        if (mouse.kind == Mouse::Press && p.barHeight > 0 && mouse.x == p.x + p.width - 1 && mouse.y >= p.barY
-            && mouse.y < p.barY + p.barHeight) {
-            if (m_inShell)
-                m_inShell = false;
-            m_active = i;
-            const int per = perLine(p);
-            const int lines = (rowCount(p) + per - 1) / per;
-            const int most = qMax(0, lines - p.rowsShown);
-            // The top of the bar is the start, its bottom the end.
-            scrollTo(p, p.barHeight > 1 ? int(qint64(mouse.y - p.barY) * most / (p.barHeight - 1)) : 0);
-            return;
-        }
-        const bool wasActive = m_active == i;
-        m_active = i;
-        if (mouse.kind == Mouse::Press && mouse.y == p.headY) {
-            goUp(); // a click on the folder's name in the heading: up
-            emit changed();
-            return;
-        }
-        const int height = qMax(1, p.lineHeight); // screen lines to a line of items
-        int row = p.top + (mouse.y - p.rowsY) / height;
-        bool beside = false; // right of the last column
-        if (p.view != View::List) {
-            const int col = qMax(0, mouse.x - p.x - 1) / qMax(1, p.cellWidth);
-            beside = col >= p.cols;
-            row = row * p.cols + col;
-        }
-        if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown * height || row >= rowCount(p)) {
-            if (mouse.kind == Mouse::RightPress && mouse.y >= p.rowsY) {
-                // Empty space, as in the window: nothing is selected, and the menu is the folder's.
-                p.selected.clear();
-                openContextMenu(mouse.x, mouse.y, false);
+    }
+}
+
+// In the command palette: a click on a command runs it, one beside the palette closes it, the wheel moves through it.
+void App::mouseInPalette(const Mouse &mouse)
+{
+    // A click on a command runs it; one beside the palette closes it.
+    const int row = m_paletteTop + (mouse.y - m_paletteY);
+    const bool inside = mouse.x >= m_paletteX && mouse.x < m_paletteX + m_paletteWidth && mouse.y >= m_paletteY - 3
+                        && mouse.y <= m_paletteY + qMax(1, m_paletteShown);
+    if (mouse.isWheel()) {
+        m_paletteCursor = qBound(0, m_paletteCursor + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_paletteHits.size()) - 1));
+        emit changed();
+    } else if (mouse.kind == Mouse::Press && inside && mouse.y >= m_paletteY && row < m_paletteHits.size()) {
+        runPaletteRow(row);
+    } else if (mouse.kind == Mouse::Press && !inside) {
+        m_mode = Mode::Normal;
+        emit changed();
+    }
+}
+
+// On the menu bar or in an open menu: a click on a title opens it (again: closes it), one on an item chooses it, one anywhere else closes the menu.
+void App::mouseInMenus(const Mouse &mouse)
+{
+    // A click on a menu's title opens it (again: closes it), one on an
+    // item chooses it, one anywhere else closes the menu.
+    if (mouse.kind != Mouse::Press) {
+        if (m_mode == Mode::Menu && mouse.kind == Mouse::RightPress)
+            closeMenu();
+        return;
+    }
+    if (mouse.y == 0) {
+        for (int i = 0; i < m_menuSpots.size(); ++i) {
+            if (mouse.x >= m_menuSpots.at(i).from && mouse.x < m_menuSpots.at(i).to) {
+                if (m_mode == Mode::Menu && m_menuOpen == i && !m_popup)
+                    closeMenu();
+                else
+                    openMenu(i);
+                return;
             }
-            emit changed(); // empty space: only the pane changes
-            return;
         }
-        moveCursor(p, row);
-        const bool upRow = upRows(p) == 1 && row == 0;
-        const QString path = upRow ? QStringLiteral("..") : pathAt(p, row);
-        if (mouse.kind == Mouse::RightPress) {
-            // As in the window: an item that isn't selected becomes the
-            // selection, one that is keeps the others with it; then the menu
-            // of what can be done with them. ".." is not something to
-            // select: there the menu is the folder's.
-            if (upRow)
-                p.selected.clear();
-            else if (!p.selected.contains(path))
-                p.selected = {path};
-            openContextMenu(mouse.x, mouse.y, !upRow);
-            return;
-        }
-        // The second click on the same item within the usual time opens it.
-        const bool twice = wasActive && m_lastClick.isValid() && m_lastClick.elapsed() < 450 && m_lastClickPath == path;
-        m_lastClickPath = path;
-        m_lastClick.start();
-        if (twice) {
-            m_lastClick.invalidate();
-            openCursor();
+    }
+    if (m_mode != Mode::Menu)
+        return;
+    if (mouse.x > m_menuX && mouse.x < m_menuX + m_menuWidth - 1 && mouse.y >= m_menuY && mouse.y < m_menuY + m_menuShown) {
+        const int row = m_menuTop + (mouse.y - m_menuY);
+        if (row < m_menus.at(m_menuOpen).items.size() && !m_menus.at(m_menuOpen).items.at(row).separator) {
+            if (m_menus.at(m_menuOpen).items.at(row).enabled)
+                runMenuRow(row);
+            return; // on an item that can't be chosen now: the menu stays
         }
         return;
+    }
+    closeMenu();
+}
+
+// In the places: a click opens one in the pane you are in (its ⏏ disconnects, where an extension offers that), the wheel scrolls.
+void App::mouseInSidebar(const Mouse &mouse)
+{
+    if (mouse.isWheel()) {
+        m_sideTop = qBound(0, m_sideTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_sideRows.size()) - m_sideShown));
+        emit changed();
+        return;
+    }
+    const int row = m_sideTop + (mouse.y - m_sideY);
+    if (mouse.kind != Mouse::Press || mouse.y < m_sideY || row < 0 || row >= m_sideRows.size() || m_sideRows.at(row) < 0)
+        return;
+    const int entry = m_sideRows.at(row);
+    m_inShell = false;
+    m_sideCursor = row;
+    const Places::Entry &place = m_places.at(entry);
+    if (place.eject && !place.extensionPlace.isEmpty() && mouse.x >= m_sideWidth - 4) {
+        Extensions::Host::instance()->activatePlace(place.extensionPlace, QStringLiteral("eject"));
+        emit changed();
+        return;
+    }
+    openPlace(entry);
+}
+
+// In the preview: the wheel scrolls it, a click on its scrollbar goes to that part, a click elsewhere in it gives it the keys.
+void App::mouseInPreview(const Mouse &mouse)
+{
+    if (mouse.isWheel()) {
+        scrollPreview(m_previewTop + (mouse.kind == Mouse::WheelUp ? -3 : 3));
+    } else if (mouse.kind == Mouse::Press) {
+        const int most = qMax(0, m_previewTotal - m_previewShown);
+        if (mouse.x == m_previewX + m_previewWidth - 1 && most > 0 && mouse.y >= m_previewY && mouse.y < m_previewY + m_previewShown) {
+            scrollPreview(m_previewShown > 1 ? int(qint64(mouse.y - m_previewY) * most / (m_previewShown - 1)) : 0);
+        } else {
+            m_inShell = false;
+            m_inSidebar = false;
+            m_inPreview = true;
+            emit changed();
+        }
+    }
+}
+
+// In a pane of files: a click puts the cursor on an item (a second one soon after opens it), the right button selects it and opens its menu, the wheel scrolls, the scrollbar goes to that part of the folder.
+void App::mouseInPane(int i, const Mouse &mouse)
+{
+    Pane &p = m_panes[i];
+    if (!mouse.isWheel()) {
+        m_inSidebar = false; // a click in a pane: the keys are the files' again
+        m_inPreview = false;
+    }
+    if (m_inShell && !mouse.isWheel()) {
+        // Out of the shell, back to the files.
+        m_inShell = false;
+        for (Pane &each : m_panes)
+            each.model->refresh();
+        Extensions::Host::instance()->refreshAll();
+    }
+    if (mouse.isWheel()) {
+        // The list moves under the pointer; the cursor comes along only
+        // when it would leave the screen.
+        const int step = p.lineHeight > 1 ? 1 : 3; // a line of big icons is a screenful's third already
+        scrollTo(p, p.top + (mouse.kind == Mouse::WheelUp ? -step : step));
+        return;
+    }
+    // The scrollbar: a click on it goes to that part of the folder.
+    if (mouse.kind == Mouse::Press && p.barHeight > 0 && mouse.x == p.x + p.width - 1 && mouse.y >= p.barY
+        && mouse.y < p.barY + p.barHeight) {
+        if (m_inShell)
+            m_inShell = false;
+        m_active = i;
+        const int per = perLine(p);
+        const int lines = (rowCount(p) + per - 1) / per;
+        const int most = qMax(0, lines - p.rowsShown);
+        // The top of the bar is the start, its bottom the end.
+        scrollTo(p, p.barHeight > 1 ? int(qint64(mouse.y - p.barY) * most / (p.barHeight - 1)) : 0);
+        return;
+    }
+    const bool wasActive = m_active == i;
+    m_active = i;
+    if (mouse.kind == Mouse::Press && mouse.y == p.headY) {
+        goUp(); // a click on the folder's name in the heading: up
+        emit changed();
+        return;
+    }
+    const int height = qMax(1, p.lineHeight); // screen lines to a line of items
+    int row = p.top + (mouse.y - p.rowsY) / height;
+    bool beside = false; // right of the last column
+    if (p.view != View::List) {
+        const int col = qMax(0, mouse.x - p.x - 1) / qMax(1, p.cellWidth);
+        beside = col >= p.cols;
+        row = row * p.cols + col;
+    }
+    if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown * height || row >= rowCount(p)) {
+        if (mouse.kind == Mouse::RightPress && mouse.y >= p.rowsY) {
+            // Empty space, as in the window: nothing is selected, and the menu is the folder's.
+            p.selected.clear();
+            openContextMenu(mouse.x, mouse.y, false);
+        }
+        emit changed(); // empty space: only the pane changes
+        return;
+    }
+    moveCursor(p, row);
+    const bool upRow = upRows(p) == 1 && row == 0;
+    const QString path = upRow ? QStringLiteral("..") : pathAt(p, row);
+    if (mouse.kind == Mouse::RightPress) {
+        // As in the window: an item that isn't selected becomes the
+        // selection, one that is keeps the others with it; then the menu
+        // of what can be done with them. ".." is not something to
+        // select: there the menu is the folder's.
+        if (upRow)
+            p.selected.clear();
+        else if (!p.selected.contains(path))
+            p.selected = {path};
+        openContextMenu(mouse.x, mouse.y, !upRow);
+        return;
+    }
+    // The second click on the same item within the usual time opens it.
+    const bool twice = wasActive && m_lastClick.isValid() && m_lastClick.elapsed() < 450 && m_lastClickPath == path;
+    m_lastClickPath = path;
+    m_lastClick.start();
+    if (twice) {
+        m_lastClick.invalidate();
+        openCursor();
     }
 }
 
@@ -1300,27 +1323,45 @@ void App::typeAhead(const QString &typed)
     }
 }
 
+// Is this key part of typing a name to go to it? As in the window: a letter
+// or a digit starts a name, and while it goes on (a second without a key
+// ends it) every character is part of it: a dot, a space, a dash. Backspace
+// takes the last one back, Esc ends it; any other key ends it and is then
+// its own. True: the key was the name's, and nothing else is to be done with it.
+bool App::typingTakes(const Key &key)
+{
+    const bool going = !m_typed.isEmpty() && m_typedAt.isValid() && m_typedAt.elapsed() < m_typeAheadMs;
+    if (key.code == Key::Char) {
+        if (key.ctrl || key.alt || key.ch < 32 || key.ch == 127)
+            return false;
+        if (!going && !QChar::isLetterOrNumber(key.ch))
+            return false;
+        typeAhead((going ? m_typed : QString()) + QString::fromUcs4(&key.ch, 1));
+        return true;
+    }
+    if (m_typed.isEmpty())
+        return false;
+    const QString typed = m_typed;
+    m_typed.clear();
+    if (going && key.code == Key::Backspace) {
+        if (typed.size() > 1)
+            typeAhead(typed.left(typed.size() - (typed.at(typed.size() - 1).isLowSurrogate() ? 2 : 1)));
+        else
+            say(QString());
+        return true;
+    }
+    if (going && key.code == Key::Escape) {
+        say(QString());
+        return true;
+    }
+    return false;
+}
+
 void App::normalKey(const Key &key)
 {
+    if (typingTakes(key))
+        return;
     Pane &p = pane();
-    // Any key that isn't typing ends the name being typed; Backspace takes
-    // its last character away while it is still going.
-    if (key.code != Key::Char && !m_typed.isEmpty()) {
-        const bool going = m_typedAt.isValid() && m_typedAt.elapsed() < TypeAheadMs;
-        const QString typed = m_typed;
-        m_typed.clear();
-        if (going && key.code == Key::Backspace) {
-            if (typed.size() > 1)
-                typeAhead(typed.left(typed.size() - (typed.at(typed.size() - 1).isLowSurrogate() ? 2 : 1)));
-            else
-                say(QString());
-            return;
-        }
-        if (going && key.code == Key::Escape) {
-            say(QString());
-            return;
-        }
-    }
     switch (key.code) {
     case Key::Up:
         if (p.cursor - perLine(p) >= 0)
@@ -1435,16 +1476,6 @@ void App::normalKey(const Key &key)
         return;
     }
 
-    // Typing goes to a name, as in the window: a letter or a digit starts,
-    // and while it goes on (a second without a key ends it) every character
-    // is part of the name: a dot, a space, a dash.
-    if (!key.ctrl && !key.alt && key.ch >= 32 && key.ch != 127) {
-        const bool going = !m_typed.isEmpty() && m_typedAt.isValid() && m_typedAt.elapsed() < TypeAheadMs;
-        if (going || QChar::isLetterOrNumber(key.ch)) {
-            typeAhead((going ? m_typed : QString()) + QString::fromUcs4(&key.ch, 1));
-            return;
-        }
-    }
     if (key.isControl('z')) {
         if (m_ops->canUndo())
             m_ops->undo();
@@ -2099,9 +2130,9 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         }
         const int row = p.top + i - up; // the model's row
         const QModelIndex index0 = p.model->index(row, 0);
-        const QString path = p.model->filePath(index0);
         const bool dir = p.model->isDir(index0);
-        const bool selected = p.selected.contains(path);
+        // (With nothing selected, which is the usual, no path is put together to ask.)
+        const bool selected = !p.selected.isEmpty() && p.selected.contains(p.model->filePath(index0));
         const bool cursor = row + up == p.cursor;
         Style style;
         const bool hover = m_effects && !cursor && row + up == p.hover; // under the mouse
@@ -2160,11 +2191,14 @@ QString App::footerText(const Pane &p) const
     const int items = p.model->rowCount();
     QString footer = items == 1 ? QStringLiteral("1 item") : QStringLiteral("%1 items").arg(items);
     if (!p.selected.isEmpty()) {
+        // This is asked for every frame: the selection is gone through (a few
+        // items, as a rule), not the folder (which may hold many thousands).
+        // What is selected and no longer listed isn't counted.
         qint64 bytes = 0;
         int chosen = 0;
-        for (int row = 0; row < items; ++row) {
-            const QModelIndex index0 = p.model->index(row, 0);
-            if (!p.selected.contains(p.model->filePath(index0)))
+        for (const QString &path : p.selected) {
+            const QModelIndex index0 = p.model->indexForPath(path);
+            if (!index0.isValid())
                 continue;
             ++chosen;
             if (!p.model->isDir(index0))
@@ -2231,7 +2265,7 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
             }
             const QModelIndex index0 = p.model->index(at - up, 0);
             const bool dir = p.model->isDir(index0);
-            const bool selected = p.selected.contains(p.model->filePath(index0));
+            const bool selected = !p.selected.isEmpty() && p.selected.contains(p.model->filePath(index0));
             const Style style{selected ? Ink::Selected : dir ? Ink::Folder
                                   : m_effects && paper == Paper::Normal ? kindInk(p.model->fileName(index0), index0) : Ink::Normal,
                               paper, dir || selected};
@@ -2433,7 +2467,7 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
             const bool upRow = up == 1 && at == 0;
             const QModelIndex index0 = upRow ? QModelIndex() : p.model->index(at - up, 0);
             const bool dir = upRow || p.model->isDir(index0);
-            const bool selected = !upRow && p.selected.contains(p.model->filePath(index0));
+            const bool selected = !upRow && !p.selected.isEmpty() && p.selected.contains(p.model->filePath(index0));
             QString name = upRow ? QStringLiteral("..") : p.model->fileName(index0);
             const bool link = !upRow && index0.data(DirectoryModel::SymLinkRole).toBool();
 

@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QSocketNotifier>
 
+#include <cerrno>
 #include <cstdio>
 #include <functional>
 #include <unistd.h>
@@ -47,6 +48,10 @@ private:
     {
         char chunk[65536];
         const ssize_t got = ::read(STDIN_FILENO, chunk, sizeof chunk);
+        // A signal came in between (a helper program of ours ended): that is
+        // not the pipe closing. The notifier calls again when there is more.
+        if (got < 0 && (errno == EINTR || errno == EAGAIN))
+            return;
         if (got <= 0) { // Argonaut closed the pipe
             m_input.setEnabled(false);
             QCoreApplication::quit();

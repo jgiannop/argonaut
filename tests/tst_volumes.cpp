@@ -2,6 +2,7 @@
 // read right, they are rows of the places, and choosing one mounts it. No
 // real drive is listed or mounted here: `gio` is a script of the test's.
 
+#include "Bookmarks.h"
 #include "Places.h"
 #include "TestSupport.h"
 #include "Volumes.h"
@@ -24,6 +25,7 @@ private slots:
     void addressesAreDeviceNamesOnly();
     void offInTests();
     void listedAndMounted();
+    void watcherSaysWhenThePlacesChange();
 
 private:
     QString m_root;
@@ -153,17 +155,14 @@ void TestVolumes::listedAndMounted()
         QFile listing(m_root + "/gio/listing");
         QVERIFY(listing.open(QIODevice::WriteOnly));
         listing.write(QByteArray(kListing).replace("/dev/sd", "/dev/argonaut-test-sd").replace("/dev/bus/usb", "/dev/argonaut-test-usb")); // no real machine has these
-        QFile script(m_root + "/gio/gio");
-        QVERIFY(script.open(QIODevice::WriteOnly));
-        script.write(QStringLiteral(R"(#!/bin/sh
+    }
+    QVERIFY(TestSupport::writeScript(m_root + "/gio/gio", QStringLiteral(R"(#!/bin/sh
 echo "$@" >> '%1'
 if [ "$1 $2" = "mount -li" ]; then cat '%2/gio/listing'; exit 0; fi
 if [ "$1 $2 $3" = "mount -d /dev/argonaut-test-sdb1" ]; then mkdir -p '%3'; echo "Mounted /dev/argonaut-test-sdb1 at %3"; exit 0; fi
 echo "gio: $3: Not authorized to perform operation" >&2
 exit 2
-)").arg(log, m_root, mountPoint).toUtf8());
-        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    }
+)").arg(log, m_root, mountPoint)));
     qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(m_root + "/gio/gio"));
     qputenv("ARGONAUT_VOLUMES", "1");
     const auto restore = qScopeGuard([] {
@@ -226,6 +225,49 @@ exit 2
     questions.removeAll("mount -d /dev/argonaut-test-sdb1");
     questions.removeAll("mount -d /dev/argonaut-test-sdc2");
     QVERIFY2(questions.isEmpty(), qPrintable(questions.join('|')));
+}
+
+// Whoever shows the places is told when they may have changed, and needn't
+// keep asking: a bookmark added (as Nautilus would, by replacing the file),
+// a drive that isn't mounted coming or going.
+void TestVolumes::watcherSaysWhenThePlacesChange()
+{
+    Places::Watcher watcher;
+    QSignalSpy changed(&watcher, &Places::Watcher::changed);
+    QTest::qWait(300);
+    QCOMPARE(changed.size(), 0); // nothing happened: nothing is said
+
+    // A bookmark, saved the way the file is always saved: written beside and renamed over.
+    const QString file = Bookmarks::filePath();
+    QDir().mkpath(m_root + "/bookmarked");
+    {
+        QFile beside(file + ".new");
+        QVERIFY(beside.open(QIODevice::WriteOnly));
+        beside.write("file://" + QFile::encodeName(m_root + "/bookmarked") + " Marked\n");
+    }
+    QFile::remove(file);
+    QVERIFY(QFile::rename(file + ".new", file));
+    QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 1, 10000);
+    bool listed = false;
+    for (const Places::Entry &entry : Places::list())
+        listed = listed || (entry.group == Places::Group::Bookmarks && entry.path == m_root + "/bookmarked");
+    QVERIFY(listed);
+
+    // The drives that aren't mounted are another list now: said too.
+    qputenv("ARGONAUT_VOLUMES", "1");
+    qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(m_root + "/gio/gio"));
+    const auto restore = qScopeGuard([] {
+        qunsetenv("ARGONAUT_GIO_PROGRAM");
+        qunsetenv("ARGONAUT_VOLUMES");
+    });
+    QFile listing(m_root + "/gio/listing");
+    QVERIFY(listing.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    listing.write("Volume(0): Only One\n  ids:\n   unix-device: '/dev/argonaut-test-only1'\n  can_mount=1\n");
+    listing.close();
+    changed.clear();
+    Volumes::instance()->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 1, 10000);
+    QCOMPARE(Volumes::instance()->nameOf("/dev/argonaut-test-only1"), QStringLiteral("Only One"));
 }
 
 int main(int argc, char **argv)

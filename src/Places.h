@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QObject>
 #include <QString>
 #include <QStringList>
 
@@ -28,8 +29,29 @@ struct Entry
 // extension is asked) or a drive that isn't mounted (it is mounted first).
 bool isAddress(const QString &path);
 
-// Everything, in the order it is shown. `mounts`, if given, gets the root
-// of every mounted volume (to notice later that they changed).
-QList<Entry> list(QStringList *mounts = nullptr);
+// Everything, in the order it is shown.
+QList<Entry> list();
+
+// Says when the list may be another one: a bookmark was added or removed
+// (here or in Nautilus), a drive was mounted or unmounted, a drive that
+// isn't mounted came or went, an extension changed its rows. Whoever shows
+// the places asks for the list again then (and needn't keep asking
+// meanwhile). changed() may come several times for one change: the listener
+// waits a moment before it reads.
+class Watcher : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit Watcher(QObject *parent = nullptr);
+    ~Watcher() override;
+
+signals:
+    void changed();
+
+private:
+    int m_mountsFd = -1;      // /proc/self/mounts (Linux): the kernel flags it when a mount changes
+    QStringList m_lastMounts; // elsewhere: compared every few seconds
+};
 
 } // namespace Places

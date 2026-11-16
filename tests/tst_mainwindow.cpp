@@ -110,6 +110,7 @@ private slots:
     void extensionCommandsAskFirst();
     void extensionsWindowListsAndSwitches();
     void fadeNeverGetsInTheWay();
+    void paintingABigFolderIsQuick();
     void pdfReaderInQuickLook();
     void previewFromAnExtension();
     void richTextGetsAPageLook();
@@ -1117,6 +1118,35 @@ void TestMainWindow::extensionsWindowListsAndSwitches()
 // The cross-fade on a change of folder: it runs over the new folder (which
 // is the current one at once), a second change during it ends it instead of
 // queueing another, it ends by itself, and the switch turns it off.
+// Painting the file view costs what the rows on screen cost, whatever the
+// size of the folder, and nothing is asked of the disk for it: a repaint
+// (a scroll step, a hover, the fade) happens many times a second. This
+// guards against work that creeps into painting.
+void TestMainWindow::paintingABigFolderIsQuick()
+{
+    for (int i = 0; i < 3000; ++i)
+        make(QStringLiteral("item-%1.%2").arg(i, 4, 10, QChar('0')).arg(i % 3 == 0 ? "md" : i % 3 == 1 ? "csv" : "txt")); // nothing a thumbnailer is started for
+    open(m_dir);
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->model->rowCount(), 3000, 20000);
+    for (const bool grid : {false, true}) {
+        (grid ? w->m_gridAct : w->m_listAct)->trigger();
+        QCoreApplication::processEvents();
+        QAbstractItemView *view = w->m_pane->view;
+        view->viewport()->grab(); // the first paint makes what is kept (icons, wrapped names)
+        QElapsedTimer timer;
+        timer.start();
+        const int paints = 40;
+        for (int i = 0; i < paints; ++i) {
+            view->verticalScrollBar()->setValue(view->verticalScrollBar()->value() + 40); // other rows each time
+            view->viewport()->grab();
+        }
+        const double each = timer.nsecsElapsed() / 1e6 / paints;
+        qInfo("%s: %.2f ms a paint", grid ? "grid" : "list", each);
+        // Far more than it takes here: only something badly wrong fails this.
+        QVERIFY2(each < 150.0, qPrintable(QStringLiteral("%1 ms a paint").arg(each)));
+    }
+}
+
 void TestMainWindow::fadeNeverGetsInTheWay()
 {
     make("a/one.txt");
@@ -1229,6 +1259,22 @@ void TestMainWindow::pdfReaderInQuickLook()
     QTRY_VERIFY_WITH_TIMEOUT(preview->isReadingPdf() && reader->pageCount() == 40, 15000);
     QCOMPARE(reader->currentPage(), 1); // from the start again
     w->hideQuickLook();
+
+    // A reader that goes away while its pages are still being drawn isn't
+    // waited for, and what comes back for it afterwards harms nothing.
+    QElapsedTimer timer;
+    for (int i = 0; i < 5; ++i) {
+        auto *gone = new PdfView;
+        gone->resize(400, 600);
+        gone->show();
+        gone->setFile(file);
+        if (i % 2)
+            QTest::qWait(30); // sometimes just as the first answer is on its way
+        timer.start();
+        delete gone;
+        QVERIFY2(timer.elapsed() < 500, qPrintable(QString::number(timer.elapsed())));
+    }
+    QTest::qWait(600); // what was started finishes, with nobody left to tell
 }
 
 void TestMainWindow::previewFromAnExtension()
@@ -1826,10 +1872,7 @@ void TestMainWindow::unmountedDriveInTheSidebar()
     const QString tools = m_dir + "/pretend";
     QDir().mkpath(tools);
     const QString mountPoint = m_dir + "/media/PRETEND-ONE";
-    {
-        QFile script(tools + "/gio");
-        QVERIFY(script.open(QIODevice::WriteOnly));
-        script.write(QStringLiteral(R"(#!/bin/sh
+    QVERIFY(TestSupport::writeScript(tools + "/gio", QStringLiteral(R"(#!/bin/sh
 if [ "$1 $2" = "mount -li" ]; then
 printf 'Drive(0): Disk\n  ids:\n   unix-device: \047/dev/argonaut-test\047\n  is_removable=0\n'
 printf '  Volume(0): PRETEND-ONE\n    ids:\n     unix-device: \047/dev/argonaut-test1\047\n    can_mount=1\n'
@@ -1839,9 +1882,7 @@ fi
 if [ "$1 $2 $3" = "mount -d /dev/argonaut-test1" ]; then mkdir -p '%1'; echo "Mounted /dev/argonaut-test1 at %1"; exit 0; fi
 echo "gio: $3: Not authorized to perform operation" >&2
 exit 2
-)").arg(mountPoint).toUtf8());
-        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    }
+)").arg(mountPoint)));
     const QByteArray gioBefore = qgetenv("ARGONAUT_GIO_PROGRAM");
     qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(tools + "/gio"));
     qputenv("ARGONAUT_VOLUMES", "1");

@@ -1429,6 +1429,39 @@ QVariant DirectoryModel::headerData(int section, Qt::Orientation orientation, in
     return {};
 }
 
+// A time as the list shows it: the time of day for today, else the date.
+//
+// A view asks for this for every row it paints, every time it paints, and
+// making it is not cheap: each conversion to local time has the C library
+// look at /etc/localtime again (a system call), and there were three of
+// them for a cell. So what today is is asked at most once a second, and the
+// texts are kept by the second they are for: painting the same rows again
+// (a scroll back, a hover, a selection) converts nothing.
+QString DirectoryModel::dateText(qint64 msecs) const
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch(); // no time zone in this: cheap
+    if (now - m_todayAsked >= 1000 || now < m_todayAsked) {
+        m_todayAsked = now;
+        const QDate today = QDate::currentDate();
+        if (today != m_today) { // midnight has passed: yesterday's times of day are dates now
+            m_today = today;
+            m_dateTexts.clear();
+        }
+    }
+    const qint64 second = msecs / 1000;
+    const auto kept = m_dateTexts.constFind(second);
+    if (kept != m_dateTexts.constEnd())
+        return *kept;
+    const QDateTime when = QDateTime::fromMSecsSinceEpoch(msecs);
+    const QLocale locale;
+    const QString text = when.date() == m_today ? locale.toString(when.time(), QLocale::ShortFormat)
+                                                : locale.toString(when.date(), QLocale::ShortFormat);
+    if (m_dateTexts.size() >= MaxDateTexts)
+        m_dateTexts.clear(); // a very long scroll: start again (what is on screen is made again once)
+    m_dateTexts.insert(second, text);
+    return text;
+}
+
 QVariant DirectoryModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() >= int(m_rows.size()))
@@ -1463,14 +1496,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const
                                                 : tildePath(QFileInfo(e.originalPath).absolutePath());
             }
             return typeFor(e);
-        case ModifiedColumn: {
-            const QDateTime when = QDateTime::fromMSecsSinceEpoch(
-                m_trash ? e.deleted : m_place == Place::Recent && e.used > 0 ? e.used : e.mtime);
-            const QLocale locale;
-            if (when.date() == QDate::currentDate())
-                return locale.toString(when.time(), QLocale::ShortFormat);
-            return locale.toString(when.date(), QLocale::ShortFormat);
-        }
+        case ModifiedColumn:
+            return dateText(m_trash ? e.deleted : m_place == Place::Recent && e.used > 0 ? e.used : e.mtime);
         case OwnerColumn:
             return Access::userName(e.ownerId);
         case GroupColumn:

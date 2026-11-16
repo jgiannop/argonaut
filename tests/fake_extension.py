@@ -148,6 +148,12 @@ for line in sys.stdin:
                      {"item": "e.txt", "new_name": "a.txt", "reason": "Onto another"},
                      {"reason": "no item"}]})
             say({"type": "plan", "id": "p2", "folder": folder, "moves": []})  # one at a time
+        if any(os.path.basename(p) == "ask-many.txt" for p in sel):  # more questions than one choice of the user's allows
+            for n in range(15):
+                say({"type": "claude", "id": "many%d" % n, "request": claude_request})
+        if any(os.path.basename(p) == "many-moves.txt" for p in sel):  # more moves than a plan may have
+            say({"type": "plan", "id": "big", "folder": folder,
+                 "moves": [{"item": "f%d.txt" % n, "folder": "Sorted"} for n in range(700)]})
         if any(os.path.basename(p) == "ask-claude.txt" for p in sel):
             say({"type": "claude", "id": "i1", "ask": "info"})
         if m.get("command") == "form":

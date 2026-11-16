@@ -12,6 +12,18 @@
 #include <QWheelEvent>
 
 namespace {
+// Where pages are drawn: two at a time, for all the readers there are (a
+// preview, not the whole machine). It is not a reader's own: a reader that
+// goes away while a slow page is being drawn doesn't wait for it.
+constexpr int kAtOnce = 2;
+QThreadPool *pagesPool()
+{
+    static QThreadPool pool;
+    static const bool set = (pool.setMaxThreadCount(kAtOnce), true);
+    Q_UNUSED(set);
+    return &pool;
+}
+
 constexpr int kMargin = 8;    // around the pages
 constexpr int kGap = 10;      // between two
 constexpr int kKept = 14;     // pages kept as pictures: the ones in sight and those just left
@@ -20,14 +32,13 @@ constexpr qreal kMaxZoom = 4;
 
 PdfView::PdfView(QWidget *parent)
     : QAbstractScrollArea(parent)
-    , m_pool(new QThreadPool(this))
+    , m_fileNow(std::make_shared<std::atomic<quint64>>(0))
     , m_again(new QTimer(this))
 {
     setFocusPolicy(Qt::NoFocus);
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     viewport()->setAutoFillBackground(false);
-    m_pool->setMaxThreadCount(2); // a page each: not the whole machine for a preview
     m_again->setSingleShot(true);
     m_again->setInterval(160);
     connect(m_again, &QTimer::timeout, this, [this] { want(); });
@@ -35,15 +46,12 @@ PdfView::PdfView(QWidget *parent)
 
 PdfView::~PdfView()
 {
-    ++m_file;
-    m_pool->clear();
-    m_pool->waitForDone(3000);
+    m_fileNow->store(0); // what is still waiting to be drawn isn't; nothing is waited for
 }
 
 void PdfView::clear()
 {
-    ++m_file;
-    m_pool->clear();
+    m_fileNow->store(++m_file); // pages of the file we leave, still waiting to be drawn, aren't
     m_path.clear();
     m_pages = 0;
     m_shown.clear();
@@ -61,7 +69,9 @@ void PdfView::setFile(const QString &path)
     m_path = path;
     const quint64 file = m_file;
     QPointer<PdfView> self(this);
-    m_pool->start([self, file, path] {
+    pagesPool()->start([self, file, path, now = m_fileNow] {
+        if (now->load() != file)
+            return;
         const PdfPages::Info info = PdfPages::info(path);
         QMetaObject::invokeMethod(qApp, [self, file, info] {
             if (!self || file != self->m_file)
@@ -186,14 +196,16 @@ void PdfView::want()
 
 void PdfView::pump()
 {
-    while (!m_wanted.isEmpty() && m_making.size() < m_pool->maxThreadCount()) {
+    while (!m_wanted.isEmpty() && m_making.size() < kAtOnce) {
         const int page = m_wanted.takeFirst();
         m_making.insert(page);
         const quint64 file = m_file;
         const QString path = m_path;
         const int width = qMin(PdfPages::MaxWidth, int(pageWidth() * devicePixelRatioF()));
         QPointer<PdfView> self(this);
-        m_pool->start([self, file, path, page, width] {
+        pagesPool()->start([self, file, path, page, width, now = m_fileNow] {
+            if (now->load() != file)
+                return; // the reader has moved on (or is gone): not drawn
             const QImage image = PdfPages::page(path, page, width);
             QMetaObject::invokeMethod(qApp, [self, file, page, width, image] {
                 if (self)

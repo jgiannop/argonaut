@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QObject>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -52,6 +53,22 @@ public:
 private:
     QTemporaryDir m_dir;
 };
+
+// Writes a pretend program (a shell script standing in for gio, systemctl…)
+// that a test points an ARGONAUT_*_PROGRAM variable at. False if it
+// couldn't be written.
+inline bool writeScript(const QString &path, const QString &text)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    const QByteArray bytes = text.toUtf8();
+    if (file.write(bytes) != bytes.size())
+        return false;
+    file.close();
+    return file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+}
 
 // What a finished file job did.
 struct Outcome

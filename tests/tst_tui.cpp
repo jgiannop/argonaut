@@ -73,6 +73,7 @@ private slots:
     void themes();
     void effects();
     void typingGoesToAName();
+    void drawingABigFolderIsQuick();
     void shellInTheFolder();
     void shellPanel();
 
@@ -1432,19 +1433,14 @@ void TestTui::unmountedDrive()
     const QString tools = m_tmp->path() + "/pretend";
     QDir().mkpath(tools);
     const QString mountPoint = QDir::cleanPath(m_tmp->path()) + "/media/PRETEND-ONE";
-    {
-        QFile script(tools + "/gio");
-        QVERIFY(script.open(QIODevice::WriteOnly));
-        script.write(QStringLiteral(R"(#!/bin/sh
+    QVERIFY(TestSupport::writeScript(tools + "/gio", QStringLiteral(R"(#!/bin/sh
 if [ "$1 $2" = "mount -li" ]; then
 printf 'Volume(0): PRETEND-ONE\n  ids:\n   unix-device: \047/dev/argonaut-test1\047\n  can_mount=1\n'
 exit 0
 fi
 if [ "$1 $2 $3" = "mount -d /dev/argonaut-test1" ]; then mkdir -p '%1'; echo "Mounted /dev/argonaut-test1 at %1"; exit 0; fi
 exit 2
-)").arg(mountPoint).toUtf8());
-        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    }
+)").arg(mountPoint)));
     const QByteArray gioBefore = qgetenv("ARGONAUT_GIO_PROGRAM");
     qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(tools + "/gio"));
     qputenv("ARGONAUT_VOLUMES", "1");
@@ -1936,7 +1932,8 @@ void TestTui::typingGoesToAName()
     settle();
     QSignalSpy quit(app.get(), &App::quitRequested);
     auto name = [this] { return QFileInfo(app->cursorPath()).fileName(); };
-    auto pause = [] { QTest::qWait(1100); }; // longer than a name is waited for
+    app->setTypeAheadPause(150);               // a second, for people; less here, so the test needn't wait
+    auto pause = [] { QTest::qWait(220); };   // longer than a name is waited for
 
     type("b");
     QCOMPARE(name(), QStringLiteral("beta.txt"));
@@ -2011,6 +2008,67 @@ void TestTui::typingGoesToAName()
     keys({Key::of(Key::F9)});
     type("be");
     QCOMPARE(name(), QStringLiteral("beta.txt"));
+}
+
+// A frame is drawn from what the folder's listing already knows: its cost
+// doesn't grow with the folder (only what is on screen is drawn), and moving
+// through it stays quick in every view, with the effects on. This guards
+// against work that creeps into the drawing (a look at the disk for every
+// row, a pass over every item for every frame).
+void TestTui::drawingABigFolderIsQuick()
+{
+    for (int i = 0; i < 3000; ++i)
+        make(QStringLiteral("item-%1.%2").arg(i, 4, 10, QChar('0')).arg(i % 3 == 0 ? "jpg" : i % 3 == 1 ? "zip" : "txt"));
+    app = std::make_unique<App>(m_left, QString());
+    app->setSidebarShown(true);
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("3003 items"), 20000);
+    QVERIFY(app->effects());
+    Screen s(160, 50);
+    for (const char *view : {"list", "grid", "icons"}) {
+        app->render(s); // the first frame of a view measures its columns
+        QElapsedTimer timer;
+        timer.start();
+        const int frames = 60;
+        for (int i = 0; i < frames; ++i) {
+            keys({Key::of(i % 10 == 9 ? Key::PageDown : Key::Down)});
+            app->render(s);
+        }
+        if (qEnvironmentVariableIsSet("ARGONAUT_TEST_PROFILE")) { // where a frame's time goes: drawing alone, and a screen alone
+            QElapsedTimer only;
+            only.start();
+            for (int i = 0; i < 200; ++i)
+                app->render(s);
+            qInfo("%s: drawing alone %.3f ms", view, only.nsecsElapsed() / 1e6 / 200);
+            only.start();
+            for (int i = 0; i < 200; ++i)
+                s.clear();
+            qInfo("clearing the screen alone %.3f ms", only.nsecsElapsed() / 1e6 / 200);
+        }
+        const double each = timer.nsecsElapsed() / 1e6 / frames;
+        qInfo("%s: %.2f ms a frame", view, each);
+        // Far more than it takes (a few tenths of a millisecond here, built
+        // for debugging): only something badly wrong fails this.
+        QVERIFY2(each < 25.0, qPrintable(QStringLiteral("%1: %2 ms a frame").arg(view).arg(each)));
+        keys({Key::of(Key::F9)});
+    }
+    // With something selected a frame costs no more: the footer's count is
+    // of the selection, not a walk through the folder.
+    keys({Key::of(Key::Home), Key::of(Key::Down), Key::of(Key::Insert), Key::of(Key::Insert)});
+    QCOMPARE(int(app->selectedPaths().size()), 2);
+    QVERIFY2(screen(160, 50).contains("2 selected"), qPrintable(screen(160, 50).section('\n', -3)));
+    QElapsedTimer timer;
+    timer.start();
+    for (int i = 0; i < 60; ++i)
+        app->render(s);
+    const double withSelection = timer.nsecsElapsed() / 1e6 / 60;
+    keys({Key::of(Key::Escape)});
+    timer.start();
+    for (int i = 0; i < 60; ++i)
+        app->render(s);
+    const double without = timer.nsecsElapsed() / 1e6 / 60;
+    qInfo("a frame with a selection %.2f ms, without %.2f ms", withSelection, without);
+    QVERIFY2(withSelection < without * 2 + 1.0, qPrintable(QStringLiteral("%1 against %2").arg(withSelection).arg(without)));
 }
 
 // Themes: the terminal's own colours unless one of Argonaut's themes is

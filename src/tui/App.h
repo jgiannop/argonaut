@@ -50,6 +50,7 @@ struct Mouse
     Kind kind = Press;
     int x = 0;
     int y = 0;
+    bool isWheel() const { return kind == WheelUp || kind == WheelDown; }
 };
 
 // Argonaut in a terminal: one pane of files, or two side by side (F4; it
@@ -118,6 +119,7 @@ public:
     QStringList selectedPaths() const;  // the active pane's selection
     QString message() const { return m_message; }
     QString typedName() const { return m_typed; } // the name being typed to go to (tests)
+    void setTypeAheadPause(int ms) { m_typeAheadMs = ms; } // how long without a key ends that name (tests: they needn't wait a second)
     bool isAsking() const { return m_mode != Mode::Normal; } // a question or a text field is open
     bool isBusy() const;                // a file operation is running
     bool isLoading() const;             // a folder is still being listed
@@ -268,6 +270,7 @@ private:
     void conflictKey(const Key &key);
     void normalKey(const Key &key);
     void typeAhead(const QString &typed); // the cursor goes to the name that is being typed
+    bool typingTakes(const Key &key);     // the key is part of that typing (or ends it with nothing else to do)
     void nextConflict();
     void jobFinished(FileJob *job);
 
@@ -293,13 +296,19 @@ private:
     bool m_secondUsed = false; // the second pane has been shown once (it has its own folder now)
     bool m_showHidden = false;
     // Typing a name to go to it: what was typed, and when the last key was
-    // (a pause of TypeAheadMs starts a new name).
+    // (a pause of m_typeAheadMs starts a new name).
     QString m_typed;
     QElapsedTimer m_typedAt;
-    static constexpr int TypeAheadMs = 1000;
+    int m_typeAheadMs = 1000;
     bool m_effects = true;
     int m_sideHover = -1;      // the row of the places under the mouse
     void hoverAt(int x, int y); // the mouse moved (no button): what is under it lights up
+    // mouse() finds what the mouse is on; these do what a click or the wheel means there.
+    void mouseInPalette(const Mouse &mouse);
+    void mouseInMenus(const Mouse &mouse);
+    void mouseInSidebar(const Mouse &mouse);
+    void mouseInPreview(const Mouse &mouse);
+    void mouseInPane(int i, const Mouse &mouse);
     // The shell panel (F12): made when first asked for, gone when the shell ends.
     Shell *m_shell = nullptr;
     bool m_inShell = false;       // keys go to the shell, not to the files
