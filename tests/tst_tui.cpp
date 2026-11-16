@@ -59,6 +59,7 @@ private slots:
     void placesAtTheLeft();
     void previewAtTheRight();
     void commandPalette();
+    void menus();
     void extensionResultInThePreview();
     void themes();
     void shellInTheFolder();
@@ -1554,6 +1555,113 @@ void TestTui::extensionResultInThePreview()
     QVERIFY(!app->isPreviewShown());
     QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 shown\nt1 hidden\n"), 10000);
     host->setEnabled("fake", false);
+}
+
+// The menus of the top line: File, Edit, View, Go, Help. Alt and a letter
+// or a click opens one; an item is the same as its key, so it asks what its
+// key asks; what can't be done now is there, dim, and can't be chosen.
+void TestTui::menus()
+{
+    QString text = screen(100, 30);
+    const QString top = text.section('\n', 0, 0);
+    for (const char *title : {"Argonaut", " File ", " Edit ", " View ", " Go ", " Help"})
+        QVERIFY2(top.contains(QLatin1String(title)), qPrintable(top));
+    auto alt = [](char32_t c) {
+        Key key = Key::character(c);
+        key.alt = true;
+        return key;
+    };
+    keys({alt('f')});
+    QCOMPARE(app->menuTitle(), QStringLiteral("File"));
+    QVERIFY(app->isAsking()); // the files' keys aren't the files' now
+    text = screen(100, 30);
+    for (const char *part : {"New Folder…", "F7", "Rename…", "Move to Trash", "Delete Permanently…", "Quit"})
+        QVERIFY2(text.contains(QString::fromUtf8(part)), part);
+    QVERIFY(!text.contains("Tab")); // no tabs in a terminal
+    // Two panes: copying to the other can be chosen. One: it can't, and the arrows pass it.
+    QVERIFY(app->menuNames().contains("Copy to the Other Pane"));
+    keys({Key::of(Key::Escape), Key::of(Key::F4), alt('f')});
+    QVERIFY(!app->isSplit());
+    QVERIFY(app->menuNames().contains("(Copy to the Other Pane)"));
+    QVERIFY(app->menuNames().contains("New Folder…"));
+    for (int i = 0; i < 20; ++i) // round and round, over the lines and what can't be chosen
+        keys({Key::of(Key::Down)});
+    // Esc closes it and nothing happened.
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->menuTitle().isEmpty());
+    QVERIFY(!app->isAsking());
+    QVERIFY(exists(m_left + "/alpha.txt"));
+
+    // Right and Left go to the next menu, round and round.
+    keys({alt('f'), Key::of(Key::Right)});
+    QCOMPARE(app->menuTitle(), QStringLiteral("Edit"));
+    QVERIFY(app->menuNames().contains("(Undo)")); // nothing to undo yet
+    keys({Key::of(Key::Left), Key::of(Key::Left)});
+    QCOMPARE(app->menuTitle(), QStringLiteral("Help"));
+    keys({Key::of(Key::Escape)});
+
+    // A command that asks, asks: deleting for good still needs its "y".
+    app->selectPath(m_left + "/alpha.txt");
+    keys({alt('f'), Key::character('d')}); // a letter: the item that starts with it
+    keys({Key::of(Key::Enter)});
+    QVERIFY(app->menuTitle().isEmpty());
+    QVERIFY(app->isAsking());
+    keys({Key::of(Key::Enter)}); // not "y"
+    settle();
+    QVERIFY(exists(m_left + "/alpha.txt"));
+    // Trash from the menu; then Edit has the undo by its name, and it undoes.
+    keys({alt('f'), Key::character('m')});
+    QVERIFY(screen(100, 30).contains("Move to Trash"));
+    runJob([this] { keys({Key::of(Key::Enter)}); });
+    QVERIFY(!exists(m_left + "/alpha.txt"));
+    keys({alt('e')});
+    QVERIFY2(app->menuNames().first().startsWith("Undo ") && !app->menuNames().first().startsWith("("), qPrintable(app->menuNames().join('|')));
+    runJob([this] { keys({Key::of(Key::Enter)}); }); // the first item that can be chosen
+    QVERIFY(exists(m_left + "/alpha.txt"));
+
+    // The mouse: a click on a title opens it, on an item chooses it.
+    text = screen(100, 30);
+    const int viewX = int(text.section('\n', 0, 0).indexOf(" View ")) + 1;
+    app->mouse({Tui::Mouse::Press, viewX, 0});
+    QCOMPARE(app->menuTitle(), QStringLiteral("View"));
+    text = screen(100, 30);
+    QVERIFY2(text.contains("● List") && text.contains("Big Icons") && text.contains("Hidden Files") && text.contains("Theme…"), qPrintable(text));
+    const QStringList lines = text.split('\n');
+    int gridY = -1;
+    for (int y = 0; y < lines.size(); ++y) {
+        if (gridY < 0 && lines.at(y).contains("Grid") && lines.at(y).contains("F9")) // the first: the key line has "F9" too
+            gridY = y;
+    }
+    QVERIFY(gridY > 0);
+    app->mouse({Tui::Mouse::Press, viewX + 4, gridY});
+    QVERIFY(app->menuTitle().isEmpty());
+    QVERIFY(app->isGrid(0));
+    // A click beside an open menu closes it and does nothing else.
+    const QString before = app->cursorPath();
+    app->mouse({Tui::Mouse::Press, viewX, 0});
+    QCOMPARE(app->menuTitle(), QStringLiteral("View"));
+    QVERIFY(screen(100, 30).contains("● Grid"));
+    app->mouse({Tui::Mouse::Press, 80, 20});
+    QVERIFY(app->menuTitle().isEmpty());
+    QCOMPARE(app->cursorPath(), before);
+    // What is on is ticked: hidden files, from the menu.
+    QVERIFY(!screen(100, 30).contains(".secret"));
+    keys({alt('v'), Key::character('h'), Key::of(Key::Enter)});
+    settle();
+    QVERIFY(screen(100, 30).contains(".secret"));
+    keys({alt('v')});
+    QVERIFY(screen(100, 30).contains("✓ Hidden Files"));
+    // Theme…: the palette, with the themes to choose from.
+    keys({Key::character('t'), Key::character('t'), Key::character('t'), Key::of(Key::Enter)}); // Two Panes, Terminal, Theme…
+    QVERIFY(app->isPaletteOpen());
+    QVERIFY(app->paletteNames().first().startsWith("Theme: "));
+    keys({Key::of(Key::Escape)});
+
+    // Go: the places by name; Help: the keys.
+    keys({alt('g')});
+    QVERIFY(app->menuNames().contains("Home") && app->menuNames().contains("Trash") && app->menuNames().contains("(Back)"));
+    keys({Key::of(Key::Escape), alt('h'), Key::of(Key::Enter)});
+    QVERIFY(screen(100, 30).contains("Argonaut in the terminal"));
 }
 
 // Themes: the terminal's own colours unless one of Argonaut's themes is

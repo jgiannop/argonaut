@@ -78,6 +78,8 @@ public:
     int activePane() const { return m_active; }
     bool isSplit() const { return m_split; }
     bool isPaletteOpen() const { return m_mode == Mode::Palette; } // the command palette (Ctrl+P)
+    QString menuTitle() const;      // the menu that is open ("" : none)
+    QStringList menuNames() const;  // its items; one that can't be chosen now is in brackets (tests)
     QStringList paletteNames() const;                               // what it lists now, best first (tests)
     bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
     bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
@@ -151,7 +153,35 @@ private:
         int barY = 0, barHeight = 0; // the scrollbar, from the last frame (height 0: there is none)
         bool widthStale = true;
     };
-    enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette };
+    enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette, Menu };
+    // The menus of the top line (File, Edit, View, Go, Help; Alt and the
+    // first letter, or a click). An item is a command of the palette too.
+    struct MenuItem
+    {
+        QString name;
+        QString keys;           // the key that does the same
+        std::function<void()> run;
+        bool enabled = true;    // false: shown dim, can't be chosen (and isn't in the palette)
+        QString mark;           // "✓" for what is on, "●" for the one of several
+        QString palette;        // its name in the command palette, where the menu's title is missing ("Go Back")
+        bool inPalette = true;
+        bool late = false;      // in the palette after the rest (places, extensions' commands, Quit)
+        bool separator = false; // a line between groups
+    };
+    struct Menu
+    {
+        QString title;
+        char32_t letter; // with Alt
+        QList<MenuItem> items;
+    };
+    QList<Menu> menus();
+    void openMenu(int index);
+    void closeMenu();
+    void moveInMenu(int step);
+    void runMenuRow(int row);
+    void menuKey(const Key &key);
+    void drawMenuBar(Screen &screen, int x);
+    void drawMenu(Screen &screen);
     // Something that can be done now, for the command palette (Ctrl+P).
     struct Command
     {
@@ -293,6 +323,11 @@ private:
     QList<int> m_paletteHits;    // into m_paletteAll, best first
     int m_paletteCursor = 0, m_paletteTop = 0;
     int m_paletteX = 0, m_paletteY = 0, m_paletteWidth = 0, m_paletteShown = 0; // its rows, from the last frame
+    // The menus: those of the open one (as they were when it opened), and
+    // where things are on screen, for the mouse.
+    QList<Menu> m_menus;
+    int m_menuOpen = -1, m_menuCursor = 0, m_menuTop = 0;
+    int m_menuX = 0, m_menuY = 0, m_menuWidth = 0, m_menuShown = 0;
     QString m_themeKey = QStringLiteral("terminal");
     Palette m_palette;           // its colours, for every frame
     int m_helpTop = 0;           // the help's first line shown
@@ -323,6 +358,7 @@ private:
         Key key;
     };
     QList<KeySpot> m_keySpots;
+    QList<KeySpot> m_menuSpots; // the menus' titles on the top line
     int m_keysY = -1;
     QElapsedTimer m_lastClick;
     QString m_lastClickPath;

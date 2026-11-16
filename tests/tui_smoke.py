@@ -43,6 +43,10 @@ for _ in range(2):
     os.write(fd, b"\x1b[<0;30;5M\x1b[<0;30;5m")
     pump(0.15)
 pump(0.6)
+os.write(fd, b"\x1bf")       # Alt+F: the File menu
+pump(0.6)
+os.write(fd, b"\x1b")        # Esc closes it
+pump(0.8)
 os.write(fd, b"\x1b[21~")    # F10
 status = None
 for _ in range(60):
@@ -58,7 +62,7 @@ if status is None:
     problems.append("it did not quit on F10")
 elif status != 0:
     problems.append("exit status %d" % status)
-for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "copy / move to the other pane", "deep-file.txt"):
+for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "copy / move to the other pane", "deep-file.txt", "File", "Help", "Delete Permanently", "Rename"):
     if needle not in text:
         problems.append("never drew %r" % needle)
 if "\x1b[?1049l" not in text and "\x1b[?47l" not in text:

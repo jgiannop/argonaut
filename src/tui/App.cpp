@@ -827,6 +827,9 @@ void App::key(const Key &key)
     case Mode::Palette:
         paletteKey(key);
         return;
+    case Mode::Menu:
+        menuKey(key);
+        return;
     case Mode::Help: {
         // Longer than the screen: the arrows and the page keys move through
         // it. Any other key closes it.
@@ -872,6 +875,15 @@ void App::key(const Key &key)
         if (key.isControl('p')) { // the command palette, from the files, the places or the preview
             openPalette();
             return;
+        }
+        if (key.code == Key::Char && key.alt && !key.ctrl) { // Alt+F: the File menu, and so on
+            static const char32_t letters[] = {U'f', U'e', U'v', U'g', U'h'};
+            for (int i = 0; i < int(std::size(letters)); ++i) {
+                if (QChar::toLower(key.ch) == letters[i]) {
+                    openMenu(i);
+                    return;
+                }
+            }
         }
         if (m_inSidebar && sidebarKey(key))
             return;
@@ -974,6 +986,39 @@ void App::mouse(const Mouse &mouse)
             m_mode = Mode::Normal;
             emit changed();
         }
+        return;
+    }
+    if (m_mode == Mode::Menu || (m_mode == Mode::Normal && mouse.y == 0)) {
+        // A click on a menu's title opens it (again: closes it), one on an
+        // item chooses it, one anywhere else closes the menu.
+        if (mouse.kind != Mouse::Press) {
+            if (m_mode == Mode::Menu && mouse.kind == Mouse::RightPress)
+                closeMenu();
+            return;
+        }
+        if (mouse.y == 0) {
+            for (int i = 0; i < m_menuSpots.size(); ++i) {
+                if (mouse.x >= m_menuSpots.at(i).from && mouse.x < m_menuSpots.at(i).to) {
+                    if (m_mode == Mode::Menu && m_menuOpen == i)
+                        closeMenu();
+                    else
+                        openMenu(i);
+                    return;
+                }
+            }
+        }
+        if (m_mode != Mode::Menu)
+            return;
+        if (mouse.x > m_menuX && mouse.x < m_menuX + m_menuWidth - 1 && mouse.y >= m_menuY && mouse.y < m_menuY + m_menuShown) {
+            const int row = m_menuTop + (mouse.y - m_menuY);
+            if (row < m_menus.at(m_menuOpen).items.size() && !m_menus.at(m_menuOpen).items.at(row).separator) {
+                if (m_menus.at(m_menuOpen).items.at(row).enabled)
+                    runMenuRow(row);
+                return; // on an item that can't be chosen now: the menu stays
+            }
+            return;
+        }
+        closeMenu();
         return;
     }
     if (m_mode != Mode::Normal)
@@ -1292,8 +1337,11 @@ void App::render(Screen &screen)
     // The top bar: the program, and what can be undone.
     screen.fill(0, 0, w, 1, kBar);
     screen.put(1, 0, QStringLiteral("Argonaut"), {Ink::Accent, Paper::Bar, true});
+    drawMenuBar(screen, 11); // File, Edit, View, Go, Help
     const QString undo = m_ops->canUndo() ? QStringLiteral("Ctrl+Z %1").arg(m_ops->undoText()) : QString();
-    screen.put(qMax(11, w - Screen::widthOf(undo) - 1), 0, undo, {Ink::Dim, Paper::Bar, false});
+    const int menusEnd = m_menuSpots.isEmpty() ? 11 : m_menuSpots.last().to;
+    if (w - Screen::widthOf(undo) - 1 > menusEnd) // where there is room beside the menus
+        screen.put(w - Screen::widthOf(undo) - 1, 0, undo, {Ink::Dim, Paper::Bar, false});
 
     m_lastWidth = w;
     m_lastHeight = h;
@@ -1333,6 +1381,8 @@ void App::render(Screen &screen)
     drawBottom(screen);
     if (m_mode == Mode::Palette)
         drawPalette(screen); // over everything
+    if (m_mode == Mode::Menu)
+        drawMenu(screen);
     if (m_shell && m_inShell && m_mode == Mode::Normal) {
         int x = 0, y = 0;
         if (m_shell->cursor(&x, &y) && y < shellHeight - 1)
@@ -1591,9 +1641,11 @@ void App::setTheme(const QString &key)
 
 // Everything that can be done now, by name, with the key that does the
 // same. A command is the same key press, so it can't behave differently.
-QList<App::Command> App::commands()
+// The menus of the top line, as they are now: what the window's menu bar
+// has, without the tabs. The command palette lists the same things (those
+// that can be done now), so a command is written once, here.
+QList<App::Menu> App::menus()
 {
-    QList<Command> list;
     auto press = [this](const Key &key) {
         return [this, key] {
             // A command about the files: the keys are the files' again.
@@ -1602,78 +1654,375 @@ QList<App::Command> App::commands()
             normalKey(key);
         };
     };
-    const Pane &p = pane();
-    list.append({QStringLiteral("Help: All Keys"), QStringLiteral("F1"), press(Key::of(Key::F1))});
-    list.append({QStringLiteral("Go to Folder…"), QStringLiteral("g"), press(Key::character('g'))});
-    list.append({QStringLiteral("Go Home"), QStringLiteral("~"), press(Key::character('~'))});
-    list.append({QStringLiteral("Go Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace))});
-    if (!p.back.isEmpty()) {
-        Key back = Key::of(Key::Left);
-        back.alt = true;
-        list.append({QStringLiteral("Go Back"), QStringLiteral("Alt+Left"), press(back)});
-    }
-    list.append({QStringLiteral("New Folder…"), QStringLiteral("F7"), press(Key::of(Key::F7))});
-    if (!targets().isEmpty()) {
-        list.append({QStringLiteral("Rename…"), QStringLiteral("F2"), press(Key::of(Key::F2))});
-        list.append({QStringLiteral("Open"), QStringLiteral("Enter"), press(Key::of(Key::Enter))});
-        list.append({QStringLiteral("Move to Trash"), QStringLiteral("F8"), press(Key::of(Key::F8))});
-        list.append({QStringLiteral("Delete Permanently…"), QStringLiteral("D"), press(Key::character('D'))});
-        if (m_split) {
-            list.append({QStringLiteral("Copy to the Other Pane"), QStringLiteral("F5"), press(Key::of(Key::F5))});
-            list.append({QStringLiteral("Move to the Other Pane"), QStringLiteral("F6"), press(Key::of(Key::F6))});
+    auto item = [](const QString &name, const QString &keys, std::function<void()> run, bool enabled = true, const QString &palette = {}) {
+        MenuItem i;
+        i.name = name;
+        i.keys = keys;
+        i.run = std::move(run);
+        i.enabled = enabled;
+        i.palette = palette;
+        return i;
+    };
+    auto line = [] {
+        MenuItem i;
+        i.separator = true;
+        return i;
+    };
+    // An item that is on or off: ticked in the menu, "Show…" or "Hide…" in the palette.
+    auto ticked = [&item](const QString &name, bool on, const QString &keys, std::function<void()> run, const QString &whenOn, const QString &whenOff) {
+        MenuItem i = item(name, keys, std::move(run), true, on ? whenOn : whenOff);
+        i.mark = on ? QStringLiteral("✓") : QString();
+        return i;
+    };
+    // What extensions put in the window's menus (System Dashboard in View).
+    auto fromExtensions = [this, &line](QList<MenuItem> *items, const char *menu) {
+        const QList<Extensions::Command> added = Extensions::Host::instance()->menuCommands(QString::fromLatin1(menu));
+        if (!added.isEmpty())
+            items->append(line());
+        for (const Extensions::Command &command : added) {
+            MenuItem i;
+            i.name = command.label;
+            i.run = [this, command] { runExtensionCommand(command); };
+            i.late = true;
+            items->append(i);
         }
-    }
-    if (m_ops->canUndo())
-        list.append({m_ops->undoText(), QStringLiteral("Ctrl+Z"), press(Key::control('z'))});
-    if (m_ops->canRedo())
-        list.append({m_ops->redoText(), QStringLiteral("Ctrl+Y"), press(Key::control('y'))});
-    list.append({QStringLiteral("Select All"), QStringLiteral("Ctrl+A"), press(Key::control('a'))});
-    if (!p.selected.isEmpty())
-        list.append({QStringLiteral("Clear the Selection"), QStringLiteral("Esc"), press(Key::of(Key::Escape))});
+    };
+    const Pane &p = pane();
+    const bool some = !targets().isEmpty();
+    QList<Menu> list;
+
+    Menu file{QStringLiteral("File"), U'f', {}};
+    file.items.append(item(QStringLiteral("New Folder…"), QStringLiteral("F7"), press(Key::of(Key::F7))));
+    file.items.append(item(QStringLiteral("Open"), QStringLiteral("Enter"), press(Key::of(Key::Enter)), some));
+    file.items.append(item(QStringLiteral("Rename…"), QStringLiteral("F2"), press(Key::of(Key::F2)), some));
+    file.items.append(line());
+    file.items.append(item(QStringLiteral("Copy to the Other Pane"), QStringLiteral("F5"), press(Key::of(Key::F5)), some && m_split));
+    file.items.append(item(QStringLiteral("Move to the Other Pane"), QStringLiteral("F6"), press(Key::of(Key::F6)), some && m_split));
+    file.items.append(line());
+    file.items.append(item(QStringLiteral("Move to Trash"), QStringLiteral("F8"), press(Key::of(Key::F8)), some));
+    file.items.append(item(QStringLiteral("Delete Permanently…"), QStringLiteral("D"), press(Key::character('D')), some));
+    fromExtensions(&file.items, "file");
+    file.items.append(line());
+    file.items.append(item(QStringLiteral("Quit"), QStringLiteral("q"), press(Key::character('q')), true, QStringLiteral("Quit Argonaut")));
+    file.items.last().late = true;
+    list.append(file);
+
+    Menu edit{QStringLiteral("Edit"), U'e', {}};
+    edit.items.append(item(m_ops->canUndo() ? m_ops->undoText() : QStringLiteral("Undo"), QStringLiteral("Ctrl+Z"), press(Key::control('z')), m_ops->canUndo()));
+    edit.items.append(item(m_ops->canRedo() ? m_ops->redoText() : QStringLiteral("Redo"), QStringLiteral("Ctrl+Y"), press(Key::control('y')), m_ops->canRedo()));
+    edit.items.append(line());
+    edit.items.append(item(QStringLiteral("Select All"), QStringLiteral("Ctrl+A"), press(Key::control('a'))));
+    edit.items.append(item(QStringLiteral("Clear the Selection"), QStringLiteral("Esc"), press(Key::of(Key::Escape)), !p.selected.isEmpty()));
+    fromExtensions(&edit.items, "edit");
+    list.append(edit);
+
+    Menu view{QStringLiteral("View"), U'v', {}};
     // The views by name: no going round with F9 to reach one.
-    if (p.view != View::List)
-        list.append({QStringLiteral("View as List"), QStringLiteral("F9"), [this] { setView(View::List); }});
-    if (p.view != View::Grid)
-        list.append({QStringLiteral("View as Grid"), QStringLiteral("F9"), [this] { setView(View::Grid); }});
-    if (p.view != View::Icons)
-        list.append({QStringLiteral("View as Big Icons"), QStringLiteral("F9"), [this] { setView(View::Icons); }});
-    list.append({m_showHidden ? QStringLiteral("Hide Hidden Files") : QStringLiteral("Show Hidden Files"), QStringLiteral("."),
-                 press(Key::character('.'))});
-    list.append({QStringLiteral("Read the Folder Again"), QStringLiteral("Ctrl+R"), press(Key::control('r'))});
-    list.append({m_preview ? QStringLiteral("Hide the Preview") : QStringLiteral("Show the Preview"), QStringLiteral("F3"),
-                 press(Key::of(Key::F3))});
-    list.append({m_split ? QStringLiteral("One Pane") : QStringLiteral("Split: Two Panes"), QStringLiteral("F4"), press(Key::of(Key::F4))});
-    list.append({m_sidebar ? QStringLiteral("Hide the Places") : QStringLiteral("Show the Places"), QStringLiteral("Ctrl+B"),
-                 press(Key::control('b'))});
-    list.append({m_shell ? QStringLiteral("Go to the Terminal") : QStringLiteral("Open the Terminal"), QStringLiteral("F12"),
-                 [this] { toggleShell(); }});
+    const QPair<View, const char *> views[] = {{View::List, "List"}, {View::Grid, "Grid"}, {View::Icons, "Big Icons"}};
+    for (const auto &each : views) {
+        const View which = each.first;
+        MenuItem i = item(QString::fromLatin1(each.second), QStringLiteral("F9"), [this, which] { setView(which); }, true,
+                          QStringLiteral("View as %1").arg(QLatin1String(each.second)));
+        i.mark = p.view == which ? QStringLiteral("●") : QString();
+        i.inPalette = p.view != which;
+        view.items.append(i);
+    }
+    view.items.append(line());
+    view.items.append(ticked(QStringLiteral("Hidden Files"), m_showHidden, QStringLiteral("."), press(Key::character('.')),
+                             QStringLiteral("Hide Hidden Files"), QStringLiteral("Show Hidden Files")));
+    view.items.append(ticked(QStringLiteral("Preview"), m_preview, QStringLiteral("F3"), press(Key::of(Key::F3)),
+                             QStringLiteral("Hide the Preview"), QStringLiteral("Show the Preview")));
+    view.items.append(ticked(QStringLiteral("Two Panes"), m_split, QStringLiteral("F4"), press(Key::of(Key::F4)), QStringLiteral("One Pane"),
+                             QStringLiteral("Split: Two Panes")));
+    view.items.append(ticked(QStringLiteral("Places"), m_sidebar, QStringLiteral("Ctrl+B"), press(Key::control('b')),
+                             QStringLiteral("Hide the Places"), QStringLiteral("Show the Places")));
+    view.items.append(ticked(QStringLiteral("Terminal"), m_shell != nullptr, QStringLiteral("F12"), [this] { toggleShell(); },
+                             QStringLiteral("Go to the Terminal"), QStringLiteral("Open the Terminal")));
+    view.items.append(line());
+    view.items.append(item(QStringLiteral("Read the Folder Again"), QStringLiteral("Ctrl+R"), press(Key::control('r'))));
+    MenuItem theme = item(QStringLiteral("Theme…"), QString(), [this] {
+        openPalette(); // the themes are a list to choose from by typing
+        m_paletteText = QStringLiteral("Theme: ");
+        filterPalette();
+    });
+    theme.inPalette = false;
+    view.items.append(theme);
+    MenuItem palette = item(QStringLiteral("Command Palette…"), QStringLiteral("Ctrl+P"), [this] { openPalette(); });
+    palette.inPalette = false;
+    view.items.append(palette);
+    fromExtensions(&view.items, "view");
+    list.append(view);
+
+    Menu go{QStringLiteral("Go"), U'g', {}};
+    Key back = Key::of(Key::Left);
+    back.alt = true;
+    go.items.append(item(QStringLiteral("Back"), QStringLiteral("Alt+Left"), press(back), !p.back.isEmpty(), QStringLiteral("Go Back")));
+    go.items.append(item(QStringLiteral("Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace)), true, QStringLiteral("Go Up")));
+    go.items.append(item(QStringLiteral("Home"), QStringLiteral("~"), press(Key::character('~')), true, QStringLiteral("Go Home")));
+    go.items.append(item(QStringLiteral("Go to Folder…"), QStringLiteral("g"), press(Key::character('g'))));
+    go.items.append(line());
     // The places, each by its name.
     if (m_places.isEmpty())
         m_places = Places::list();
     for (int i = 0; i < m_places.size(); ++i) {
         const Places::Entry &place = m_places.at(i);
-        if (place.path == p.current || Extensions::Host::isPlacePath(place.path))
+        if (Extensions::Host::isPlacePath(place.path))
             continue;
-        list.append({QStringLiteral("Go to %1").arg(place.name), QString(), [this, i] { openPlace(i); }});
+        MenuItem row = item(place.name, QString(), [this, i] { openPlace(i); }, true, QStringLiteral("Go to %1").arg(place.name));
+        row.mark = place.path == p.current ? QStringLiteral("●") : QString();
+        row.inPalette = place.path != p.current;
+        row.late = true;
+        go.items.append(row);
+    }
+    fromExtensions(&go.items, "go");
+    list.append(go);
+
+    Menu help{QStringLiteral("Help"), U'h', {}};
+    help.items.append(item(QStringLiteral("All Keys"), QStringLiteral("F1"), press(Key::of(Key::F1)), true, QStringLiteral("Help: All Keys")));
+    help.items.append(item(QStringLiteral("About Argonaut"), QString(), [this] {
+        const QString version = QCoreApplication::applicationVersion();
+        say(QStringLiteral("Argonaut%1 · a file manager · GPL-3.0-or-later · github.com/jgiannop/argonaut")
+                .arg(version.isEmpty() ? QString() : QLatin1Char(' ') + version));
+    }));
+    list.append(help);
+    return list;
+}
+
+// For the command palette: what the menus have that can be done now, each
+// under the name that says it without its menu ("Go Back"), then the themes.
+QList<App::Command> App::commands()
+{
+    QList<Command> list, late;
+    const QList<Menu> all = menus();
+    // Help and Go first: with nothing typed, the list starts as it always did.
+    for (int index : {4, 3, 0, 1, 2}) {
+        const Menu &menu = all.at(index);
+        for (const MenuItem &item : menu.items) {
+            if (item.separator || !item.enabled || !item.inPalette)
+                continue;
+            (item.late ? late : list).append({item.palette.isEmpty() ? item.name : item.palette, item.keys, item.run});
+        }
     }
     // The themes: the terminal's own colours, and every theme the window has.
     if (m_themeKey != QLatin1String("terminal"))
-        list.append({QStringLiteral("Theme: The Terminal's Own Colours"), QString(), [this] { setTheme(QStringLiteral("terminal")); }});
-    const QList<ThemeChoice> themes = allThemes();
-    for (const ThemeChoice &theme : themes) {
+        late.prepend({QStringLiteral("Theme: The Terminal's Own Colours"), QString(), [this] { setTheme(QStringLiteral("terminal")); }});
+    QList<Command> themes;
+    for (const ThemeChoice &theme : allThemes()) {
         if (theme.key == QLatin1String("system") || theme.key == m_themeKey)
             continue;
         const QString key = theme.key;
-        list.append({QStringLiteral("Theme: %1").arg(theme.name), QString(), [this, key] { setTheme(key); }});
+        themes.append({QStringLiteral("Theme: %1").arg(theme.name), QString(), [this, key] { setTheme(key); }});
     }
-    // What extensions put in the window's menus (System Dashboard in View).
-    for (const char *menu : {"file", "edit", "view", "go"}) {
-        const QList<Extensions::Command> added = Extensions::Host::instance()->menuCommands(QString::fromLatin1(menu));
-        for (const Extensions::Command &command : added)
-            list.append({command.label, QString(), [this, command] { runExtensionCommand(command); }});
+    return list + themes + late;
+}
+
+// ---------------------------------------------------------------- menus ---
+
+void App::openMenu(int index)
+{
+    m_menus = menus();
+    m_menuOpen = (index % int(m_menus.size()) + int(m_menus.size())) % int(m_menus.size());
+    m_menuCursor = -1;
+    m_menuTop = 0;
+    m_mode = Mode::Menu;
+    moveInMenu(1);
+}
+
+void App::closeMenu()
+{
+    m_menuOpen = -1;
+    if (m_mode == Mode::Menu)
+        m_mode = Mode::Normal;
+    emit changed();
+}
+
+// The next item that can be chosen, `step` rows on (round and round).
+void App::moveInMenu(int step)
+{
+    const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
+    const int count = int(items.size());
+    int row = m_menuCursor;
+    for (int tried = 0; tried < count; ++tried) {
+        row = ((row + step) % count + count) % count;
+        if (!items.at(row).separator && items.at(row).enabled) {
+            m_menuCursor = row;
+            break;
+        }
     }
-    list.append({QStringLiteral("Quit Argonaut"), QStringLiteral("q"), press(Key::character('q'))});
-    return list;
+    emit changed();
+}
+
+void App::runMenuRow(int row)
+{
+    const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
+    if (row < 0 || row >= items.size() || items.at(row).separator || !items.at(row).enabled)
+        return;
+    const std::function<void()> run = items.at(row).run;
+    closeMenu(); // first: the command may ask something itself
+    if (run)
+        run();
+}
+
+QString App::menuTitle() const
+{
+    return m_mode == Mode::Menu && m_menuOpen >= 0 ? m_menus.at(m_menuOpen).title : QString();
+}
+
+QStringList App::menuNames() const
+{
+    QStringList names;
+    if (m_mode != Mode::Menu || m_menuOpen < 0)
+        return names;
+    for (const MenuItem &item : m_menus.at(m_menuOpen).items) {
+        if (!item.separator)
+            names << (item.enabled ? item.name : QStringLiteral("(%1)").arg(item.name));
+    }
+    return names;
+}
+
+void App::menuKey(const Key &key)
+{
+    switch (key.code) {
+    case Key::Escape:
+    case Key::F10:
+        closeMenu();
+        return;
+    case Key::Left:
+        openMenu(m_menuOpen - 1);
+        return;
+    case Key::Right:
+    case Key::Tab:
+        openMenu(m_menuOpen + 1);
+        return;
+    case Key::Up:
+        moveInMenu(-1);
+        return;
+    case Key::Down:
+        moveInMenu(1);
+        return;
+    case Key::Home:
+        m_menuCursor = -1;
+        moveInMenu(1);
+        return;
+    case Key::End:
+        m_menuCursor = int(m_menus.at(m_menuOpen).items.size());
+        moveInMenu(-1);
+        return;
+    case Key::Enter:
+        runMenuRow(m_menuCursor);
+        return;
+    case Key::Char:
+        if (key.ctrl)
+            return;
+        // Alt and a menu's letter: that menu. A letter alone: the next item
+        // that starts with it.
+        if (key.alt) {
+            for (int i = 0; i < m_menus.size(); ++i) {
+                if (QChar::toLower(key.ch) == m_menus.at(i).letter) {
+                    if (i == m_menuOpen)
+                        closeMenu();
+                    else
+                        openMenu(i);
+                    return;
+                }
+            }
+            return;
+        }
+        {
+            const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
+            const int count = int(items.size());
+            for (int step = 1; step <= count; ++step) {
+                const int row = (qMax(0, m_menuCursor) + step) % count;
+                const MenuItem &item = items.at(row);
+                if (!item.separator && item.enabled && !item.name.isEmpty() && item.name.at(0).toLower() == QChar(QChar::toLower(key.ch))) {
+                    m_menuCursor = row;
+                    emit changed();
+                    return;
+                }
+            }
+        }
+        return;
+    default:
+        return;
+    }
+}
+
+// The top line's menu titles; where each is goes into m_menuSpots, for the mouse.
+void App::drawMenuBar(Screen &screen, int x)
+{
+    static const char *const titles[] = {"File", "Edit", "View", "Go", "Help"};
+    m_menuSpots.clear();
+    for (int i = 0; i < int(std::size(titles)); ++i) {
+        const QString title = QString::fromLatin1(titles[i]);
+        const bool open = m_mode == Mode::Menu && m_menuOpen == i;
+        const int width = Screen::widthOf(title) + 2;
+        screen.put(x, 0, QLatin1Char(' ') + title + QLatin1Char(' '), {Ink::Normal, open ? Paper::Cursor : Paper::Bar, open});
+        m_menuSpots.append({x, x + width, Key()});
+        x += width;
+    }
+}
+
+// The open menu: a box under its title, an item a line, its key at the
+// right; what can't be done now is dim.
+void App::drawMenu(Screen &screen)
+{
+    if (m_menuOpen < 0 || m_menuOpen >= m_menus.size() || m_menuOpen >= m_menuSpots.size())
+        return;
+    const QList<MenuItem> &items = m_menus.at(m_menuOpen).items;
+    const int count = int(items.size());
+    int names = 0, keys = 0;
+    for (const MenuItem &item : items) {
+        names = qMax(names, Screen::widthOf(item.name));
+        keys = qMax(keys, Screen::widthOf(item.keys));
+    }
+    const int w = screen.width();
+    const int h = screen.height();
+    const int width = qMin(w, 2 + 2 + names + (keys ? 3 + keys : 0) + 2); // edge, mark, name, key, edge
+    const int x = qBound(0, m_menuSpots.at(m_menuOpen).from, w - width);
+    const int rows = qMax(1, qMin(count, h - 4));
+    if (m_menuCursor >= 0 && m_menuCursor < m_menuTop)
+        m_menuTop = m_menuCursor;
+    if (m_menuCursor >= m_menuTop + rows)
+        m_menuTop = m_menuCursor - rows + 1;
+    m_menuTop = qBound(0, m_menuTop, qMax(0, count - rows));
+    m_menuX = x;
+    m_menuY = 2;
+    m_menuWidth = width;
+    m_menuShown = rows;
+
+    const Style box{Ink::Normal, Paper::Bar, false};
+    const Style edge{Ink::Accent, Paper::Bar, false};
+    const QString rule(width - 2, QChar(0x2500));
+    screen.fill(x, 1, width, rows + 2, box);
+    screen.put(x, 1, QStringLiteral("┌") + rule + QStringLiteral("┐"), edge);
+    screen.put(x, 2 + rows, QStringLiteral("└") + rule + QStringLiteral("┘"), edge);
+    for (int i = 0; i < rows; ++i) {
+        const int row = m_menuTop + i;
+        const int y = m_menuY + i;
+        const MenuItem &item = items.at(row);
+        if (item.separator) {
+            screen.put(x, y, QStringLiteral("├") + rule + QStringLiteral("┤"), edge);
+            continue;
+        }
+        const bool cursor = row == m_menuCursor;
+        const Style style{item.enabled ? Ink::Normal : Ink::Dim, cursor ? Paper::Cursor : Paper::Bar, cursor};
+        screen.put(x, y, QStringLiteral("│"), edge);
+        screen.put(x + width - 1, y, QStringLiteral("│"), edge);
+        screen.fill(x + 1, y, width - 2, 1, style);
+        if (!item.mark.isEmpty())
+            screen.put(x + 2, y, item.mark, {item.enabled ? Ink::Accent : Ink::Dim, style.paper, false});
+        screen.put(x + 4, y, Screen::elided(item.name, width - 6, false), style);
+        const int keysWidth = Screen::widthOf(item.keys);
+        if (keysWidth > 0 && width - 6 - Screen::widthOf(item.name) > keysWidth)
+            screen.put(x + width - 2 - keysWidth, y, item.keys, {cursor && item.enabled ? Ink::Normal : Ink::Dim, style.paper, false});
+    }
+    // More than fit: the scrollbar's handle on the right edge.
+    if (count > rows) {
+        const int thumb = qBound(1, rows * rows / count, rows - 1);
+        const int at = (rows - thumb) * m_menuTop / (count - rows);
+        for (int i = at; i < at + thumb; ++i)
+            screen.put(x + width - 1, m_menuY + i, QStringLiteral("█"), edge);
+    }
 }
 
 void App::openPalette()
@@ -3029,6 +3378,8 @@ void App::drawHelp(Screen &screen)
         "  F4                                a second pane beside this one, or back to one",
         "  Tab, Shift+Tab                    the next of the panes and the places at the left",
         "  Ctrl+P                            the command palette: type a few letters of what you want to do",
+        "  Alt+F, Alt+E, Alt+V, Alt+G, Alt+H the menus at the top: File, Edit, View, Go, Help (or click one)",
+        "                                    (in a menu: the arrows, Enter chooses, Esc closes)",
         "  Ctrl+B                            show or hide the places at the left",
         "                                    (in them: Up, Down, Enter opens one in the pane; a click does too)",
         "  F9                                this pane as a list, a grid of names, or big icons",

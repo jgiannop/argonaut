@@ -653,6 +653,10 @@ moves to the Trash, [[Shift+Delete]] deletes for good (it asks, and only <b>y</b
 <li><b>Preview:</b> [[F3]] opens a pane at the right that shows what is in the item under the cursor: the lines of a
 text file, what is inside an archive, a rough picture of an image. It follows the cursor. [[Tab]] goes to it, where
 the arrows and [[PgUp]] / [[PgDn]] scroll; the wheel and its scrollbar work too.</li>
+<li><b>Menus:</b> the top line has <b>File</b>, <b>Edit</b>, <b>View</b>, <b>Go</b> and <b>Help</b>, with what this
+window's menus have (there are no tabs in a terminal). Click one, or press [[Alt+F]], [[Alt+E]], [[Alt+V]], [[Alt+G]],
+[[Alt+H]]; then the arrows move, [[Enter]] chooses and [[Esc]] closes. What can't be done now is dim. Every item shows
+its key.</li>
 <li><b>Command palette:</b> [[Ctrl+P]] opens a list of everything you can do. Type a few letters ("new", "trash",
 "big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same. Commands that
 extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
