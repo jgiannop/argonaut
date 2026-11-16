@@ -28,7 +28,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_INSTALL_PREFIX": "/usr",
-        "BUILD_TESTING": "OFF"
+        "BUILD_TESTING": "OFF",
+        "ARGONAUT_REQUIRE_ALL_FEATURES": "ON"
       }
     },
     {

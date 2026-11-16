@@ -388,6 +388,35 @@ if(UNIX)
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/space-overview)
 endif()
 
+# A package for other people has every feature, or isn't made: the optional
+# libraries above are optional for a build of your own, and a build machine
+# that lacks one (or lacks pkg-config, with which they are looked for) would
+# otherwise turn out a package without the terminal panel or Compress /
+# Extract, and nobody would notice. The `package` preset switches this on.
+option(ARGONAUT_REQUIRE_ALL_FEATURES "Fail when an optional feature can't be built" OFF)
+if(ARGONAUT_REQUIRE_ALL_FEATURES AND UNIX)
+    set(missing "")
+    if(NOT PkgConfig_FOUND)
+        list(APPEND missing "pkg-config (the optional libraries are looked for with it)")
+    endif()
+    if(NOT LIBARCHIVE_FOUND)
+        list(APPEND missing "libarchive-dev (Compress / Extract)")
+    endif()
+    if(NOT VTERM_FOUND)
+        list(APPEND missing "libvterm-dev (the terminal panel, in the window and in the terminal interface)")
+    endif()
+    if(NOT CURSES_FOUND)
+        list(APPEND missing "libncurses-dev (the terminal interface)")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT XCB_FOUND)
+        list(APPEND missing "libxcb1-dev (Open/Save windows stay with their app)")
+    endif()
+    if(missing)
+        list(JOIN missing "\n  " missing)
+        message(FATAL_ERROR "This build is to have every feature (ARGONAUT_REQUIRE_ALL_FEATURES), and these are missing:\n  ${missing}")
+    endif()
+endif()
+
 # ------------------------------------------------------------- install ---
 # `cmake --install build/release` (the release preset installs into ~/.local):
 # the program, its menu entry and icon. Uninstall: `cmake --build build/release
