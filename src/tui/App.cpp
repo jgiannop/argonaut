@@ -126,7 +126,14 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
                 up = QFileInfo(up).path();
             navigate(m_panes[i], up.isEmpty() ? QDir::homePath() : up, false);
         });
-        p.grid = QSettings().value(QStringLiteral("tui/grid/%1").arg(i), false).toBool();
+        {
+            // "list", "grid" or "icons"; before there were three it was a yes or no for the grid.
+            const QSettings settings;
+            const QString saved = settings.value(QStringLiteral("tui/view/%1").arg(i)).toString();
+            p.view = saved == QLatin1String("icons") ? View::Icons
+                     : saved == QLatin1String("grid") ? View::Grid
+                     : saved.isEmpty() && settings.value(QStringLiteral("tui/grid/%1").arg(i), false).toBool() ? View::Grid : View::List;
+        }
         if (!navigate(p, folders[i], false))
             navigate(p, QDir::homePath(), false);
     }
@@ -551,15 +558,17 @@ void App::shellClosed(const QString &folder)
     emit changed();
 }
 
-// F9: this pane as a grid of names, or as a list with sizes and dates.
-// Remembered for each pane.
+// F9: this pane as a list with sizes and dates, as a grid of names, or as
+// big icons; round and round. Remembered for each pane.
 void App::toggleGrid()
 {
     Pane &p = pane();
-    p.grid = !p.grid;
+    p.view = p.view == View::List ? View::Grid : p.view == View::Grid ? View::Icons : View::List;
     p.top = 0; // counted in lines of the view; the next frame brings the cursor into sight
+    p.lineHeight = 1;
     p.widthStale = true;
-    QSettings().setValue(QStringLiteral("tui/grid/%1").arg(m_active), p.grid);
+    QSettings().setValue(QStringLiteral("tui/view/%1").arg(m_active),
+                         p.view == View::Icons ? QStringLiteral("icons") : p.view == View::Grid ? QStringLiteral("grid") : QStringLiteral("list"));
     emit changed();
 }
 
@@ -903,7 +912,8 @@ void App::mouse(const Mouse &mouse)
             const int count = rowCount(p);
             const int per = perLine(p);
             const int lines = (count + per - 1) / per;
-            p.top = qBound(0, p.top + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, lines - p.rowsShown));
+            const int step = p.lineHeight > 1 ? 1 : 3; // a line of big icons is a screenful's third already
+            p.top = qBound(0, p.top + (mouse.kind == Mouse::WheelUp ? -step : step), qMax(0, lines - p.rowsShown));
             if (count > 0) {
                 const int line = qBound(p.top, p.cursor / per, qMin(lines - 1, p.top + p.rowsShown - 1));
                 p.cursor = qMin(count - 1, line * per + p.cursor % per);
@@ -919,14 +929,15 @@ void App::mouse(const Mouse &mouse)
             emit changed();
             return;
         }
-        int row = p.top + (mouse.y - p.rowsY);
+        const int height = qMax(1, p.lineHeight); // screen lines to a line of items
+        int row = p.top + (mouse.y - p.rowsY) / height;
         bool beside = false; // right of the last column
-        if (p.grid) {
+        if (p.view != View::List) {
             const int col = qMax(0, mouse.x - p.x - 1) / qMax(1, p.cellWidth);
             beside = col >= p.cols;
             row = row * p.cols + col;
         }
-        if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown || row >= rowCount(p)) {
+        if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown * height || row >= rowCount(p)) {
             emit changed(); // empty space: only the pane changes
             return;
         }
@@ -985,7 +996,7 @@ void App::normalKey(const Key &key)
         moveCursor(p, rowCount(p) - 1);
         return;
     case Key::Right:
-        if (p.grid) { // a grid is walked in four directions; Enter opens
+        if (p.view != View::List) { // a grid is walked in four directions; Enter opens
             moveCursor(p, p.cursor + 1);
             return;
         }
@@ -998,7 +1009,7 @@ void App::normalKey(const Key &key)
         if (key.alt) {
             if (!p.back.isEmpty())
                 navigate(p, p.back.takeLast(), false);
-        } else if (p.grid) {
+        } else if (p.view != View::List) {
             moveCursor(p, p.cursor - 1);
         } else {
             goUp();
@@ -1197,8 +1208,13 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
     if (infoWidth)
         screen.put(x + width - 1 - infoWidth, top, Screen::elided(info.text, infoWidth, false), kDim);
 
-    if (p.grid) {
+    p.lineHeight = 1;
+    if (p.view == View::Grid) {
         drawGrid(screen, p, active, x, width, top, height);
+        return;
+    }
+    if (p.view == View::Icons) {
+        drawIcons(screen, p, active, x, width, top, height);
         return;
     }
     // Columns: name, size, when. Narrow panes drop the date, then the size.
@@ -1389,9 +1405,15 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
     if (items == 0)
         screen.put(x + 2, p.rowsY + (up ? 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
 
-    // Footer: the item under the cursor with its size and date, then the counts.
+    drawGridFooter(screen, p, x, width, top + height - 1, totalLines, lines);
+}
+
+void App::drawGridFooter(Screen &screen, const Pane &p, int x, int width, int y, int totalLines, int lines)
+{
+    const int up = upRows(p);
+    const int items = p.model->rowCount();
     QString footer;
-    if (up == 1 && p.cursor == 0 && count > 0) {
+    if (up == 1 && p.cursor == 0) {
         footer = QStringLiteral("Up to %1").arg(shown(QFileInfo(p.current).path()));
     } else if (items > 0) {
         const int row = p.cursor - up;
@@ -1407,10 +1429,202 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
     if (totalLines > lines)
         counts += QStringLiteral(" · lines %1–%2 of %3").arg(p.top + 1).arg(qMin(totalLines, p.top + lines)).arg(totalLines);
     const int countsWidth = qMin(Screen::widthOf(counts), width - 2);
-    const int y = top + height - 1;
     if (!footer.isEmpty() && width - 2 - countsWidth - 2 >= 8)
         screen.put(x + 1, y, Screen::elided(footer, width - 2 - countsWidth - 2), kDim);
     screen.put(x + width - 1 - countsWidth, y, Screen::elided(counts, countsWidth, false), kDim);
+}
+
+namespace {
+
+// What a file is, as far as its picture goes: by the end of its name.
+enum class Sort { Document, Picture, Sound, Film, Archive, Code };
+
+Sort sortOf(const QString &suffix)
+{
+    static const QSet<QString> pictures{"png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "heic", "ico", "xcf", "avif"};
+    static const QSet<QString> sounds{"mp3", "flac", "ogg", "opus", "wav", "m4a", "aac", "wma"};
+    static const QSet<QString> films{"mp4", "mkv", "avi", "mov", "webm", "mpg", "mpeg", "m4v", "wmv"};
+    static const QSet<QString> archives{"zip", "tar", "gz", "tgz", "xz", "bz2", "zst", "7z", "rar", "deb", "rpm", "iso", "jar"};
+    static const QSet<QString> code{"c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "rs", "go", "java", "sh", "rb", "php", "cs",
+                                    "html", "css", "json", "xml", "yml", "yaml", "toml", "sql", "lua", "kt", "swift"};
+    return pictures.contains(suffix) ? Sort::Picture
+           : sounds.contains(suffix) ? Sort::Sound
+           : films.contains(suffix) ? Sort::Film
+           : archives.contains(suffix) ? Sort::Archive
+           : code.contains(suffix) ? Sort::Code : Sort::Document;
+}
+
+// The first cells of `text` that fit in `width`, and what is left.
+QString takeCells(const QString &text, int width, QString *rest)
+{
+    int used = 0;
+    qsizetype at = 0;
+    while (at < text.size()) {
+        const qsizetype step = text.at(at).isHighSurrogate() && at + 1 < text.size() ? 2 : 1;
+        const int cells = Screen::widthOf(text.mid(at, step));
+        if (used + cells > width)
+            break;
+        used += cells;
+        at += step;
+    }
+    *rest = text.mid(at);
+    return text.left(at);
+}
+
+} // namespace
+
+// Big icons: every item is a cell with a picture drawn from block and line
+// characters (a folder; a page with the kind of file written on it) and its
+// name centred under it, on two lines if it needs them. The item under the
+// cursor has a frame. A terminal has no pixels to give, so this is as much
+// of a picture as there is; a line of items takes six screen lines.
+void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int top, int height)
+{
+    constexpr int CellHeight = 6; // the frame's line, three of picture, two of name
+    constexpr int IconWidth = 7;
+    p.rowsY = top + 1; // no line of column names
+    p.lineHeight = CellHeight;
+    const int up = upRows(p);
+    const int items = p.model->rowCount();
+    const int count = items + up;
+    const int inner = qMax(1, width - 2);
+    p.cols = qMax(1, inner / 14);
+    p.cellWidth = qMax(IconWidth + 2, inner / p.cols);
+    if (p.cellWidth * p.cols > inner)
+        p.cellWidth = inner; // a pane narrower than one cell
+    const int nameWidth = qMax(1, p.cellWidth - 2);
+
+    // The last line of the area closes the frame of the bottom row.
+    const int lines = qMax(1, (height - 2 - 1) / CellHeight);
+    p.rowsShown = lines;
+    p.cursor = count == 0 ? 0 : qBound(0, p.cursor, count - 1);
+    const int totalLines = (count + p.cols - 1) / p.cols;
+    const int cursorLine = p.cursor / p.cols;
+    if (cursorLine < p.top)
+        p.top = cursorLine;
+    if (cursorLine >= p.top + lines)
+        p.top = cursorLine - lines + 1;
+    p.top = qBound(0, p.top, qMax(0, totalLines - lines));
+
+    for (int line = 0; line < lines; ++line) {
+        const int y = p.rowsY + line * CellHeight; // the frame's line; the picture starts under it
+        for (int col = 0; col < p.cols; ++col) {
+            const int at = (p.top + line) * p.cols + col;
+            if (at >= count)
+                break;
+            const int cx = x + 1 + col * p.cellWidth;
+            const int iconX = cx + (p.cellWidth - IconWidth) / 2;
+            const bool upRow = up == 1 && at == 0;
+            const QModelIndex index0 = upRow ? QModelIndex() : p.model->index(at - up, 0);
+            const bool dir = upRow || p.model->isDir(index0);
+            const bool selected = !upRow && p.selected.contains(p.model->filePath(index0));
+            QString name = upRow ? QStringLiteral("..") : p.model->fileName(index0);
+            const bool link = !upRow && index0.data(DirectoryModel::SymLinkRole).toBool();
+
+            // The picture.
+            if (dir) {
+                const Style folder{selected ? Ink::Selected : upRow ? Ink::Dim : Ink::Folder, Paper::Normal, false};
+                screen.put(iconX, y + 1, QStringLiteral("▄▄▄"), folder);
+                screen.put(iconX, y + 2, QStringLiteral("███████"), folder);
+                screen.put(iconX, y + 3, QStringLiteral("███████"), folder);
+                if (upRow)
+                    screen.put(iconX + 3, y + 3, QStringLiteral("↑"), {Ink::Normal, Paper::Normal, true});
+            } else {
+                const QString suffix = QFileInfo(name).suffix().toLower();
+                const Sort sort = sortOf(suffix);
+                const bool dangerous = index0.data(DirectoryModel::VerdictRole).toInt() == int(ContentType::Verdict::Dangerous);
+                const Ink ink = selected ? Ink::Selected
+                                : dangerous ? Ink::Bad
+                                : sort == Sort::Picture ? Ink::Good
+                                : sort == Sort::Sound || sort == Sort::Film ? Ink::Accent
+                                : sort == Sort::Archive ? Ink::Warning
+                                : sort == Sort::Code ? Ink::Folder : Ink::Dim;
+                const Style page{ink, Paper::Normal, false};
+                // A page, with what it is written on it: its ending, or a
+                // sign for the common kinds without one.
+                QString label = suffix.left(4).toUpper();
+                if (dangerous)
+                    label = QStringLiteral("!!!!");
+                else if (label.isEmpty() || Screen::widthOf(label) != label.size())
+                    label = QStringLiteral("≡≡≡≡");
+                screen.put(iconX, y + 1, QStringLiteral("┌────┐"), page);
+                screen.put(iconX, y + 2, QStringLiteral("│    │"), page);
+                screen.put(iconX, y + 3, QStringLiteral("└────┘"), page);
+                screen.put(iconX + 1 + (4 - int(label.size())) / 2, y + 2, label, {ink, Paper::Normal, true});
+            }
+            // An extension's mark (Git: M, A, U), at the picture's corner.
+            if (!upRow) {
+                const QVariant mark = index0.data(DirectoryModel::BadgeRole);
+                if (mark.isValid()) {
+                    const Extensions::Badge badge = mark.value<Extensions::Badge>();
+                    screen.put(iconX + IconWidth, y + 1, badge.text.isEmpty() ? QStringLiteral("•") : badge.text,
+                               {markInk(badge), Paper::Normal, true}, 2);
+                }
+            }
+
+            // The name, centred; a long one goes on to a second line, and
+            // one too long for two is cut in the middle (its ending stays).
+            if (dir && !upRow)
+                name += QLatin1Char('/');
+            else if (link)
+                name += QLatin1Char('@');
+            const bool cursor = at == p.cursor;
+            const Style text{selected ? Ink::Selected : cursor && active ? Ink::Accent : dir ? Ink::Folder : Ink::Normal, Paper::Normal,
+                             selected || (cursor && active)};
+            QString second;
+            QString first = takeCells(name, nameWidth, &second);
+            if (!second.isEmpty()) {
+                // Rather at a natural place than in the middle of a word:
+                // before the ending, or after a space, a dash or an underline.
+                qsizetype cut = -1;
+                for (qsizetype i = first.size() - 1; i > 0 && i >= first.size() - 8; --i) {
+                    const QChar c = name.at(i);
+                    if (c == QLatin1Char('.')) {
+                        cut = i; // the ending goes down whole
+                        break;
+                    }
+                    if (c == QLatin1Char(' ') || c == QLatin1Char('-') || c == QLatin1Char('_')) {
+                        cut = i + 1;
+                        break;
+                    }
+                }
+                const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+                if (cut < 0 && dot > 0 && dot <= first.size() + 1 && name.size() - dot <= 8)
+                    cut = qMin(dot, first.size()); // "CMakeLists.txt": not "…tx" and "t"
+                // Also when the rest is still too long (it is then cut in the
+                // middle), as long as the first line isn't left nearly empty.
+                if (cut > 0 && (Screen::widthOf(name.mid(cut)) <= nameWidth || cut * 2 >= first.size())) {
+                    first = name.left(cut).trimmed();
+                    second = name.mid(cut).trimmed();
+                }
+            }
+            if (Screen::widthOf(second) > nameWidth)
+                second = Screen::elided(second, nameWidth);
+            screen.put(cx + (p.cellWidth - Screen::widthOf(first)) / 2, y + 4, first, text);
+            if (!second.isEmpty())
+                screen.put(cx + (p.cellWidth - Screen::widthOf(second)) / 2, y + 5, second, text);
+            if (selected)
+                screen.put(cx + 1, y + 1, QStringLiteral("*"), {Ink::Selected, Paper::Normal, true});
+        }
+    }
+    // The frame of the item under the cursor, drawn last: over the gaps
+    // between the lines of items.
+    if (count > 0 && cursorLine >= p.top && cursorLine < p.top + lines) {
+        const int cx = x + 1 + (p.cursor % p.cols) * p.cellWidth;
+        const int y = p.rowsY + (cursorLine - p.top) * CellHeight;
+        const Style frame{active ? Ink::Accent : Ink::Dim, Paper::Normal, active};
+        const int right = cx + p.cellWidth - 1;
+        screen.put(cx, y, QStringLiteral("┌") + QString(p.cellWidth - 2, QChar(0x2500)) + QStringLiteral("┐"), frame);
+        for (int line = 1; line < CellHeight; ++line) {
+            screen.put(cx, y + line, QStringLiteral("│"), frame);
+            screen.put(right, y + line, QStringLiteral("│"), frame);
+        }
+        screen.put(cx, y + CellHeight, QStringLiteral("└") + QString(p.cellWidth - 2, QChar(0x2500)) + QStringLiteral("┘"), frame);
+    }
+    if (items == 0)
+        screen.put(x + 2, p.rowsY + (up ? CellHeight + 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
+
+    drawGridFooter(screen, p, x, width, top + height - 1, totalLines, lines);
 }
 
 QString App::statusText() const
@@ -1498,8 +1712,8 @@ void App::drawBottom(Screen &screen)
             return QStringLiteral("Folder");
         if (tight && code == Key::F12 && !m_inShell)
             return QStringLiteral("Term");
-        if (code == Key::F9 && pane().grid)
-            return QStringLiteral("List");
+        if (code == Key::F9) // what the key goes to next
+            return pane().view == View::List ? QStringLiteral("Grid") : pane().view == View::Grid ? QStringLiteral("Icons") : QStringLiteral("List");
         if (code == Key::F12 && m_inShell)
             return QStringLiteral("Files");
         return QString::fromLatin1(what);
@@ -1549,7 +1763,7 @@ void App::drawHelp(Screen &screen)
         "  Alt+Left                          back to where you were",
         "  F4                                a second pane beside this one, or back to one",
         "  Tab                               the other pane",
-        "  F9                                this pane as a grid of names, or as a list",
+        "  F9                                this pane as a list, a grid of names, or big icons",
         "                                    (in a grid the arrows move four ways; Enter opens, Backspace goes up)",
         "  g  or  Ctrl+L                     go to a folder (\"trash\" for the Trash)",
         "  ~                                 home",

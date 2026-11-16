@@ -79,7 +79,14 @@ public:
     // false: no panel; F12 hands the whole terminal over (shellRequested).
     // That is how it is without libvterm.
     void setEmbeddedShell(bool on) { m_embeddedShell = on; }
-    bool isGrid(int pane) const { return m_panes[pane == 1 ? 1 : 0].grid; }
+    // How a pane shows its folder (F9 goes round them).
+    enum class View {
+        List,  // a line an item, with size and date
+        Grid,  // names in columns
+        Icons, // big cells: a picture drawn from blocks, the name under it
+    };
+    View view(int pane) const { return m_panes[pane == 1 ? 1 : 0].view; }
+    bool isGrid(int pane) const { return view(pane) == View::Grid; }
     QString cursorPath() const;         // the item under the active pane's cursor
     QStringList selectedPaths() const;  // the active pane's selection
     QString message() const { return m_message; }
@@ -116,7 +123,8 @@ private:
         QString wantedCursor;  // to put the cursor on once it is listed
         bool fresh = true;     // just arrived: the cursor hasn't been moved here yet
         QSet<QString> selected;
-        bool grid = false;     // names in columns (F9) instead of a list with sizes and dates
+        View view = View::List;
+        int lineHeight = 1;    // from the last frame: screen lines a line of items takes (6 for big icons)
         int rowsShown = 1;     // from the last frame: how many lines of items fit (how far PageDown goes)
         int x = 0, width = 0;  // from the last frame: where it is on screen
         int rowsY = 0;         // the screen row of its first file row
@@ -155,7 +163,7 @@ private:
     void drawShell(Screen &screen, int y, int height);
     void setSplit(bool on);
     void toggleGrid();
-    int perLine(const Pane &p) const { return p.grid ? qMax(1, p.cols) : 1; } // items on a line of the pane
+    int perLine(const Pane &p) const { return p.view == View::List ? 1 : qMax(1, p.cols); } // items on a line of the pane
     void toggleHidden();
     void quit();
     void say(const QString &text);
@@ -173,6 +181,10 @@ private:
 
     void drawPane(Screen &screen, int index, int x, int width, int top, int height);
     void drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int top, int height);
+    void drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int top, int height);
+    // The bottom line of a grid: the item under the cursor with its size
+    // and date, then the counts. `lines`: of items, in all and on screen.
+    void drawGridFooter(Screen &screen, const Pane &p, int x, int width, int y, int totalLines, int lines);
     QString footerText(const Pane &p) const; // how many items, and what is selected
     void drawBottom(Screen &screen);
     void drawHelp(Screen &screen);

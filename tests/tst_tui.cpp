@@ -48,6 +48,7 @@ private slots:
     void opensFiles();
     void startsWithOnePane();
     void gridView();
+    void bigIcons();
     void shellInTheFolder();
     void shellPanel();
 
@@ -564,7 +565,7 @@ void TestTui::gridView()
     QVERIFY2(lines.at(2).contains("../") && lines.at(2).contains("Documents/") && lines.at(2).contains("alpha.txt"),
              qPrintable(lines.at(2)));
     QVERIFY(!text.contains("Modified"));
-    QVERIFY(text.contains("F9 List") && text.contains("F10 Quit"));
+    QVERIFY(text.contains("F9 Icons") && text.contains("F10 Quit")); // what F9 goes to next
     QCOMPARE(app->cursorPath(), m_left + "/Documents");
     QVERIFY2(lines.at(lines.size() - 3).contains("Documents") && lines.at(lines.size() - 3).contains("12 items"),
              qPrintable(lines.at(lines.size() - 3)));
@@ -645,9 +646,98 @@ void TestTui::gridView()
     QVERIFY(!app->isGrid(1));
     const QString both = screen();
     QVERIFY(both.contains("Size")); // the right pane is still a list
+    // F9 goes round: grid, big icons, list.
     keys({Key::of(Key::F9)});
-    QVERIFY(!app->isGrid(0));
+    QCOMPARE(app->view(0), App::View::Icons);
+    QVERIFY(screen().contains("F9 List"));
+    keys({Key::of(Key::F9)});
+    QCOMPARE(app->view(0), App::View::List);
     QVERIFY(screen().contains("F9 Grid"));
+}
+
+// Big icons: a picture and the name under it for every item, a frame on the
+// one under the cursor, and everything else as in the grid.
+void TestTui::bigIcons()
+{
+    make("holiday-photo-from-the-beach.jpeg");
+    make("notes");
+    make("archive.tar.gz");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    keys({Key::of(Key::F9), Key::of(Key::F9)});
+    QCOMPARE(app->view(0), App::View::Icons);
+    Screen s(100, 30);
+    app->render(s);
+    const QString text = s.text();
+    const QStringList lines = text.split('\n');
+    // A line of items takes six screen lines: the frame's, three of picture, two of name.
+    QVERIFY2(lines.at(3).contains("▄▄▄") && lines.at(4).contains("███████"), qPrintable(text)); // folders
+    QVERIFY2(lines.at(6).contains("..") && lines.at(6).contains("Documents/") && lines.at(6).contains("alpha.txt"), qPrintable(text));
+    QVERIFY2(text.contains("│TXT │") || text.contains("│TXT"), qPrintable(text)); // a page says what it is
+    QVERIFY(text.contains("JPEG") && text.contains("≡≡≡≡"));                     // "notes" has no ending
+    // A long name goes on to a second line, at a natural place; nothing is lost at the edge.
+    QVERIFY2(text.contains("holiday-") && text.contains(".jpeg") && !text.contains("holiday-p"), qPrintable(text));
+    QVERIFY(!text.contains("holiday-photo-from-the-beach.jpeg"));
+    QVERIFY2(text.contains("archive.tar") && text.contains(".gz"), qPrintable(text));
+    // The frame is round the item under the cursor (the first item, not "..").
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    const int frameX = int(lines.at(2).indexOf("┌"));
+    QVERIFY2(frameX > 0 && lines.at(8).indexOf("└") == frameX, qPrintable(text));
+    QVERIFY(lines.at(6).indexOf("Documents/") > frameX);
+    QVERIFY(text.contains("F9 List"));
+
+    // The arrows move four ways; Right and Left neither open nor go up.
+    keys({Key::of(Key::Right)});
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    QCOMPARE(app->folder(0), m_left);
+    keys({Key::of(Key::Left), Key::of(Key::Left)});
+    QVERIFY(app->cursorPath().isEmpty()); // on ".."
+    QCOMPARE(app->folder(0), m_left);
+    keys({Key::of(Key::Right)});
+    // A click anywhere in a cell (its picture, its name) is on that item; a
+    // double click opens it; a right click selects.
+    app->render(s);
+    const QString nameLine = s.line(6);
+    const int alphaX = int(nameLine.indexOf("alpha.txt"));
+    QVERIFY(alphaX > 0);
+    app->mouse({Tui::Mouse::Press, alphaX + 3, 4}); // on its picture
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    app->mouse({Tui::Mouse::RightPress, alphaX + 3, 6}); // on its name
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    keys({Key::of(Key::Escape)});
+    const int docsX = int(nameLine.indexOf("Documents/"));
+    app->mouse({Tui::Mouse::Press, docsX + 2, 5});
+    app->mouse({Tui::Mouse::Press, docsX + 2, 5});
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    keys({Key::of(Key::Backspace)});
+    settle();
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    // Below the items: empty space.
+    app->mouse({Tui::Mouse::Press, docsX + 2, 26});
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+
+    // More than fits: Down goes a line of items, the cursor stays in sight, the wheel moves a line.
+    for (int i = 0; i < 80; ++i)
+        make(QStringLiteral("more%1.txt").arg(i, 2, 10, QChar('0')));
+    keys({Key::control('r')});
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen(100, 30).contains("86 items"), 10000);
+    keys({Key::of(Key::End)});
+    QCOMPARE(app->cursorPath(), m_left + "/notes");
+    QVERIFY(screen(100, 30).contains("notes"));
+    QVERIFY(!screen(100, 30).contains("Documents/"));
+    keys({Key::of(Key::Home)});
+    QVERIFY(screen(100, 30).contains("Documents/"));
+    app->mouse({Tui::Mouse::WheelDown, 5, 5});
+    QVERIFY(!screen(100, 30).contains("Documents/"));
+
+    // Remembered; a narrow pane still shows something sensible.
+    app = std::make_unique<App>(m_left, m_right);
+    settle();
+    QCOMPARE(app->view(0), App::View::Icons);
+    QCOMPARE(app->view(1), App::View::List);
+    QVERIFY(screen(40, 12).contains("███████"));
 }
 
 void TestTui::shellInTheFolder()

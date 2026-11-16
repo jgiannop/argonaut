@@ -633,7 +633,9 @@ repositories show their marks and branch.</p>
 <code>..</code>, goes up. [[g]] goes to a folder you type.</li>
 <li><b>Two panes:</b> [[F4]] shows a second pane beside the first, or goes back to one. [[Tab]] changes pane;
 [[F5]] copies and [[F6]] moves to the other pane.</li>
-<li><b>Grid or list:</b> [[F9]] shows the pane as a grid of names, or as a list with sizes and dates.</li>
+<li><b>List, grid or big icons:</b> [[F9]] goes round three views of the pane: a list with sizes and dates, a
+grid of names, and big icons (a picture made of characters for every item, with its name under it and a frame
+round the one you are on).</li>
 <li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell in the lower half, in the pane's
 folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
 files to its folder and <code>exit</code> closes it.</li>
