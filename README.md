@@ -217,12 +217,13 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | F5 / F6 | copy / move to the other pane |
 | F7 / F2 | new folder / rename |
 | F8 or Delete | move to the Trash |
-| D or Shift+Delete | delete forever (asks) |
+| Shift+Delete | delete forever (asks) |
 | Ctrl+Z / Ctrl+Y | undo / redo |
-| g | go to a folder (`trash` for the Trash) |
+| a letter or a digit | go to the name that starts with what you type; the same letter again goes to the next such name |
+| Ctrl+L | go to a folder (`trash` for the Trash) |
 | . | hidden files |
 | F1 | all keys |
-| q, Ctrl+Q or F10 | quit (GNOME Terminal keeps F10 for its own menu, so use q there) |
+| Ctrl+Q or F10 | quit (GNOME Terminal keeps F10 for its own menu, so use Ctrl+Q there) |
 
 A scrollbar at a pane's right edge shows where you are in a long folder; a click on it goes to that part. The mouse works too: click a row to go to it, double-click a folder or a file to open it (`..` or the folder's name at the top of the pane: up), right-click for a menu of what can be done with the item (it becomes the selection, as in the window; Space selects several), scroll with the wheel, and click a word on the bottom line ("F5 Copy"). While Argonaut has the mouse, hold Shift to select text the terminal's own way.
 

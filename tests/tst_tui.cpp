@@ -29,6 +29,14 @@ using Tui::App;
 using Tui::Key;
 using Tui::Screen;
 
+// Delete forever: Shift+Delete (a plain "D" is a letter now: typing goes to a name).
+static Tui::Key shiftDelete()
+{
+    Tui::Key key = Tui::Key::of(Tui::Key::Delete);
+    key.shift = true;
+    return key;
+}
+
 class TestTui : public QObject
 {
     Q_OBJECT
@@ -64,6 +72,7 @@ private slots:
     void extensionResultInThePreview();
     void themes();
     void effects();
+    void typingGoesToAName();
     void shellInTheFolder();
     void shellPanel();
 
@@ -184,7 +193,7 @@ void TestTui::showsTwoPanes()
     QVERIFY(!text.contains(".secret"));
     QVERIFY(text.contains("3 items"));
     QVERIFY(text.contains("Nothing here")); // the empty right pane
-    QVERIFY(lines.last().contains("F5 Copy") && lines.last().contains("q Quit"));
+    QVERIFY(lines.last().contains("F5 Copy") && lines.last().contains("^Q Quit"));
     // The cursor row of the active pane stands out.
     Screen s(100, 24);
     app->render(s);
@@ -312,7 +321,7 @@ void TestTui::trashesAndUndoes()
 void TestTui::deletingForeverAsksFirst()
 {
     app->selectPath(m_left + "/alpha.txt");
-    for (const Key &startKey : {Key::character('D'), [] { Key k = Key::of(Key::Delete); k.shift = true; return k; }()}) {
+    for (const Key &startKey : {shiftDelete(), [] { Key k = Key::of(Key::Delete); k.shift = true; return k; }()}) {
         keys({startKey});
         QVERIFY(app->isAsking());
         QVERIFY2(screen().contains("Permanently delete “alpha.txt”?"), qPrintable(screen()));
@@ -326,13 +335,13 @@ void TestTui::deletingForeverAsksFirst()
         QCOMPARE(app->message(), QStringLiteral("Nothing was changed"));
     }
     for (const Key &no : {Key::of(Key::Escape), Key::character('n'), Key::character('d'), Key::of(Key::F8)}) {
-        keys({Key::character('D'), no});
+        keys({shiftDelete(), no});
         QTest::qWait(50);
         QVERIFY(exists(m_left + "/alpha.txt"));
         QVERIFY(!app->isAsking());
     }
     // Only "y" deletes, and only what was asked about.
-    runJob([&] { keys({Key::character('D'), Key::character('y')}); });
+    runJob([&] { keys({shiftDelete(), Key::character('y')}); });
     QVERIFY(!exists(m_left + "/alpha.txt"));
     QVERIFY(!exists(Trash::homeFilesDir() + "/alpha.txt")); // not in the Trash: gone
     QVERIFY(exists(m_left + "/beta.txt"));
@@ -345,7 +354,7 @@ void TestTui::deleteInTheTrashAsksFirst()
     runJob([&] { keys({Key::of(Key::F8)}); });
     const QString trashed = Trash::homeFilesDir() + "/alpha.txt";
     QVERIFY(exists(trashed));
-    keys({Key::character('g'), Key::control('u')});
+    keys({Key::control('l'), Key::control('u')});
     type("trash");
     keys({Key::of(Key::Enter)});
     settle();
@@ -374,7 +383,7 @@ void TestTui::readOnlyFolderIsLeftAlone()
     QCOMPARE(app->cursorPath(), locked + "/inside.txt");
     keys({Key::of(Key::F8)});
     QCOMPARE(app->message(), QStringLiteral("You can't change items in this folder"));
-    keys({Key::character('D')});
+    keys({shiftDelete()});
     QVERIFY(!app->isAsking()); // not even asked
     keys({Key::of(Key::F6)});
     QCOMPARE(app->message(), QStringLiteral("You can't move items out of this folder"));
@@ -493,7 +502,7 @@ void TestTui::hiddenFilesAndGoTo()
     settle();
     QVERIFY(!screen().contains(".secret"));
     // Go to: a full path, a name inside the folder, and one that isn't there.
-    keys({Key::character('g'), Key::control('u')});
+    keys({Key::control('l'), Key::control('u')});
     type("Documents");
     keys({Key::of(Key::Enter)});
     QCOMPARE(app->folder(0), m_left + "/Documents");
@@ -581,7 +590,7 @@ void TestTui::gridView()
     QVERIFY2(lines.at(2).contains("../") && lines.at(2).contains("Documents/") && lines.at(2).contains("alpha.txt"),
              qPrintable(lines.at(2)));
     QVERIFY(!text.contains("Modified"));
-    QVERIFY(text.contains("F9 Icons") && text.contains("q Quit")); // what F9 goes to next
+    QVERIFY(text.contains("F9 Icons") && text.contains("^Q Quit")); // what F9 goes to next
     QCOMPARE(app->cursorPath(), m_left + "/Documents");
     QVERIFY2(lines.at(lines.size() - 3).contains("Documents") && lines.at(lines.size() - 3).contains("12 items"),
              qPrintable(lines.at(lines.size() - 3)));
@@ -911,7 +920,7 @@ void TestTui::placesAtTheLeft()
     app->render(s);
     QCOMPARE(s.at(2, rowOf("Trash")).style.paper, Tui::Paper::Cursor); // over the line
     // The files' keys do nothing to the files from here.
-    keys({Key::of(Key::F8), Key::character('D'), Key::of(Key::F7)});
+    keys({Key::of(Key::F8), shiftDelete(), Key::of(Key::F7)});
     settle();
     QVERIFY(!app->isAsking());
     QVERIFY(exists(m_left + "/Documents/inside.txt"));
@@ -997,7 +1006,7 @@ void TestTui::shellInTheFolder()
     QCOMPARE(app->folder(0), m_left);
     // In a place, the shell starts at home.
     QDir().mkpath(Trash::homeFilesDir());
-    keys({Key::character('g'), Key::control('u')});
+    keys({Key::control('l'), Key::control('u')});
     type("trash");
     keys({Key::of(Key::Enter)});
     settle();
@@ -1150,7 +1159,7 @@ void TestTui::quitWaitsForTheWork()
     QSignalSpy quit(app.get(), &App::quitRequested);
     keys({Key::of(Key::F10)});
     QCOMPARE(quit.size(), 1);
-    keys({Key::character('q')});
+    keys({Key::control('q')});
     QCOMPARE(quit.size(), 2);
     // While typing a name, "q" is a letter.
     keys({Key::of(Key::F7), Key::character('q'), Key::of(Key::Escape)});
@@ -1291,7 +1300,7 @@ void TestTui::mouseClicksAndDoubleClicks()
     QVERIFY(app->selectedPaths().isEmpty());
     // ".." is no target: with the cursor on it the commands do nothing.
     app->mouse({Mouse::Press, 10, 3});
-    keys({Key::of(Key::F8), Key::character('D'), Key::of(Key::F5), Key::of(Key::F2)});
+    keys({Key::of(Key::F8), shiftDelete(), Key::of(Key::F5), Key::of(Key::F2)});
     QVERIFY(!app->isAsking() && !app->isBusy());
     QVERIFY(exists(m_left + "/Documents") && exists(m_left + "/alpha.txt"));
     QTest::qWait(500);
@@ -1325,7 +1334,7 @@ void TestTui::mouseClicksAndDoubleClicks()
 
     // While a question is open the mouse does nothing: not "yes", not "no".
     app->selectPath(m_left + "/many/file05.txt");
-    keys({Key::character('D')});
+    keys({shiftDelete()});
     QVERIFY(app->isAsking());
     for (int y = 0; y < 24; ++y)
         app->mouse({Mouse::Press, 20, y});
@@ -1914,6 +1923,96 @@ void TestTui::effects()
     app->setTheme("terminal");
 }
 
+// Typing goes to a name, as in the window: what is typed is the start of
+// the name (else something inside it), the same letter again goes through
+// the names that start with it, and a pause begins a new name. So a plain
+// letter is never a command: q doesn't quit, D doesn't delete.
+void TestTui::typingGoesToAName()
+{
+    make("delta.txt");
+    make("doc 2.txt");
+    make("Ωmega.txt");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QSignalSpy quit(app.get(), &App::quitRequested);
+    auto name = [this] { return QFileInfo(app->cursorPath()).fileName(); };
+    auto pause = [] { QTest::qWait(1100); }; // longer than a name is waited for
+
+    type("b");
+    QCOMPARE(name(), QStringLiteral("beta.txt"));
+    QCOMPARE(app->typedName(), QStringLiteral("b"));
+    QVERIFY2(screen().contains("Typed: b"), qPrintable(screen()));
+    // Going on: every character is part of the name, a dot too (it doesn't show the hidden files).
+    type("eta.t");
+    QCOMPARE(name(), QStringLiteral("beta.txt"));
+    QVERIFY(!screen().contains(".secret"));
+    pause();
+
+    // The start of a name, whatever its case; more typed, and it is another one.
+    type("DO");
+    QCOMPARE(name(), QStringLiteral("Documents"));
+    type("c ");
+    QCOMPARE(name(), QStringLiteral("doc 2.txt")); // a space is part of a name: nothing was selected
+    QVERIFY(app->selectedPaths().isEmpty());
+    // Backspace takes a character back (it doesn't go up a folder now).
+    keys({Key::of(Key::Backspace), Key::of(Key::Backspace)});
+    QCOMPARE(app->typedName(), QStringLiteral("DO"));
+    QCOMPARE(app->folder(0), m_left);
+    pause();
+
+    // The same letter again and again: through the names that start with it, round and round.
+    keys({Key::of(Key::Home)});
+    QStringList seen;
+    for (int i = 0; i < 4; ++i) {
+        type("d");
+        seen << name();
+    }
+    QCOMPARE(seen, (QStringList{"Documents", "delta.txt", "doc 2.txt", "Documents"}));
+    pause();
+
+    // No name starts with it: one that has it inside. Accents and scripts don't matter.
+    type("lph");
+    QCOMPARE(name(), QStringLiteral("alpha.txt"));
+    pause();
+    type("ω");
+    QCOMPARE(name(), QStringLiteral("Ωmega.txt"));
+    pause();
+    // Nothing has it: the cursor stays, and that is said.
+    type("zzq");
+    QCOMPARE(name(), QStringLiteral("Ωmega.txt"));
+    QVERIFY2(app->message().contains("no name has that"), qPrintable(app->message()));
+    // Esc ends it; the next key is its own again.
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->typedName().isEmpty());
+    keys({Key::of(Key::Home)});
+    QVERIFY(app->cursorPath().isEmpty()); // on ".."
+
+    // Letters that were commands are letters: nothing quit, nothing was deleted or asked.
+    pause();
+    type("q");
+    QCOMPARE(quit.size(), 0);
+    pause();
+    type("D");
+    QVERIFY(!app->isAsking());
+    QCOMPARE(name(), QStringLiteral("Documents")); // the first that starts with d, whatever the case
+    pause();
+    type("g");
+    QVERIFY(!app->isAsking()); // no "go to" line
+    keys({Key::control('q')});
+    QCOMPARE(quit.size(), 1);
+    keys({Key::of(Key::Escape)});
+
+    // In the grid and with big icons too.
+    pause();
+    keys({Key::of(Key::F9)});
+    type("al");
+    QCOMPARE(name(), QStringLiteral("alpha.txt"));
+    pause();
+    keys({Key::of(Key::F9)});
+    type("be");
+    QCOMPARE(name(), QStringLiteral("beta.txt"));
+}
+
 // Themes: the terminal's own colours unless one of Argonaut's themes is
 // chosen in the command palette; then every cell has the theme's colours
 // (the nearest of the terminal's 256), the places their own background.
@@ -2070,7 +2169,7 @@ void TestTui::previewAtTheRight()
     QVERIFY(app->isInPreview());
     keys({Key::of(Key::PageDown), Key::of(Key::Down)});
     QVERIFY(!screen(120, 30).contains("line number 2 "));
-    keys({Key::of(Key::F8), Key::of(Key::Delete), Key::character('D')});
+    keys({Key::of(Key::F8), Key::of(Key::Delete), shiftDelete()});
     settle();
     QVERIFY(!app->isAsking());
     QVERIFY(exists(text));

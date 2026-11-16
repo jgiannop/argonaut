@@ -656,7 +656,10 @@ repositories show their marks and branch.</p>
 <ul>
 <li><b>Moving:</b> the arrow keys, [[PgUp]] / [[PgDn]], [[Home]] / [[End]]. [[Enter]] opens a folder or a file
 (with its app; where there is no desktop, a text file is shown in the terminal). [[Backspace]], or Enter on
-<code>..</code>, goes up. [[g]] goes to a folder you type.</li>
+<code>..</code>, goes up. [[Ctrl+L]] goes to a folder you type.</li>
+<li><b>Typing goes to a name</b>, as it does here: type the first letters and the cursor goes to the item that
+starts with them (or has them inside). The same letter again goes to the next name that starts with it.
+[[Backspace]] takes a letter back, [[Esc]] or a second's pause ends it. So plain letters are never commands.</li>
 <li><b>Places:</b> the same list as this window's sidebar is at the left (Recent, Starred, Home and the other
 standard folders, the Trash, bookmarks, drives). Click one, or go to the list with [[Tab]], choose with the arrows and
 press [[Enter]]; it opens in the pane you were in. [[Ctrl+B]] hides or shows the list.</li>
@@ -693,7 +696,7 @@ character. Switch them off for the plain look, or on a slow connection: they sen
 here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
 pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is
 the folder's. [[Space]] or [[Insert]] select several.</li>
-<li>[[F1]] lists every key; [[q]] or [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
+<li>[[F1]] lists every key; [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>
 <p>Menus, search, tabs and the preview pane are not in the terminal version yet.</p>
 )"));

@@ -1260,9 +1260,73 @@ void App::mouse(const Mouse &mouse)
     }
 }
 
+// The name that is being typed: the cursor goes to the first item of the
+// folder whose name starts with it, else to the first that has it inside;
+// while more is typed, the item it is on stays as long as it still fits.
+// The same letter again and again goes through the names that start with
+// it, from the cursor on, round and round. Case and accents don't matter.
+void App::typeAhead(const QString &typed)
+{
+    Pane &p = pane();
+    m_typed = typed;
+    m_typedAt.start();
+    const int count = p.model->rowCount();
+    const int up = upRows(p);
+    const QString wanted = DirectoryModel::foldForSearch(typed);
+    bool same = wanted.size() > 1;
+    for (const QChar c : wanted)
+        same = same && c == wanted.at(0);
+    const QString start = same ? wanted.left(1) : wanted; // "ddd": the next name that starts with d
+    const int from = qMax(0, p.cursor - up);
+    auto nameAt = [&](int row) { return DirectoryModel::foldForSearch(p.model->fileName(p.model->index(row, 0))); };
+    int found = -1;
+    if (same) {
+        for (int step = 1; step <= count && found < 0; ++step) {
+            const int row = (from + step) % count;
+            if (nameAt(row).startsWith(start))
+                found = row;
+        }
+    } else {
+        if (wanted.size() > 1 && count > 0 && p.cursor >= up && nameAt(from).startsWith(wanted))
+            found = from;
+        for (int row = 0; row < count && found < 0; ++row) {
+            if (nameAt(row).startsWith(wanted))
+                found = row;
+        }
+        for (int row = 0; row < count && found < 0; ++row) {
+            if (nameAt(row).contains(wanted))
+                found = row;
+        }
+    }
+    if (found >= 0) {
+        moveCursor(p, found + up);
+        say(QStringLiteral("Typed: %1").arg(typed));
+    } else {
+        say(count == 0 ? QStringLiteral("Nothing here to go to") : QStringLiteral("Typed: %1 · no name has that").arg(typed));
+    }
+}
+
 void App::normalKey(const Key &key)
 {
     Pane &p = pane();
+    // Any key that isn't typing ends the name being typed; Backspace takes
+    // its last character away while it is still going.
+    if (key.code != Key::Char && !m_typed.isEmpty()) {
+        const bool going = m_typedAt.isValid() && m_typedAt.elapsed() < TypeAheadMs;
+        const QString typed = m_typed;
+        m_typed.clear();
+        if (going && key.code == Key::Backspace) {
+            if (typed.size() > 1)
+                typeAhead(typed.left(typed.size() - (typed.at(typed.size() - 1).isLowSurrogate() ? 2 : 1)));
+            else
+                say(QString());
+            return;
+        }
+        if (going && key.code == Key::Escape) {
+            say(QString());
+            return;
+        }
+    }
     switch (key.code) {
     case Key::Up:
         if (p.cursor - perLine(p) >= 0)
@@ -1377,6 +1441,16 @@ void App::normalKey(const Key &key)
         return;
     }
 
+    // Typing goes to a name, as in the window: a letter or a digit starts,
+    // and while it goes on (a second without a key ends it) every character
+    // is part of the name: a dot, a space, a dash.
+    if (!key.ctrl && !key.alt && key.ch >= 32 && key.ch != 127) {
+        const bool going = !m_typed.isEmpty() && m_typedAt.isValid() && m_typedAt.elapsed() < TypeAheadMs;
+        if (going || QChar::isLetterOrNumber(key.ch)) {
+            typeAhead((going ? m_typed : QString()) + QString::fromUcs4(&key.ch, 1));
+            return;
+        }
+    }
     if (key.isControl('z')) {
         if (m_ops->canUndo())
             m_ops->undo();
@@ -1391,7 +1465,7 @@ void App::normalKey(const Key &key)
         for (int item = 0; item < p.model->rowCount(); ++item)
             p.selected.insert(p.model->filePath(p.model->index(item, 0)));
         emit changed();
-    } else if (key.isControl('l') || key.isChar('g')) {
+    } else if (key.isControl('l')) {
         goTo();
     } else if (key.isControl('b')) {
         setSidebarShown(!m_sidebar);
@@ -1399,7 +1473,7 @@ void App::normalKey(const Key &key)
         p.model->refresh();
         Extensions::Host::instance()->refreshAll();
         say(QStringLiteral("Read again"));
-    } else if (key.isControl('q') || key.isChar('q')) {
+    } else if (key.isControl('q')) {
         quit();
     } else if (key.isChar(' ')) {
         normalKey(Key::of(Key::Insert));
@@ -1407,8 +1481,6 @@ void App::normalKey(const Key &key)
         toggleHidden();
     } else if (key.isChar('~')) {
         navigate(p, QDir::homePath());
-    } else if (key.isChar('D')) {
-        remove(true);
     } else if (key.isChar('?')) {
         m_mode = Mode::Help;
         emit changed();
@@ -1648,7 +1720,7 @@ bool App::sidebarKey(const Key &key)
     case Key::Char:
         // Quitting and the sidebar's own switch; other letters do nothing
         // here (they would act on files that aren't what the keys are on).
-        return !(key.isChar('q') || key.isControl('q') || key.isControl('b'));
+        return !(key.isControl('q') || key.isControl('b'));
     default:
         return true;
     }
@@ -1820,10 +1892,10 @@ QList<App::Menu> App::menus()
     file.items.append(item(QStringLiteral("Move to the Other Pane"), QStringLiteral("F6"), press(Key::of(Key::F6)), some && m_split));
     file.items.append(line());
     file.items.append(item(QStringLiteral("Move to Trash"), QStringLiteral("F8"), press(Key::of(Key::F8)), some));
-    file.items.append(item(QStringLiteral("Delete Permanently…"), QStringLiteral("D"), press(Key::character('D')), some));
+    file.items.append(item(QStringLiteral("Delete Permanently…"), QStringLiteral("Shift+Del"), press([] { Key k = Key::of(Key::Delete); k.shift = true; return k; }()), some));
     fromExtensions(&file.items, "file");
     file.items.append(line());
-    file.items.append(item(QStringLiteral("Quit"), QStringLiteral("q"), press(Key::character('q')), true, QStringLiteral("Quit Argonaut")));
+    file.items.append(item(QStringLiteral("Quit"), QStringLiteral("Ctrl+Q"), press(Key::control('q')), true, QStringLiteral("Quit Argonaut")));
     file.items.last().late = true;
     list.append(file);
 
@@ -1881,7 +1953,7 @@ QList<App::Menu> App::menus()
     go.items.append(item(QStringLiteral("Back"), QStringLiteral("Alt+Left"), press(back), !p.back.isEmpty(), QStringLiteral("Go Back")));
     go.items.append(item(QStringLiteral("Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace)), true, QStringLiteral("Go Up")));
     go.items.append(item(QStringLiteral("Home"), QStringLiteral("~"), press(Key::character('~')), true, QStringLiteral("Go Home")));
-    go.items.append(item(QStringLiteral("Go to Folder…"), QStringLiteral("g"), press(Key::character('g'))));
+    go.items.append(item(QStringLiteral("Go to Folder…"), QStringLiteral("Ctrl+L"), press(Key::control('l'))));
     go.items.append(line());
     // The places, each by its name.
     if (m_places.isEmpty())
@@ -2984,7 +3056,7 @@ bool App::previewKey(const Key &key)
                    true);
             return true;
         }
-        return !(key.isChar('q') || key.isControl('q') || key.isControl('b'));
+        return !(key.isControl('q') || key.isControl('b'));
     default:
         return true;
     }
@@ -3614,10 +3686,11 @@ void App::drawBottom(Screen &screen)
         Key::Code code;
     } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "Preview", Key::F3}, {"F4", "Split", Key::F4},
                 {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6}, {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8},
-                {"F9", "Grid", Key::F9}, {"^P", "Commands", Key::None}, {"q", "Quit", Key::F10},
+                {"F9", "Grid", Key::F9}, {"^P", "Commands", Key::None}, {"^Q", "Quit", Key::F10},
                 {"F12", "Terminal", Key::F12}};
-    // "q", not "F10": GNOME Terminal keeps F10 for its own menu, so there it
-    // never arrives. (F10 and Ctrl+Q quit too, where they get through.)
+    // "^Q", not "F10": GNOME Terminal keeps F10 for its own menu, so there it
+    // never arrives. (F10 quits too, where it gets through. A plain "q" is a
+    // letter: typing goes to a name.)
     bool tight = false; // short words, where the line is too narrow for the usual ones
     auto labelOf = [this, &tight](Key::Code code, const char *what) {
         if (code == Key::F4 && m_split)
@@ -3692,7 +3765,9 @@ void App::drawHelp(Screen &screen)
         "                                    (in them: Up, Down, Enter opens one in the pane; a click does too)",
         "  F9                                this pane as a list, a grid of names, or big icons",
         "                                    (in a grid the arrows move four ways; Enter opens, Backspace goes up)",
-        "  g  or  Ctrl+L                     go to a folder (\"trash\" for the Trash)",
+        "  a letter or a digit               go to the name that starts with what you type (keep typing;",
+        "                                    the same letter again: the next such name; Esc or a pause ends it)",
+        "  Ctrl+L                            go to a folder (\"trash\" for the Trash)",
         "  ~                                 home",
         "  .                                 show or hide hidden files",
         "  Ctrl+R                            read the folder again",
@@ -3704,10 +3779,10 @@ void App::drawHelp(Screen &screen)
         "  F7                                new folder",
         "  F2                                rename",
         "  F8, Delete                        move to the Trash",
-        "  D, Shift+Delete                   delete forever (asks first)",
+        "  Shift+Delete                      delete forever (asks first)",
         "  Ctrl+Z / Ctrl+Y                   undo / redo",
         "",
-        "  q, Ctrl+Q, F10                    quit (some terminals keep F10 for their own menu)",
+        "  Ctrl+Q, F10                       quit (some terminals keep F10 for their own menu)",
         "",
         "  Mouse: click a row to go to it, double-click to open it (.. or the folder's",
         "  name at the top: up), right-click for the menu of what can be done with it (it",

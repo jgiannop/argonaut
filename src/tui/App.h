@@ -117,6 +117,7 @@ public:
     QString cursorPath() const;         // the item under the active pane's cursor
     QStringList selectedPaths() const;  // the active pane's selection
     QString message() const { return m_message; }
+    QString typedName() const { return m_typed; } // the name being typed to go to (tests)
     bool isAsking() const { return m_mode != Mode::Normal; } // a question or a text field is open
     bool isBusy() const;                // a file operation is running
     bool isLoading() const;             // a folder is still being listed
@@ -266,6 +267,7 @@ private:
     void questionKey(const Key &key);
     void conflictKey(const Key &key);
     void normalKey(const Key &key);
+    void typeAhead(const QString &typed); // the cursor goes to the name that is being typed
     void nextConflict();
     void jobFinished(FileJob *job);
 
@@ -290,6 +292,11 @@ private:
     bool m_split = false;      // both panes are on screen
     bool m_secondUsed = false; // the second pane has been shown once (it has its own folder now)
     bool m_showHidden = false;
+    // Typing a name to go to it: what was typed, and when the last key was
+    // (a pause of TypeAheadMs starts a new name).
+    QString m_typed;
+    QElapsedTimer m_typedAt;
+    static constexpr int TypeAheadMs = 1000;
     bool m_effects = true;
     int m_sideHover = -1;      // the row of the places under the mouse
     void hoverAt(int x, int y); // the mouse moved (no button): what is under it lights up
