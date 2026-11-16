@@ -673,8 +673,9 @@ void App::jobFinished(FileJob *job)
 
 // --------------------------------------------- prompts and questions ---
 
-void App::prompt(const QString &label, const QString &text, int selectTo, std::function<void(const QString &)> done)
+void App::prompt(const QString &label, const QString &text, int selectTo, std::function<void(const QString &)> done, bool emptyToo)
 {
+    m_promptEmptyToo = emptyToo;
     m_mode = Mode::Prompt;
     m_promptLabel = label;
     m_promptText = text;
@@ -702,7 +703,7 @@ void App::promptKey(const Key &key)
         const auto done = std::move(m_promptDone);
         const QString text = m_promptText;
         m_promptDone = nullptr;
-        if (done && !text.isEmpty())
+        if (done && (!text.isEmpty() || m_promptEmptyToo))
             done(text);
         break;
     }
@@ -2646,6 +2647,11 @@ void App::showResult(const QString &title, const Extensions::PreviewReply &conte
         m_resultExtension = content.extension;
         m_resultId = content.resultId;
         m_resultRoom = QSize(); // told once the pane has been laid out
+        m_resultSearch.clear();
+    }
+    if (!same) { // said when the result comes; making it again doesn't take the search away
+        m_resultSearchable = content.searchable && !content.resultId.isEmpty();
+        m_resultSearchHint = content.searchHint;
     }
     emit changed();
 }
@@ -2662,6 +2668,8 @@ void App::closeResult()
     m_resultExtension.clear();
     m_resultId.clear();
     m_resultRoom = QSize();
+    m_resultSearchable = false;
+    m_resultSearch.clear();
 }
 
 // The named result's extension is told the room there is, in characters
@@ -2801,8 +2809,11 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
             screen.put(x + width - 1, contentY + i, on ? QStringLiteral("█") : QStringLiteral("│"),
                        {on ? (m_inPreview ? Ink::Accent : Ink::Normal) : Ink::Dim, Paper::Normal, false});
         }
-        screen.put(x + 2, top + height - 1, QStringLiteral("lines %1–%2 of %3").arg(m_previewTop + 1).arg(qMin(count, m_previewTop + rows)).arg(count),
+        screen.put(x + 2, top + height - 1, QStringLiteral("lines %1–%2 of %3").arg(m_previewTop + 1).arg(qMin(count, m_previewTop + rows)).arg(count)
+                                                + (m_resultShown && m_resultSearchable ? QStringLiteral(" · / search") : QString()),
                    kDim, inner);
+    } else if (m_resultShown && m_resultSearchable) {
+        screen.put(x + 2, top + height - 1, QStringLiteral("/ search"), kDim, inner);
     }
 }
 
@@ -2831,6 +2842,22 @@ bool App::previewKey(const Key &key)
     case Key::Char:
         if (key.isChar(' ')) { // a page on, as in a pager
             scrollPreview(m_previewTop + page);
+            return true;
+        }
+        if (key.isChar('/') && m_resultShown && m_resultSearchable) {
+            // A result that can be searched (a list of processes): what is
+            // typed goes to its extension, which makes the list again.
+            // Nothing typed: everything again.
+            const QString extension = m_resultExtension, id = m_resultId;
+            prompt(m_resultSearchHint.isEmpty() ? QStringLiteral("Search") : m_resultSearchHint, m_resultSearch, int(m_resultSearch.size()),
+                   [this, extension, id](const QString &text) {
+                       if (!m_resultShown || m_resultExtension != extension || m_resultId != id)
+                           return; // it went while the text was typed
+                       m_resultSearch = text.trimmed();
+                       m_previewTop = 0;
+                       Extensions::Host::instance()->searchResult(extension, id, m_resultSearch);
+                   },
+                   true);
             return true;
         }
         return !(key.isChar('q') || key.isControl('q') || key.isControl('b'));
@@ -3466,7 +3493,8 @@ void App::drawHelp(Screen &screen)
         "  Up, Down, PgUp, PgDn, Home, End   move",
         "  Enter, Right                      open the folder, or the file with its app",
         "  F3                                the preview at the right: what is in the file under the cursor",
-        "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel)",
+        "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
+        "                                    in a list of services or processes, / searches it)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
         "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it)",
         "  Backspace, Left, Enter on ..      up to the folder it is in",

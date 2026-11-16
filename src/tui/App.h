@@ -250,7 +250,8 @@ private:
     void say(const QString &text);
 
     // A line of text typed at the bottom; `done` gets it on Enter.
-    void prompt(const QString &label, const QString &text, int selectTo, std::function<void(const QString &)> done);
+    // `emptyToo`: Enter on an empty line is an answer too (a search for nothing: everything).
+    void prompt(const QString &label, const QString &text, int selectTo, std::function<void(const QString &)> done, bool emptyToo = false);
     // A FileRules question at the bottom; `yes` runs only on "y".
     void ask(const FileRules::Question &question, std::function<void()> yes);
     void promptKey(const Key &key);
@@ -314,6 +315,8 @@ private:
     QString m_resultExtension, m_resultId; // an extension's named result is what is shown
     QString m_resultCursor;      // the item the cursor was on when it came: it stays while that is so
     bool m_resultShown = false;  // a result (named or not) has the pane
+    bool m_resultSearchable = false; // its extension said it can be searched: "/" in the preview asks for the text
+    QString m_resultSearch, m_resultSearchHint; // what was last searched for, and what the question says
     QSize m_resultRoom;          // the room its extension was last told of
     QStringList m_previewWrapped; // m_previewLines cut to the pane's width…
     int m_previewWrapWidth = -1;  // …which was this
@@ -345,6 +348,7 @@ private:
     QString m_promptText;
     int m_promptCursor = 0;
     std::function<void(const QString &)> m_promptDone;
+    bool m_promptEmptyToo = false;
     FileRules::Question m_question;
     std::function<void()> m_questionYes;
     struct Conflict

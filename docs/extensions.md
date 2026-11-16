@@ -18,7 +18,7 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Eight extensions come with Argonaut and are good to read: Connect to Server
+Nine extensions come with Argonaut and are good to read: Connect to Server
 ([`extensions/connect`](../extensions/connect): rows in the sidebar, a kind of
 address that is its to open, and forms for the questions a server asks),
 System Dashboard
@@ -28,7 +28,9 @@ shown as a result that updates while it is on screen), Space Overview
 biggest things inside it, a result that fills in while the folder is
 measured), Running Services
 ([`extensions/services`](../extensions/services): systemd's running services,
-most memory first: a picture in the window, a list in the terminal), Document Preview
+most memory first: a picture in the window, a list in the terminal), Running
+Processes ([`extensions/processes`](../extensions/processes): the same for
+every process, read from `/proc`), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
 spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands
@@ -340,6 +342,29 @@ pane and never takes it from a file, so a late one does no harm; but stop
 when you are told `"shown": false`, and don't update more often than the
 user can read (the dashboard does it every two seconds). A picture drawn at
 exactly `width` pixels is shown as it is, not scaled.
+
+**A result the user can search.** Put `"search"` in the `show` of a named
+result (its value is what the empty field says) and Argonaut puts a search
+field over it:
+
+```json
+{"type": "show", "id": "processes", "title": "Running Processes",
+ "kind": "image", "image": "/run/user/1000/my-list.png", "scroll": true,
+ "search": "Search processes"}
+```
+
+What the user types comes to you once the typing pauses, and again, with
+an empty text, when the field is emptied:
+
+```json
+{"type": "search", "id": "processes", "text": "chrom"}
+```
+
+Answer by making the result again (an `update`) with only what fits. The
+search is yours to do: Argonaut doesn't know what your picture shows. The
+field goes when the result goes (`"shown": false`): forget the text then.
+In the terminal interface the field is a question at the bottom, asked
+when the user presses `/` in the preview.
 
 ### Lists of files
 

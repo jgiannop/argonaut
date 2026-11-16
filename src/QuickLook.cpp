@@ -20,6 +20,8 @@
 #include <QTextBrowser>
 #include <QTimer>
 #include <QRegularExpression>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QThreadPool>
@@ -108,6 +110,26 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     top->addWidget(close);
     layout->addLayout(top);
     layout->addWidget(m_details);
+    // A search field, for a result its extension says can be searched (a
+    // list of processes). The pane itself never takes the keyboard; this
+    // field does when it is clicked, and gives it back on Esc or Enter.
+    m_search = new QLineEdit(this);
+    m_search->setObjectName("searchEdit");
+    m_search->setClearButtonEnabled(true);
+    m_search->setFocusPolicy(Qt::ClickFocus);
+    m_search->setMaxLength(200);
+    m_search->setFixedHeight(32);
+    m_search->hide();
+    m_search->installEventFilter(this);
+    layout->addWidget(m_search);
+    m_searchTimer = new QTimer(this);
+    m_searchTimer->setSingleShot(true);
+    m_searchTimer->setInterval(150);
+    connect(m_search, &QLineEdit::textChanged, m_searchTimer, qOverload<>(&QTimer::start));
+    connect(m_searchTimer, &QTimer::timeout, this, [this] {
+        if (!m_resultId.isEmpty() && m_search->isVisibleTo(this))
+            Extensions::Host::instance()->searchResult(m_resultExtension, m_resultId, m_search->text());
+    });
 
     m_pages = new QStackedWidget(this);
     m_picture = new PictureView(m_pages);
@@ -362,6 +384,8 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
         m_resultExtension = content.extension;
         m_resultId = content.resultId;
         reportResult();
+        if (content.searchable)
+            setSearchShown(true, content.searchHint);
     }
     return true;
 }
@@ -393,8 +417,41 @@ void QuickLook::reportResult()
     Extensions::Host::instance()->resultShown(m_resultExtension, m_resultId, true, room, look);
 }
 
+void QuickLook::setSearchShown(bool on, const QString &hint)
+{
+    if (!on) {
+        const bool had = m_search->hasFocus();
+        m_searchTimer->stop();
+        const QSignalBlocker blocker(m_search);
+        m_search->clear();
+        m_search->hide();
+        if (had)
+            emit keysBackRequested();
+        return;
+    }
+    m_search->setPlaceholderText(hint.isEmpty() ? tr("Search") : hint);
+    m_search->show();
+}
+
+bool QuickLook::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_search && event->type() == QEvent::KeyPress) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Escape && !m_search->text().isEmpty()) {
+            m_search->clear(); // the first Esc: everything again
+            return true;
+        }
+        if (key == Qt::Key_Escape || key == Qt::Key_Return || key == Qt::Key_Enter) {
+            emit keysBackRequested();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void QuickLook::closeResult()
 {
+    setSearchShown(false);
     if (m_resultId.isEmpty())
         return;
     m_resultTimer->stop();

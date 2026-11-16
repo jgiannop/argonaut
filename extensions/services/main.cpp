@@ -249,143 +249,59 @@ QString countsText(const Services &s)
 
 QString usedText(const Services &s)
 {
-    return s.memoryTotal > 0 ? QStringLiteral("Together they use %1 of %2 memory").arg(formatSize(s.used), formatSize(s.memoryTotal))
+    return s.memoryTotal > 0 ? QStringLiteral("Together they use\n%1 of %2 memory").arg(formatSize(s.used), formatSize(s.memoryTotal))
                              : QStringLiteral("Together they use %1").arg(formatSize(s.used));
 }
 
-// ------------------------------------------------------------ picture ---
+// ------------------------------------------------- what is drawn ---
+// The drawing itself is shared (ResultDrawing.h: drawList, drawListAnsi).
 
-// For a pane `width` pixels wide: every service, however tall that makes
-// the picture (Argonaut scrolls it: "scroll"), up to a few hundred.
-QImage draw(const Services &s, int width, const Look &look)
+ListHead headOf(const Services &s)
 {
-    width = qBound(240, width, 4000);
-    g_font = look.font;
-    const double u = qBound(10.0, width / 34.0, 20.0); // the size of ordinary text
-    const double rowHeight = u * 2.7;
-    const double headHeight = u * 9.6;
-    const double listTop = headHeight + 2 * u;
-    const int count = int(s.list.size());
-    const int shown = qMin(count, 250); // a picture has a limit to its height
-    const bool more = count > shown;
-    const double listHeight = u * 3.2 + rowHeight * qMax(1, shown) + (more ? u * 1.9 : 0);
-
-    QImage image(width, int(listTop + listHeight + u + 0.5), QImage::Format_RGB32);
-    image.fill(look.window);
-    QPainter p(&image);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setRenderHint(QPainter::TextAntialiasing);
-    const double left = 2 * u, room = width - 4 * u;
-    auto text = [&](double y, double lineHeight, int flags, const QString &string) {
-        p.drawText(QRectF(left, y, room, lineHeight), flags | Qt::AlignVCenter, p.fontMetrics().elidedText(string, Qt::ElideRight, int(room)));
-    };
-    auto bar = [&](double y, double barHeight, double share, const QColor &color) {
-        p.setPen(Qt::NoPen);
-        p.setBrush(look.track);
-        p.drawRoundedRect(QRectF(left, y, room, barHeight), barHeight / 2, barHeight / 2);
-        const double filled = room * qBound(0.0, share, 1.0);
-        if (filled >= 1) {
-            p.setBrush(color);
-            p.drawRoundedRect(QRectF(left, y, qMax(filled, barHeight), barHeight), barHeight / 2, barHeight / 2);
-        }
-    };
-
-    // How many, and how much of the memory they have together.
-    card(p, QRectF(u, u, width - 2 * u, headHeight), look, u);
-    p.setPen(look.dim);
-    p.setFont(fontOf(u));
-    text(u * 1.5, u * 1.5, Qt::AlignLeft, QStringLiteral("RUNNING SERVICES"));
-    p.setPen(look.text);
-    p.setFont(fontOf(u * 2.1, true));
-    text(u * 3.1, u * 2.8, Qt::AlignLeft, QString::number(count));
-    p.setPen(look.dim);
-    p.setFont(fontOf(u));
-    text(u * 3.9, u * 1.8, Qt::AlignRight, countsText(s));
-    const double share = s.memoryTotal > 0 ? double(s.used) / double(s.memoryTotal) : 0;
-    bar(u * 7.0, u * 0.8, share, levelColor(look, share));
-    p.setPen(look.dim);
-    p.setFont(fontOf(u * 0.9));
-    text(u * 8.3, u * 1.6, Qt::AlignLeft, usedText(s));
-
-    // The services, most memory first. A bar is against the biggest.
-    card(p, QRectF(u, listTop, width - 2 * u, listHeight), look, u);
-    p.setPen(look.text);
-    p.setFont(fontOf(u * 1.05));
-    text(listTop + u * 0.7, u * 1.6, Qt::AlignLeft, QStringLiteral("BY MEMORY"));
-    double y = listTop + u * 2.8;
-    if (count == 0) {
-        p.setPen(look.dim);
-        p.setFont(fontOf(u));
-        text(y, u * 1.6, Qt::AlignLeft, s.problem);
-    }
-    const qint64 biggest = count > 0 ? qMax<qint64>(1, s.list.first().bytes) : 1;
-    for (int i = 0; i < shown; ++i, y += rowHeight) {
-        const Service &service = s.list.at(i);
-        p.setFont(fontOf(u));
-        const QString size = sizeOf(service);
-        const int sizeWidth = p.fontMetrics().horizontalAdvance(size);
-        p.setPen(look.dim);
-        p.drawText(QRectF(left, y, room, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, size);
-        // The name, then what it is (or that it is the user's) in the room that is left.
-        const double nameRoom = room - sizeWidth - u;
-        const QString name = p.fontMetrics().elidedText(service.name, Qt::ElideMiddle, qMax(10, int(nameRoom)));
-        p.setPen(look.text);
-        p.drawText(QRectF(left, y, nameRoom, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter, name);
-        const double used = p.fontMetrics().horizontalAdvance(name) + u * 0.8;
-        const QString about = service.user ? (service.description.isEmpty() ? QStringLiteral("user") : QStringLiteral("user · ") + service.description)
-                                           : service.description;
-        if (!about.isEmpty() && nameRoom - used > u * 5) {
-            p.setPen(look.dim);
-            p.setFont(fontOf(u * 0.9));
-            p.drawText(QRectF(left + used, y, nameRoom - used, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter,
-                       p.fontMetrics().elidedText(about, Qt::ElideRight, int(nameRoom - used)));
-        }
-        bar(y + u * 1.75, u * 0.45, service.bytes > 0 ? double(service.bytes) / double(biggest) : 0,
-            service.user ? mix(look.accent, look.card, 0.45) : look.accent);
-    }
-    if (more) {
-        p.setPen(look.dim);
-        p.setFont(fontOf(u * 0.95));
-        text(y, u * 1.6, Qt::AlignLeft, QStringLiteral("and %1 more, each using less").arg(count - shown));
-    }
-    return image;
+    ListHead head;
+    head.title = QStringLiteral("RUNNING SERVICES");
+    head.big = QString::number(s.list.size());
+    head.beside = countsText(s);
+    head.share = s.memoryTotal > 0 ? double(s.used) / double(s.memoryTotal) : 0;
+    head.line = usedText(s);
+    head.listTitle = QStringLiteral("BY MEMORY");
+    head.empty = s.problem;
+    return head;
 }
 
-// ---------------------------------------------- the same, in a terminal ---
-// Every service, a line each: the pane scrolls.
-
-QString drawAnsi(const Services &s, int columns)
+// The services as rows; a bar is against the biggest.
+QList<ListRow> rowsOf(const Services &s)
 {
-    columns = qBound(24, columns, 200);
-    QStringList out;
-    out << kBold + QStringLiteral("RUNNING SERVICES") + kReset;
-    out << kBold + QString::number(s.list.size()) + kReset + kDim + QStringLiteral(" · ") + countsText(s) + kReset;
-    const double share = s.memoryTotal > 0 ? double(s.used) / double(s.memoryTotal) : 0;
-    out << blocks(columns, share, levelIndex(share));
-    if (usedText(s).size() <= columns) {
-        out << kDim + usedText(s) + kReset;
-    } else { // a narrow pane: on two lines
-        out << kDim + QStringLiteral("Together they use") + kReset;
-        out << kDim + (s.memoryTotal > 0 ? QStringLiteral("%1 of %2").arg(formatSize(s.used), formatSize(s.memoryTotal)) : formatSize(s.used)) + kReset;
-    }
-    out << QString() << kBold + QStringLiteral("BY MEMORY") + kReset;
-    if (s.list.isEmpty())
-        out << kDim + s.problem.left(columns) + kReset;
-    // name, a bar (where there is room for one), the memory
-    const int sizeWidth = 9;
-    const int barWidth = columns >= 40 ? qBound(6, columns / 5, 24) : 0;
-    const int nameWidth = columns - sizeWidth - 1 - (barWidth ? barWidth + 1 : 0);
+    QList<ListRow> rows;
     const qint64 biggest = s.list.isEmpty() ? 1 : qMax<qint64>(1, s.list.first().bytes);
     for (const Service &service : s.list) {
-        // "name (user)": the mark stays when the name is cut.
-        const QString mark = service.user ? QStringLiteral(" (user)") : QString();
-        const QString name = padded(service.name, qMax(1, qMin(int(service.name.size()), nameWidth - int(mark.size()))));
-        QString line = kReset + name + kDim + mark + kReset + QString(qMax(0, nameWidth - int(name.size()) - int(mark.size())), QLatin1Char(' ')) + QLatin1Char(' ');
-        if (barWidth)
-            line += blocks(barWidth, service.bytes > 0 ? double(service.bytes) / double(biggest) : 0, kAccent) + QLatin1Char(' ');
-        out << line + padded(sizeOf(service), sizeWidth, true);
+        ListRow row;
+        row.name = service.name;
+        row.mark = service.user ? QStringLiteral("user") : QString();
+        row.about = service.description;
+        row.size = sizeOf(service);
+        row.share = service.bytes > 0 ? double(service.bytes) / double(biggest) : 0;
+        row.faint = service.user;
+        rows.append(row);
     }
-    return out.join(QLatin1Char('\n'));
+    return rows;
+}
+
+// A picture has a limit to its height; text has none.
+QImage draw(const Services &s, int width, const Look &look, const QString &search = {})
+{
+    ListHead head = headOf(s);
+    QList<ListRow> rows = rowsOf(s);
+    narrowList(&head, &rows, search, 250);
+    return drawList(head, rows, width, look);
+}
+
+QString drawAnsi(const Services &s, int columns, const QString &search = {})
+{
+    ListHead head = headOf(s);
+    QList<ListRow> rows = rowsOf(s);
+    narrowList(&head, &rows, search, int(rows.size()));
+    return drawListAnsi(head, rows, columns);
 }
 
 } // namespace
@@ -421,17 +337,19 @@ int main(int argc, char **argv)
     bool known = false;      // systemd has answered once
     bool asked = false;      // the command was chosen, and its first answer is still to be shown
     Services services;
+    QString search;          // only the services with this in them
 
     auto show = [&](bool update) {
         QJsonObject message{{QStringLiteral("type"), QStringLiteral("show")},
                             {QStringLiteral("id"), id},
                             {QStringLiteral("title"), QStringLiteral("Running Services")},
-                            {QStringLiteral("note"), QStringLiteral("Most memory first · every 3 seconds")}};
+                            {QStringLiteral("note"), QStringLiteral("Most memory first · every 3 seconds")},
+                            {QStringLiteral("search"), QStringLiteral("Search services")}}; // Argonaut shows a field; what is typed comes as "search"
         if (terminal) {
             message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
-            message.insert(QStringLiteral("text"), drawAnsi(services, columns));
+            message.insert(QStringLiteral("text"), drawAnsi(services, columns, search));
         } else {
-            if (!save(draw(services, width, look), picture))
+            if (!save(draw(services, width, look, search), picture))
                 return;
             message.insert(QStringLiteral("kind"), QStringLiteral("image"));
             message.insert(QStringLiteral("image"), picture);
@@ -488,10 +406,15 @@ int main(int argc, char **argv)
             } else if (type == QLatin1String("invoke")) {
                 asked = true; // shown when systemd has answered
                 asker.ask();
+            } else if (type == QLatin1String("search") && message.value(QLatin1String("id")).toString() == id) {
+                search = message.value(QLatin1String("text")).toString().left(200);
+                if (known)
+                    show(true);
             } else if (type == QLatin1String("result") && message.value(QLatin1String("id")).toString() == id) {
                 shown = message.value(QLatin1String("shown")).toBool();
                 if (!shown) {
                     timer.stop();
+                    search.clear(); // the field went with the result
                     continue;
                 }
                 width = message.value(QLatin1String("width")).toInt();

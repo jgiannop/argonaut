@@ -1636,6 +1636,32 @@ void TestTui::extensionResultInThePreview()
     keys({Key::of(Key::F3)});
     QVERIFY(!app->isPreviewShown());
     QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 shown\nt1 hidden\n"), 10000);
+
+    // A result that can be searched: "/" in the preview asks for the text,
+    // which goes to the extension; nothing typed means everything again.
+    for (const Extensions::Command &c : host->commands(m_left, {})) {
+        if (c.id == "live")
+            host->invoke(c, m_left, {});
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(app->resultId() == "live1", 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("/ search"), 10000);
+    keys({Key::character('/')}); // from the files: not the preview's key
+    QVERIFY(!app->isAsking());
+    keys({Key::of(Key::Tab)});
+    QVERIFY(app->isInPreview());
+    keys({Key::character('/')});
+    QVERIFY(app->isAsking());
+    QVERIFY(screen(120, 30).contains("Search the fake"));
+    type("abc");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("searched: abc"), 10000);
+    QCOMPARE(app->resultId(), QStringLiteral("live1"));
+    keys({Key::character('/')}); // what was searched for is there to change
+    QVERIFY(screen(120, 30).contains("abc"));
+    keys({Key::of(Key::Backspace), Key::of(Key::Backspace), Key::of(Key::Backspace), Key::of(Key::Enter)});
+    QTRY_VERIFY2_WITH_TIMEOUT(!screen(120, 30).contains("searched: abc") && screen(120, 30).contains("searched:"), qPrintable(screen(120, 30)), 3000);
+    keys({Key::character('/'), Key::of(Key::Escape)}); // Esc: nothing is asked
+    QVERIFY(!app->isAsking());
     host->setEnabled("fake", false);
 }
 

@@ -110,6 +110,7 @@ private slots:
     void extensionListIsAPlace();
     void extensionResultStaysLive();
     void longPictureFromAnExtensionScrolls();
+    void extensionResultCanBeSearched();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
     void themesFromFiles();
@@ -1659,6 +1660,69 @@ void TestMainWindow::longPictureFromAnExtensionScrolls()
     content.scroll = false;
     w->showExtensionResult("fake", "Fits", content);
     QCOMPARE(w->m_quickLook->pictureScrollRange(), -1);
+}
+
+// A result whose extension says it can be searched gets a field over it:
+// what is typed there goes to the extension (which makes the result again),
+// Esc empties it and then gives the keys back, and it goes with the result.
+void TestMainWindow::extensionResultCanBeSearched()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt");
+    open(m_dir);
+    auto command = [&](const QString &id) {
+        for (const Extensions::Command &c : host->commands(m_dir, {})) {
+            if (c.id == id) {
+                host->invoke(c, m_dir, {});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(command("live"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook && w->m_quickLook->resultId() == "live1", 10000);
+    QLineEdit *field = w->m_quickLook->searchField();
+    QVERIFY(field->isVisibleTo(w->m_quickLook));
+    QCOMPARE(field->placeholderText(), QStringLiteral("Search the fake")); // its text is data: one line
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().startsWith("live 2 for "), 10000);
+
+    // Typing: told once the typing pauses, and the answer replaces the result where it is.
+    QTest::keyClicks(field, "abc");
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_quickLook->shownText(), QStringLiteral("searched: abc"), 10000);
+    QCOMPARE(w->m_quickLook->resultId(), QStringLiteral("live1"));
+    QCOMPARE(field->text(), QStringLiteral("abc"));
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) { // to look at it
+        QTest::qWait(200);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+    }
+    // Going to a file takes the pane: the field goes with the result.
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTRY_VERIFY(w->m_quickLook->resultId().isEmpty());
+    QVERIFY(!field->isVisibleTo(w->m_quickLook));
+    QVERIFY(field->text().isEmpty());
+
+    // Again: Esc empties the field first, then hands the keys back.
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    QTRY_VERIFY_WITH_TIMEOUT(command("live"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->resultId() == "live1" && field->isVisibleTo(w->m_quickLook), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().startsWith("live 2 for "), 10000);
+    QSignalSpy back(w->m_quickLook, &QuickLook::keysBackRequested);
+    QTest::keyClicks(field, "xy");
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_quickLook->shownText(), QStringLiteral("searched: xy"), 10000);
+    QTest::keyClick(field, Qt::Key_Escape);
+    QVERIFY(field->text().isEmpty());
+    QCOMPARE(back.size(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_quickLook->shownText(), QStringLiteral("searched: "), 10000);
+    QTest::keyClick(field, Qt::Key_Escape);
+    QCOMPARE(back.size(), 1);
+    // Closing the pane takes the field along.
+    w->hideQuickLook();
+    QVERIFY(field->text().isEmpty());
+    host->setEnabled("fake", false);
 }
 
 void TestMainWindow::extensionResultStaysLive()

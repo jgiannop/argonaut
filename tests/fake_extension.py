@@ -107,6 +107,9 @@ for line in sys.stdin:
             say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
                  "text": "live 2 for %dx%d %s" % (m.get("width", 0), m.get("height", 0), "dark" if m.get("dark") else "light")
                  + " " + ",".join(sorted(m.get("colors", {}))) + " font=" + ("yes" if m.get("font") else "no")})
+    if m.get("type") == "search":  # typed in the field over a result that can be searched
+        say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
+             "text": "searched: " + m.get("text", "")})
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
         if m.get("command") == "form":
@@ -126,7 +129,7 @@ for line in sys.stdin:
             say({"type": "show", "id": "t1", "title": "In Menu", "kind": "ansi", "note": "interface=" + interface,
                  "text": "plain \x1b[31mred\x1b[0m"})
         if m.get("command") == "live":
-            say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1"})
+            say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1", "search": "Search\nthe fake"})
         if m.get("command") == "late":
             say({"type": "show", "id": "live1", "update": True, "title": "Live", "kind": "text", "text": "live 3, too late"})
         if m.get("command") == "listme":

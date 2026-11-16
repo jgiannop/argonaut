@@ -7,6 +7,7 @@
 #include "Sandbox.h"
 #include "TestSupport.h"
 
+#include <unistd.h>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -77,6 +78,7 @@ private slots:
     void systemDashboard();
     void spaceOverview();
     void runningServices();
+    void runningProcesses();
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
@@ -1102,6 +1104,21 @@ fi
         for (const QString &line : QString(content.text).remove(codes).split(QLatin1Char('\n')))
             QVERIFY2(line.size() <= 34, qPrintable(line));
         QTRY_VERIFY_WITH_TIMEOUT(text.size() >= 3, 10000);
+        // It can be searched: only the services with that in them, the rest again for nothing.
+        QVERIFY(content.searchable);
+        QCOMPARE(content.searchHint, QStringLiteral("Search services"));
+        terminal.searchResult("running-services", "services", "MUS");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("with “MUS”"), 10000);
+        QString found = QString(text.last().at(2).value<Extensions::PreviewReply>().text).remove(codes);
+        QVERIFY2(found.contains("music") && found.contains("of 5") && !found.contains("database") && !found.contains("tiny"), qPrintable(found));
+        terminal.searchResult("running-services", "services", "small one"); // in what it is, too
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("small one"), 10000);
+        found = QString(text.last().at(2).value<Extensions::PreviewReply>().text).remove(codes);
+        QVERIFY2(found.contains("small  ") && !found.contains("music"), qPrintable(found));
+        terminal.searchResult("running-services", "services", "zzz");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("Nothing has “zzz” in it"), 10000);
+        terminal.searchResult("running-services", "services", "");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("database"), 10000);
         // No longer shown: it stops asking.
         terminal.resultShown("running-services", "services", false);
         QTest::qWait(500);
@@ -1156,6 +1173,159 @@ fi
     QVERIFY(accent); // its bars
     host.resultShown("running-services", "services", false);
     host.setEnabled("running-services", false);
+}
+
+// The Running Processes extension: every process (a pretend /proc here),
+// most memory first, with whose it is; the kernel's threads aren't
+// processes to show. A picture in a window, a line each in a terminal.
+void TestExtensions::runningProcesses()
+{
+    Host probe;
+    bool there = false;
+    for (const Extensions::Manifest &m : probe.extensions())
+        there = there || m.id == "running-processes";
+    if (!there)
+        QSKIP("the Running Processes extension isn't built here (Linux only)");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto write = [&](const QString &name, const QByteArray &text) {
+        QVERIFY(QDir(dir.path()).mkpath(QFileInfo(dir.filePath(name)).path()));
+        QFile file(dir.filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(text);
+    };
+    const QByteArray me = QByteArray::number(uint(::getuid()));
+    const QByteArray other = QByteArray::number(uint(::getuid()) + 4000000u); // nobody's: shown as its number
+    write("meminfo", "MemTotal:       16000000 kB\nMemFree:         1000000 kB\nMemAvailable:    4000000 kB\n");
+    write("100/status", "Name:\teditor\nUid:\t" + me + "\t" + me + "\nVmRSS:\t 3000000 kB\n");
+    write("100/cmdline", QByteArray("/usr/bin/editor\0--new\0file.txt\0", 31));
+    write("200/status", "Name:\tdatabase\nUid:\t" + other + "\t" + other + "\nVmRSS:\t 5000000 kB\n");
+    write("200/cmdline", QByteArray("/usr/sbin/database\0", 19));
+    // The kernel cuts a name at 15 characters: the program's own name is used.
+    write("300/status", "Name:\ta-very-long-pro\nUid:\t" + me + "\t" + me + "\nVmRSS:\t 1000 kB\n");
+    write("300/cmdline", QByteArray("/opt/a-very-long-program-name\0", 30));
+    write("7/status", "Name:\tkworker/0:1\nUid:\t0\t0\n"); // a thread of the kernel: no memory of its own
+    write("400/status", "Name:\tevil\x1b[31m\nUid:\t" + me + "\t" + me + "\nVmRSS:\t 2000000 kB\n"); // a name is data
+    write("self/status", "Name:\tnot-a-number\nVmRSS:\t 9000000 kB\n");
+    write("cpuinfo", "nothing\n");
+    qputenv("ARGONAUT_PROC_ROOT", dir.path().toLocal8Bit());
+    const auto restore = qScopeGuard([] { qunsetenv("ARGONAUT_PROC_ROOT"); });
+    static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
+
+    // In the terminal interface: every process, a line each.
+    {
+        Host terminal;
+        terminal.setInterface("terminal");
+        terminal.setEnabled("running-processes", true);
+        Extensions::Command command;
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (const Extensions::Command &c : terminal.menuCommands("view")) {
+                if (c.extension == "running-processes")
+                    command = c;
+            }
+            return !command.id.isEmpty();
+        }(), 10000);
+        QCOMPARE(command.label, QStringLiteral("Running Processes"));
+        for (const Extensions::Command &c : terminal.commands(dir.path(), {})) // in the View menu, not in the right-click menu
+            QVERIFY(c.extension != "running-processes");
+        QSignalSpy text(&terminal, &Host::showRequested);
+        terminal.invoke(command, dir.path(), {});
+        QTRY_COMPARE_WITH_TIMEOUT(text.size(), 1, 10000);
+        auto content = text.last().at(2).value<Extensions::PreviewReply>();
+        QCOMPARE(content.kind, Extensions::PreviewReply::Ansi);
+        QCOMPARE(content.resultId, QStringLiteral("processes"));
+        QVERIFY(!content.update);
+        const QString plain = QString(content.text).remove(codes);
+        for (const char *part : {"RUNNING PROCESSES", "3 yours", "1 others", "Memory in use:", "12.3 GB of 16.4 GB", "BY MEMORY",
+                                 "database", "editor (100)", "a-very-long-progra", "evil?[31m (400)", "5.1 GB", "3.1 GB", "1.0 MB"})
+            QVERIFY2(plain.contains(QString::fromUtf8(part)), qPrintable(plain));
+        QVERIFY2(plain.contains(QStringLiteral("database (%1 200)").arg(QString::fromLatin1(other))), qPrintable(plain)); // whose it is, when it isn't yours
+        QVERIFY(plain.indexOf("database") < plain.indexOf("editor"));
+        QVERIFY(plain.indexOf("editor") < plain.indexOf("evil"));
+        QVERIFY(plain.indexOf("evil") < plain.indexOf("a-very-long"));
+        QVERIFY(!plain.contains("kworker") && !plain.contains("not-a-number"));
+        QVERIFY(!content.text.contains(QStringLiteral("\x1b[31m"))); // a name's own escape sequence isn't passed on
+        // On screen, 34 characters wide: made for that, and again by itself.
+        Extensions::ResultLook cells;
+        cells.columns = 34;
+        cells.rows = 20;
+        terminal.resultShown("running-processes", "processes", true, QSize(), cells);
+        QTRY_VERIFY_WITH_TIMEOUT(text.size() >= 2, 10000);
+        content = text.last().at(2).value<Extensions::PreviewReply>();
+        QVERIFY(content.update);
+        for (const QString &line : QString(content.text).remove(codes).split(QLatin1Char('\n')))
+            QVERIFY2(line.size() <= 34, qPrintable(line));
+        // A process that starts shows up by itself.
+        write("500/status", "Name:\tnewcomer\nUid:\t" + me + "\t" + me + "\nVmRSS:\t 7000000 kB\n");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("newcomer"), 10000);
+        // It can be searched, by name, by number, by how it was started.
+        QVERIFY(content.searchable);
+        terminal.searchResult("running-processes", "processes", "Edit");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("with “Edit”"), 10000);
+        QString found = QString(text.last().at(2).value<Extensions::PreviewReply>().text).remove(codes);
+        QVERIFY2(found.contains("editor") && !found.contains("database") && !found.contains("newcomer"), qPrintable(found));
+        terminal.searchResult("running-processes", "processes", "200");
+        QTRY_VERIFY_WITH_TIMEOUT(QString(text.last().at(2).value<Extensions::PreviewReply>().text).remove(codes).contains("database"), 10000);
+        terminal.searchResult("running-processes", "processes", "");
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().text.contains("newcomer"), 10000);
+        // No longer shown: it stops reading.
+        terminal.resultShown("running-processes", "processes", false);
+        QTest::qWait(500);
+        const int count = int(text.size());
+        QTest::qWait(3600);
+        QCOMPARE(int(text.size()), count);
+        terminal.setEnabled("running-processes", false);
+    }
+
+    // In a window: a picture as long as the list, in the theme's colours.
+    Host host;
+    host.setEnabled("running-processes", true);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("view")) {
+            if (c.extension == "running-processes")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QSignalSpy shown(&host, &Host::showRequested);
+    host.invoke(command, dir.path(), {});
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 1, 10000);
+    auto content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Image);
+    QCOMPARE(content.extension, QStringLiteral("running-processes"));
+    QVERIFY(content.scroll); // as long as the list is: Argonaut scrolls it
+    const int short5 = QImage(content.image).height();
+    QVERIFY(short5 > 0);
+    Extensions::ResultLook look;
+    look.window = "#fdf6e3";
+    look.surface = "#eee8d5";
+    look.text = "#073642";
+    look.dim = "#657b83";
+    look.accent = "#d33682";
+    look.border = "#d6cfba";
+    // Many processes: the picture grows with them, past the pane's height.
+    for (int i = 0; i < 60; ++i)
+        write(QStringLiteral("%1/status").arg(1000 + i), "Name:\tworker\nUid:\t" + me + "\t" + me + "\nVmRSS:\t 500 kB\n");
+    host.resultShown("running-processes", "processes", true, QSize(500, 400), look);
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 2, 10000);
+    content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QVERIFY(content.update && content.scroll);
+    const QImage image(content.image);
+    QCOMPARE(image.width(), 500);
+    QVERIFY2(image.height() > 1500, qPrintable(QString::number(image.height())));
+    QCOMPARE(image.pixelColor(2, 2), QColor("#fdf6e3"));
+    bool card = false, accent = false;
+    for (int y = 0; y < image.height(); y += 2) {
+        for (int x = 0; x < image.width(); x += 2) {
+            card = card || image.pixelColor(x, y) == QColor("#eee8d5");
+            accent = accent || image.pixelColor(x, y) == QColor("#d33682");
+        }
+    }
+    QVERIFY(card);   // its panels
+    QVERIFY(accent); // its bars
+    host.resultShown("running-processes", "processes", false);
+    host.setEnabled("running-processes", false);
 }
 
 void TestExtensions::documentPreview()

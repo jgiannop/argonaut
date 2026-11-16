@@ -62,7 +62,7 @@ if status is None:
     problems.append("it did not quit on F10")
 elif status != 0:
     problems.append("exit status %d" % status)
-for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "copy / move to the other pane", "deep-file.txt", "File", "Help", "Delete Permanently", "Rename"):
+for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "open the folder, or the file with its app", "deep-file.txt", "File", "Help", "Delete Permanently", "Rename"):
     if needle not in text:
         problems.append("never drew %r" % needle)
 if "\x1b[?1049l" not in text and "\x1b[?47l" not in text:

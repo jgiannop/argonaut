@@ -980,6 +980,16 @@ void Host::resultShown(const QString &extension, const QString &id, bool shown, 
     }
 }
 
+void Host::searchResult(const QString &extension, const QString &id, const QString &text)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension || !ext->resultsShown.contains(id))
+            continue; // only for what is on screen
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
+        send(ext, {{QStringLiteral("type"), QStringLiteral("search")}, {QStringLiteral("id"), id}, {QStringLiteral("text"), text.left(200)}});
+    }
+}
+
 void Host::send(Running *ext, const QJsonObject &message)
 {
     if (!ext->process)
@@ -1186,6 +1196,10 @@ void Host::handle(Running *ext, const QByteArray &line)
         content.extension = ext->manifest.id;
         content.resultId = message.value(QLatin1String("id")).toString().left(64);
         content.update = !content.resultId.isEmpty() && message.value(QLatin1String("update")).toBool();
+        if (!content.resultId.isEmpty() && message.contains(QLatin1String("search"))) {
+            content.searchable = true;
+            content.searchHint = tidy(message.value(QLatin1String("search")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        }
         if (content.kind != PreviewReply::None)
             emit showRequested(ext->manifest.name,
                                tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars)

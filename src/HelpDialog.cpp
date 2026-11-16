@@ -576,7 +576,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b> and
+<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b> and
 <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension may ask you something while it works, such as a login. The window that asks is Argonaut's and
 always says which extension is asking; what you type there, a password included, is handed to that extension.</p>
@@ -595,6 +595,14 @@ pane shows the services that are running now, the one using the most memory firs
 own session (marked <i>user</i>), with what each is and a bar against the biggest. It updates every three
 seconds until you select a file or close the pane. It only shows: nothing is started or stopped. A service's memory
 is that of all its programs together, as systemd counts it.</p>
+<p><b>Running Processes</b>: choose <b>View → Running Processes</b>, or find it in the command palette. The preview
+pane lists every process that is running now, the one using the most memory first, with its number, how it was
+started and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
+stopped. The memory is what a process has in RAM now; memory that several processes share is counted for each of
+them, so the rows add up to more than the memory in use, which the bar at the top shows.</p>
+<p>Both lists can be searched: click the field over the list and type a part of a name (for a process also its
+number, its owner or a word of how it was started). The list keeps to what fits and still updates. [[Esc]] empties
+the field; [[Esc]] again, or [[Enter]], gives the keys back to the files.</p>
 <p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
 Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
 (.xlsx, .ods: the first sheet as a table).</p>
@@ -667,7 +675,8 @@ its key.</li>
 extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
 drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
-the biggest things inside it, and <b>Running Services</b> lists every running service, most memory first.</li>
+the biggest things inside it, and <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory
+first ([[Tab]] to the preview, then [[/]] searches the list by name).</li>
 <li><b>Mouse:</b> click, double-click, the wheel, and the words on the bottom line. A right-click works as it does
 here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
 pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is

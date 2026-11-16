@@ -7,6 +7,7 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
 class QMovie;
 class QPlainTextEdit;
 class QPushButton;
@@ -58,12 +59,15 @@ public:
     int pictureScrollRange() const;
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
+    QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
 
 signals:
+    void keysBackRequested(); // Esc or Enter in the search field: the keys are the files' again
     void openRequested(const QString &path);
     void closeRequested();
 
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void changeEvent(QEvent *event) override;
@@ -98,6 +102,9 @@ private:
     QString m_resultExtension;       // the named result on screen (an extension's id and its result's)
     QString m_resultId;
     QTimer *m_resultTimer = nullptr; // a resize is told once it has settled
+    class QLineEdit *m_search = nullptr; // over a result that can be searched; what is typed goes to its extension
+    QTimer *m_searchTimer = nullptr;     // …once the typing pauses
+    void setSearchShown(bool on, const QString &hint = QString());
     QTreeWidget *m_archive = nullptr;
     QWidget *m_infoPage = nullptr;
     QLabel *m_infoIcon = nullptr;

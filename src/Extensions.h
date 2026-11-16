@@ -93,6 +93,8 @@ struct PreviewReply
     QString extension;     // show: the extension's id
     QString resultId;      // show: its "id"; empty: a result shown once
     bool update = false;   // show: only replaces that result while it is shown; never opens the pane
+    bool searchable = false; // show: a named result the user can search ("search": a field over it; what is typed goes back with searchResult)
+    QString searchHint;      // show: what the empty field says ("Search services")
 };
 
 // How the window looks where a named result is shown, so a picture an
@@ -262,6 +264,10 @@ public:
     // "height":…,"dark":…,"colors":{…},"font":…}.
     void resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels = QSize(),
                      const ResultLook &look = ResultLook());
+    // What the user typed in the search field of a named result that is
+    // on screen and said it can be searched: {"type":"search","id":…,
+    // "text":…}. The extension answers by making the result again.
+    void searchResult(const QString &extension, const QString &id, const QString &text);
 
     // Sidebar rows from extensions, in the extensions' order.
     QList<Place> places() const;

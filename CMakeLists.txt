@@ -357,6 +357,20 @@ if(UNIX)
         install(TARGETS argonaut-services-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/running-services/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/running-services)
+
+        # Running Processes: every process, most memory first, in the preview
+        # pane (reads /proc, so Linux only).
+        qt_add_executable(argonaut-processes-extension extensions/processes/main.cpp)
+        target_link_libraries(argonaut-processes-extension PRIVATE argonaut_core)
+        set(ARGONAUT_PROCESSES_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-processes-extension")
+        configure_file(extensions/processes/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/running-processes/extension.json @ONLY)
+        set(ARGONAUT_PROCESSES_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-processes-extension")
+        configure_file(extensions/processes/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/running-processes/extension.json @ONLY)
+        install(TARGETS argonaut-processes-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/running-processes/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/running-processes)
     endif()
 
     # Space Overview: the open folder's size and the biggest things inside it,

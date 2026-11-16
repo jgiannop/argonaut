@@ -4283,6 +4283,7 @@ void MainWindow::toggleQuickLook()
         m_previewSplitter->addWidget(m_quickLook);
         m_previewSplitter->setStretchFactor(1, 0);
         connect(m_quickLook, &QuickLook::closeRequested, this, &MainWindow::hideQuickLook);
+        connect(m_quickLook, &QuickLook::keysBackRequested, this, [this] { m_pane->view->setFocus(); });
         connect(m_quickLook, &QuickLook::openRequested, this, [this](const QString &path) {
             if (QFileInfo(path).isDir())
                 navigateTo(path);
