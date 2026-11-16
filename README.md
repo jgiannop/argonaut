@@ -67,7 +67,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 **Extras**
 - Embedded terminal (Ctrl+`) that opens in the current folder
 - Themes: Follow System, Light, Dark, Midnight Blue, Rosé Dawn, Forest, Sunset (Preferences, Ctrl+,)
-- Tabs (Ctrl+T), bookmarks shared with Nautilus (Ctrl+D), eject for USB drives, Open With…, Properties (Ctrl+I), type-to-find
+- Tabs (Ctrl+T), bookmarks shared with Nautilus (Ctrl+D), eject for USB drives, drives that aren't mounted in the sidebar (a click mounts one), Open With…, Properties (Ctrl+I), type-to-find
 - **Properties → Details** for photos, music, videos and PDFs (dimensions, camera and exposure, date taken, length, tags, pages), read with exiftool inside a sandbox
 - 🔒 and ↗ badges on items you can't change and on links; Cut, Trash and Rename are off where the folder can't be changed
 - **Send by Email…**, **Set as Background**, and **Scripts ▸** (runs your GNOME Files scripts unchanged)

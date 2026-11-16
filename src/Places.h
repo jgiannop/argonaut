@@ -24,6 +24,10 @@ struct Entry
     QString extensionPlace; // Extensions: the row's address (Extensions::Host::placePath)
 };
 
+// A row that isn't a folder to open as it is: an extension's (its
+// extension is asked) or a drive that isn't mounted (it is mounted first).
+bool isAddress(const QString &path);
+
 // Everything, in the order it is shown. `mounts`, if given, gets the root
 // of every mounted volume (to notice later that they changed).
 QList<Entry> list(QStringList *mounts = nullptr);

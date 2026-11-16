@@ -1,4 +1,5 @@
 #include "App.h"
+#include "Volumes.h"
 
 #include <algorithm>
 #include <iterator>
@@ -117,6 +118,23 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
     connect(&m_placesTimer, &QTimer::timeout, this, &App::refreshPlaces);
     m_placesTimer.start();
     connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &App::refreshPlaces);
+    // Drives that aren't mounted are rows of the places too: choosing one
+    // mounts it, and the pane goes there when it is.
+    connect(Volumes::instance(), &Volumes::changed, this, &App::refreshPlaces);
+    connect(Volumes::instance(), &Volumes::mounted, this, [this](const QString &device, const QString &folder) {
+        if (device != m_pendingVolume)
+            return;
+        m_pendingVolume.clear();
+        refreshPlaces();
+        navigate(pane(), folder);
+        emit changed();
+    });
+    connect(Volumes::instance(), &Volumes::failed, this, [this](const QString &device, const QString &message) {
+        if (device != m_pendingVolume)
+            return;
+        m_pendingVolume.clear();
+        say(QStringLiteral("“%1” could not be mounted: %2").arg(Volumes::instance()->nameOf(device), message));
+    });
     // An extension has a folder for what was chosen from it (a server's,
     // once connected): the pane goes there.
     connect(Extensions::Host::instance(), &Extensions::Host::openRequested, this,
@@ -1498,6 +1516,16 @@ void App::openPlace(int entry)
     m_inSidebar = false;
     if (Extensions::Host::isPlacePath(place.path)) {
         Extensions::Host::instance()->activatePlace(place.path, QStringLiteral("open"));
+        emit changed();
+        return;
+    }
+    if (Volumes::isVolumePath(place.path)) {
+        const QString device = Volumes::deviceOf(place.path);
+        if (!device.isEmpty()) {
+            m_pendingVolume = device;
+            say(QStringLiteral("Mounting “%1”…").arg(place.name));
+            Volumes::instance()->mount(device);
+        }
         emit changed();
         return;
     }

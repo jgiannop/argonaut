@@ -295,6 +295,7 @@ private:
     QList<Places::Entry> m_places;
     QList<int> m_sideRows;       // what each row is: an entry's number, or -1 for a line
     QTimer m_placesTimer;
+    QString m_pendingVolume;     // the device of a drive being mounted: the pane goes there when it is
     int m_sideCursor = 0;        // the row the keys are on
     int m_sideTop = 0;
     int m_sideWidth = 0;         // from the last frame (0: not on screen)

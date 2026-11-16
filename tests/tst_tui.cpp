@@ -58,6 +58,7 @@ private slots:
     void scrollbars();
     void placesAtTheLeft();
     void previewAtTheRight();
+    void unmountedDrive();
     void commandPalette();
     void menus();
     void extensionResultInThePreview();
@@ -1412,6 +1413,46 @@ void TestTui::opensFiles()
     QCOMPARE(view.size(), 1);
 
     QCOMPARE(app->folder(0), m_left);
+}
+
+// A drive that isn't mounted is one of the places: Enter on it mounts it
+// (through gio: a script here) and the pane goes there.
+void TestTui::unmountedDrive()
+{
+    const QString tools = m_tmp->path() + "/pretend";
+    QDir().mkpath(tools);
+    const QString mountPoint = QDir::cleanPath(m_tmp->path()) + "/media/HITACHI";
+    {
+        QFile script(tools + "/gio");
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        script.write(QStringLiteral(R"(#!/bin/sh
+if [ "$1 $2" = "mount -li" ]; then
+printf 'Volume(0): HITACHI\n  ids:\n   unix-device: \047/dev/sdb1\047\n  can_mount=1\n'
+exit 0
+fi
+if [ "$1 $2 $3" = "mount -d /dev/sdb1" ]; then mkdir -p '%1'; echo "Mounted /dev/sdb1 at %1"; exit 0; fi
+exit 2
+)").arg(mountPoint).toUtf8());
+        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+    const QByteArray gioBefore = qgetenv("ARGONAUT_GIO_PROGRAM");
+    qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(tools + "/gio"));
+    qputenv("ARGONAUT_VOLUMES", "1");
+    const auto restore = qScopeGuard([gioBefore] {
+        qputenv("ARGONAUT_GIO_PROGRAM", gioBefore);
+        qunsetenv("ARGONAUT_VOLUMES");
+    });
+    app = std::make_unique<App>(m_left, QString());
+    app->setSidebarShown(true);
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen(110, 40).contains("HITACHI"), 10000);
+    // From the command palette, as any place.
+    keys({Key::control('p')});
+    type("go to hitachi");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Go to HITACHI"));
+    keys({Key::of(Key::Enter)});
+    QVERIFY2(app->message().contains("Mounting"), qPrintable(app->message()));
+    QTRY_COMPARE_WITH_TIMEOUT(app->folder(0), mountPoint, 10000);
 }
 
 // Ctrl+P: the command palette. Type a few letters, Enter does it; a command

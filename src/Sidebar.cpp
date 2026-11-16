@@ -1,4 +1,5 @@
 #include "Sidebar.h"
+#include "Volumes.h"
 
 #include "Extensions.h"
 #include "Places.h"
@@ -97,6 +98,7 @@ Sidebar::Sidebar(QWidget *parent) : QListWidget(parent), m_refreshTimer(new QTim
     watchForChanges();
     // Extensions add and take away rows of their own.
     connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &Sidebar::refreshSoon);
+    connect(Volumes::instance(), &Volumes::changed, this, &Sidebar::refreshSoon); // a drive that isn't mounted came or went
 }
 
 Sidebar::~Sidebar()

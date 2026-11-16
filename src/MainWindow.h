@@ -237,6 +237,7 @@ private:
     Theme m_theme;
     QString m_themeId; // empty until the first applyTheme()
     bool m_csd = false;
+    QString m_pendingVolume; // the device of a drive being mounted for this window: opened when it is
     bool m_showHidden = false;
     bool m_resizeCursor = false;
 

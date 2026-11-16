@@ -39,6 +39,7 @@ endif()
 # Models and what they read.
 argonaut_test(directorymodel TIMEOUT 300)
 argonaut_test(diskusage)
+argonaut_test(volumes)
 argonaut_test(contenttype)
 argonaut_test(contentsearch)
 argonaut_test(thumbnailer)

@@ -108,6 +108,7 @@ private slots:
     void extensionMenusAskAndShow();
     void diffIsColoured();
     void extensionListIsAPlace();
+    void unmountedDriveInTheSidebar();
     void extensionResultStaysLive();
     void longPictureFromAnExtensionScrolls();
     void extensionResultCanBeSearched();
@@ -1723,6 +1724,64 @@ void TestMainWindow::extensionResultCanBeSearched()
     w->hideQuickLook();
     QVERIFY(field->text().isEmpty());
     host->setEnabled("fake", false);
+}
+
+// A drive that isn't mounted is a row of the sidebar, as in Nautilus: a
+// click mounts it (the desktop does, through gio: a script here) and opens
+// it in this window; one that can't be mounted says so and nothing changes.
+void TestMainWindow::unmountedDriveInTheSidebar()
+{
+    const QString tools = m_dir + "/pretend";
+    QDir().mkpath(tools);
+    const QString mountPoint = m_dir + "/media/HITACHI";
+    {
+        QFile script(tools + "/gio");
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        script.write(QStringLiteral(R"(#!/bin/sh
+if [ "$1 $2" = "mount -li" ]; then
+printf 'Drive(0): Disk\n  ids:\n   unix-device: \047/dev/sdb\047\n  is_removable=0\n'
+printf '  Volume(0): HITACHI\n    ids:\n     unix-device: \047/dev/sdb1\047\n    can_mount=1\n'
+printf '  Volume(1): LOCKED\n    ids:\n     unix-device: \047/dev/sdb2\047\n    can_mount=1\n'
+exit 0
+fi
+if [ "$1 $2 $3" = "mount -d /dev/sdb1" ]; then mkdir -p '%1'; echo "Mounted /dev/sdb1 at %1"; exit 0; fi
+echo "gio: $3: Not authorized to perform operation" >&2
+exit 2
+)").arg(mountPoint).toUtf8());
+        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+    const QByteArray gioBefore = qgetenv("ARGONAUT_GIO_PROGRAM");
+    qputenv("ARGONAUT_GIO_PROGRAM", QFile::encodeName(tools + "/gio"));
+    qputenv("ARGONAUT_VOLUMES", "1");
+    const auto restore = qScopeGuard([gioBefore] {
+        qputenv("ARGONAUT_GIO_PROGRAM", gioBefore);
+        qunsetenv("ARGONAUT_VOLUMES");
+    });
+    open(m_dir);
+    auto row = [this](const QString &text) -> QListWidgetItem * {
+        for (int i = 0; i < w->m_sidebar->count(); ++i) {
+            if (w->m_sidebar->item(i)->text() == text)
+                return w->m_sidebar->item(i);
+        }
+        return nullptr;
+    };
+    w->m_sidebar->refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(row("HITACHI") && row("LOCKED"), 10000);
+    QCOMPARE(Sidebar::pathOf(row("HITACHI")), QStringLiteral("volume:///dev/sdb1"));
+    QCOMPARE(Sidebar::kindOf(row("HITACHI")), Sidebar::DriveItem);
+    QVERIFY(!Sidebar::canEject(row("HITACHI"))); // nothing to eject yet
+    QVERIFY(row("HITACHI")->toolTip().contains("Not mounted"));
+
+    // One that the desktop refuses: said, and the window stays where it is.
+    emit w->m_sidebar->itemClicked(row("LOCKED"));
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_pane->message.contains("could not be mounted"), 10000);
+    QVERIFY2(w->m_pane->message.contains("LOCKED") && w->m_pane->message.contains("Not authorized"), qPrintable(w->m_pane->message));
+    QCOMPARE(w->m_pane->current, m_dir);
+
+    // A click on the other: mounted, and opened here.
+    emit w->m_sidebar->itemClicked(row("HITACHI"));
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, mountPoint, 10000);
+    QVERIFY(QFileInfo(mountPoint).isDir());
 }
 
 void TestMainWindow::extensionResultStaysLive()

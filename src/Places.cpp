@@ -4,6 +4,7 @@
 #include "DirectoryModel.h"
 #include "Extensions.h"
 #include "Trash.h"
+#include "Volumes.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -22,6 +23,11 @@ QString tr(const char *text)
 }
 
 } // namespace
+
+bool isAddress(const QString &path)
+{
+    return Extensions::Host::isPlacePath(path) || Volumes::isVolumePath(path);
+}
 
 QList<Entry> list(QStringList *mounts)
 {
@@ -67,11 +73,13 @@ QList<Entry> list(QStringList *mounts)
         out.append({Group::Bookmarks, Icon::Folder, b.displayName(), b.path, {}, false, {}});
     }
 
+    QStringList mountedDevices;
     const QList<QStorageInfo> volumes = QStorageInfo::mountedVolumes();
     for (const QStorageInfo &vol : volumes) {
         if (!vol.isValid() || !vol.isReady())
             continue;
         const QString root = vol.rootPath();
+        mountedDevices << QString::fromLocal8Bit(vol.device());
         if (mounts)
             *mounts << root;
 #if defined(Q_OS_LINUX)
@@ -92,6 +100,19 @@ QList<Entry> list(QStringList *mounts)
             drive.tooltip = QDir::toNativeSeparators(root) + QLatin1Char('\n') + tr("Eject: click ⏏");
         }
 #endif
+        out.append(drive);
+    }
+
+    // Drives that are there but not mounted, as Nautilus shows them:
+    // choosing one mounts it and opens it. (One just mounted is above
+    // already: it isn't listed twice while the list catches up.)
+    mountedDevices.sort();
+    const QList<Volumes::Volume> waiting = Volumes::instance()->unmounted(mountedDevices);
+    for (const Volumes::Volume &volume : waiting) {
+        if (mountedDevices.contains(volume.device))
+            continue;
+        Entry drive{Group::Drives, volume.removable ? Icon::Removable : Icon::Drive, volume.name, Volumes::pathFor(volume.device), {}, false, {}};
+        drive.tooltip = tr("Not mounted (%1)").arg(volume.device) + QLatin1Char('\n') + tr("Click to mount it and open it");
         out.append(drive);
     }
 

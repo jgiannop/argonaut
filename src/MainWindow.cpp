@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "Places.h"
+#include "Volumes.h"
 
 #if defined(ARGONAUT_DBUS)
 #include "ChooserBar.h"
@@ -178,6 +180,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_mounts = new MountActions(this);
     connect(m_mounts, &MountActions::message, this, [this](const QString &text) { showMessage(text); });
     connect(m_mounts, &MountActions::mountsChanged, this, [this] { m_sidebar->refreshSoon(); });
+    // A drive that wasn't mounted, chosen in this window: once it is, it is opened here.
+    connect(Volumes::instance(), &Volumes::mounted, this, [this](const QString &device, const QString &folder) {
+        if (device != m_pendingVolume)
+            return;
+        m_pendingVolume.clear();
+        m_sidebar->refreshSoon();
+        navigateTo(folder);
+    });
+    connect(Volumes::instance(), &Volumes::failed, this, [this](const QString &device, const QString &message) {
+        if (device != m_pendingVolume)
+            return;
+        m_pendingVolume.clear();
+        showMessage(tr("“%1” could not be mounted: %2").arg(Volumes::instance()->nameOf(device), message));
+    });
 
     InlineRename::Host rename;
     rename.nameRect = [this](const QString &path) { return nameRectOf(path); };
@@ -1714,7 +1730,7 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
     QMenu *menu = makeMenu();
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->addAction(tr("Open"), this, [this, path] { navigateTo(path); });
-    if (m_openTerminalHereAct && !Extensions::Host::isPlacePath(path)) {
+    if (m_openTerminalHereAct && !Places::isAddress(path)) {
         menu->addAction(tr("Open in Terminal"), this, [this, path] {
             m_contextFolder = path;
             m_openTerminalHereAct->trigger();
@@ -2130,6 +2146,17 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     // folder to be opened when it has one (after connecting, say).
     if (Extensions::Host::isPlacePath(path)) {
         Extensions::Host::instance()->activatePlace(path, QStringLiteral("open"));
+        return false;
+    }
+    // A drive that isn't mounted (a row of the sidebar): the desktop mounts
+    // it, and its folder is opened when it has one.
+    if (Volumes::isVolumePath(path)) {
+        const QString device = Volumes::deviceOf(path);
+        if (!device.isEmpty()) {
+            m_pendingVolume = device;
+            showMessage(tr("Mounting “%1”…").arg(Volumes::instance()->nameOf(device)));
+            Volumes::instance()->mount(device);
+        }
         return false;
     }
     // An address that isn't a folder (sftp://host/, typed, a bookmark, the
@@ -2762,7 +2789,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *me = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_sidebar->itemAt(me->position().toPoint());
         if (item && me->button() == Qt::MiddleButton && !Sidebar::pathOf(item).isEmpty()) {
-            if (!Extensions::Host::isPlacePath(Sidebar::pathOf(item))) // nothing to open in a tab until its extension has a folder
+            if (!Places::isAddress(Sidebar::pathOf(item))) // nothing to open in a tab until it has a folder
                 openTab(Sidebar::pathOf(item), false);
             return true;
         }
@@ -3974,7 +4001,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
     }
     const QString targetDir = QDir::cleanPath(Sidebar::pathOf(item));
     const Qt::DropAction action =
-        targetDir.isEmpty() || Extensions::Host::isPlacePath(Sidebar::pathOf(item)) // a row that isn't a folder (yet)
+        targetDir.isEmpty() || Places::isAddress(Sidebar::pathOf(item)) // a row that isn't a folder (yet)
             ? Qt::IgnoreAction
             : dropActionFor(sources, targetDir, drop->modifiers(), drop->possibleActions());
 

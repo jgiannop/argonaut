@@ -448,6 +448,9 @@ never connect to servers, switch it off in <b>Edit → Extensions</b>: its entri
 previews work there like anywhere else. Servers have no Trash, so deleting there is permanent (Argonaut asks first).</p>
 <h2>Drives</h2>
 <p>Plugged-in drives appear in the sidebar. The ⏏ button ejects one safely. While a copy to or from the drive is still running, Argonaut asks you to wait.</p>
+<p>A drive that is there but not mounted (a second disk, a stick the desktop didn't open) is in the sidebar too,
+as it is in Files. Click it: the desktop mounts it, asking for a password itself if it needs one, and Argonaut
+opens it. Its ⏏ then unmounts it again. The terminal version lists these drives in its places as well.</p>
 )");
 #if defined(Q_OS_LINUX)
     places += tr(R"(
