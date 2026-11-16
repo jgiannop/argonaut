@@ -3,6 +3,9 @@ import json, os, sys
 with open(os.path.join(os.path.dirname(__file__), "starts"), "a") as f:
     f.write("x")
 interface = "?"
+# What it would like Claude to be asked: the model and the size are not its to choose.
+claude_request = {"model": "some-other-model", "max_tokens": 999999, "stream": True,
+                  "system": "Be brief.", "messages": [{"role": "user", "content": "Say hello"}]}
 def say(obj):
     sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
 for line in sys.stdin:
@@ -107,11 +110,46 @@ for line in sys.stdin:
             say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
                  "text": "live 2 for %dx%d %s" % (m.get("width", 0), m.get("height", 0), "dark" if m.get("dark") else "light")
                  + " " + ",".join(sorted(m.get("colors", {}))) + " font=" + ("yes" if m.get("font") else "no")})
+    if m.get("type") == "plan":  # what became of the changes it proposed
+        if m.get("dismissed"):
+            say({"type": "message", "text": "plan %s dismissed" % m.get("id")})
+        else:
+            say({"type": "message", "text": "plan %s applied=%d skipped=%d" % (m.get("id"), m.get("applied", 0), m.get("skipped", 0))})
+    if m.get("type") == "claude":  # Argonaut's answer to a question for Claude
+        if "error" in m:
+            say({"type": "message", "text": "claude %s error: %s" % (m.get("id"), m["error"].get("message"))})
+        elif "hasKey" in m:
+            say({"type": "message", "text": "claude info key=%s model=%s mode=%s" % (m["hasKey"], m.get("model"), m.get("mode"))})
+            say({"type": "claude", "id": "count1", "ask": "count", "request": claude_request})
+        elif "tokens" in m:
+            say({"type": "message", "text": "claude count %d" % m["tokens"]})
+            say({"type": "claude", "id": "c1", "request": claude_request})
+        else:
+            say({"type": "message", "text": "claude said: %s (%s) $%.4f" % (m.get("text"), m.get("stop_reason"), m.get("dollars", 0))})
     if m.get("type") == "search":  # typed in the field over a result that can be searched
         say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
              "text": "searched: " + m.get("text", "")})
+    if m.get("type") == "watch" and folder.endswith("sneaky"):  # nobody chose anything: Claude isn't asked
+        say({"type": "claude", "id": "s1", "request": claude_request})
+        say({"type": "plan", "id": "s2", "folder": folder, "moves": [{"item": "x", "folder": "y"}]})  # nor a plan shown
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
+        if any(os.path.basename(p) == "make-plan.txt" for p in sel):
+            # Changes for the folder: some that can be done, and some that are not its to ask for.
+            say({"type": "plan", "id": "p1", "title": "Tidy\nUp", "folder": folder, "note": "No charge",
+                 "report": "# Found\n\nThree **texts**. ![x](file:///etc/passwd)",
+                 "moves": [
+                     {"item": "a.txt", "folder": "Texts", "reason": "A text"},
+                     {"item": "b.txt", "folder": "Texts/Old", "reason": "An\nold text"},
+                     {"item": "c.txt", "new_name": "renamed.txt", "reason": "A better name"},
+                     {"item": "missing.txt", "folder": "Texts", "reason": "Not there"},
+                     {"item": "d.txt", "folder": "../outside", "reason": "Out of the folder"},
+                     {"item": "../make-plan.txt", "folder": "Texts", "reason": "A path, not a name"},
+                     {"item": "e.txt", "new_name": "a.txt", "reason": "Onto another"},
+                     {"reason": "no item"}]})
+            say({"type": "plan", "id": "p2", "folder": folder, "moves": []})  # one at a time
+        if any(os.path.basename(p) == "ask-claude.txt" for p in sel):
+            say({"type": "claude", "id": "i1", "ask": "info"})
         if m.get("command") == "form":
             say({"type": "form", "id": "login", "title": "Log\nIn", "heading": "Log in to nas", "text": "Enter <b>it</b>",
                  "warning": "That didn't work", "buttons": ["Connect", "Later", ""],

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Claude.h"
+
 #include <QHash>
 #include <QList>
 #include <QMetaType>
@@ -171,6 +173,32 @@ struct Form
     QStringList buttons;   // besides Cancel; none given: "OK"
 };
 
+// Changes an extension proposes for a folder: items of the folder moved
+// into folders inside it, and renamed. The extension only proposes: Argonaut
+// checks every move (`problem` says why one can't be done), shows them for
+// the user to tick, and does what is kept itself, through its own file
+// engine, so it can be undone.
+struct PlanMove
+{
+    QString item;    // a name in the folder
+    QString folder;  // where it goes, relative to the folder ("Invoices/2024"); empty: it stays
+    QString newName; // empty: it keeps its name
+    QString reason;  // one line for the user
+    QString problem; // why it can't be done; empty when it can (set by Host::checkPlan)
+};
+
+struct Plan
+{
+    QString extension;     // its extension's id
+    QString extensionName;
+    QString id;
+    QString title;         // "Organize Downloads"
+    QString folder;        // the folder it is about
+    QString report;        // Markdown: what the extension found, shown above the moves
+    QString note;          // one line under them ("Cost: $0.03")
+    QList<PlanMove> moves;
+};
+
 // A selected item, as far as commands care.
 struct Item
 {
@@ -188,6 +216,9 @@ struct Manifest
     QString author;
     QString folder;      // where extension.json is
     QStringList addresses; // the kinds of address it opens ("sftp", "smb"): typed in the path bar, they go to it
+    // "uses": ["claude"]: it asks Claude things through Argonaut (with the
+    // user's key, at the user's cost: the Extensions window says so).
+    bool usesClaude = false;
     // An extension that is only needed now and then says so ("start":
     // "when-needed") and names what it offers here, so that can be shown
     // without its program running. The program starts when one of them is
@@ -264,6 +295,25 @@ public:
     // "height":…,"dark":…,"colors":{…},"font":…}.
     void resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels = QSize(),
                      const ResultLook &look = ResultLook());
+    // A plan an extension sent ({"type":"plan",…}): like a form, exactly one
+    // window shows it (takePlan), and it is answered once: with how many
+    // moves were done and how many no longer could be, or as dismissed.
+    bool takePlan(const QString &extension, const QString &id);
+    void answerPlan(const QString &extension, const QString &id, bool dismissed, int applied = 0, int skipped = 0);
+    // Checks moves against the folder as it is now: each gets a problem or
+    // none. Also called again when the user presses Apply.
+    static void checkPlan(const QString &folder, QList<PlanMove> *moves);
+    static constexpr int MaxPlanMoves = 500;
+
+    // The user doesn't want to wait for Claude's answer any longer: the
+    // extension is told its questions failed, and the answers are dropped
+    // when they come. (What was already asked is still paid for.)
+    void stopWaitingForClaude(const QString &extension);
+
+    // What Argonaut has paid for an extension's questions to Claude, in
+    // dollars (kept in the settings; the Extensions window shows it).
+    static double claudeSpent(const QString &extension);
+
     // What the user typed in the search field of a named result that is
     // on screen and said it can be searched: {"type":"search","id":…,
     // "text":…}. The extension answers by making the result again.
@@ -330,6 +380,10 @@ signals:
     void previewReady(int request, const Extensions::PreviewReply &reply);
     void placesChanged();                                  // the sidebar rows from extensions
     void formRequested(const Extensions::Form &form);      // an extension asks the user something
+    void planRequested(const Extensions::Plan &plan);      // an extension proposes changes: shown to be ticked and applied
+    // Claude is being asked something for an extension (`waiting` questions
+    // without an answer yet; 0: none any more). A window says so meanwhile.
+    void claudeWaiting(const QString &extension, const QString &name, int waiting);
     // An extension asks for a folder to be shown, as the answer to something
     // the user just chose from it (a command, a sidebar row).
     void openRequested(const QString &extension, const QString &folder);
@@ -363,6 +417,12 @@ private:
         bool previewsSaid = false;        // …and "previews"
         qint64 lastActive = 0;            // a when-needed one: when it last had something to do
         QSet<QString> resultsShown;       // its named results on screen: it isn't idle
+        QStringList claudeWaiting;        // the questions to Claude it waits for an answer to (their ids)
+        int claudePending = 0;            // requests to Claude that Argonaut is making for it
+        int claudeAsked = 0;              // …and how many since the user last chose something of its
+        qint64 claudeFor = 0;             // (the `userActed` that count is for)
+        QString planPending;              // the plan it waits on (its id); one at a time
+        bool planTaken = false;           // a window is showing it
         QString formPending;              // the form it waits on (its id); one at a time
         bool formTaken = false;           // a window is showing it
     };
@@ -371,6 +431,8 @@ private:
     void start(Running *ext);
     void stop(Running *ext);
     void send(Running *ext, const QJsonObject &message);
+    void askClaude(Running *ext, const QJsonObject &message); // its "claude" message: Argonaut makes the call
+    Claude::Client *m_claude = nullptr;
     void readFrom(Running *ext);
     void handle(Running *ext, const QByteArray &line);
     QList<Command> readCommands(const Running *ext, const QJsonValue &value, int max) const;
@@ -399,3 +461,4 @@ private:
 Q_DECLARE_METATYPE(Extensions::Badge)
 Q_DECLARE_METATYPE(Extensions::PreviewReply)
 Q_DECLARE_METATYPE(Extensions::Form)
+Q_DECLARE_METATYPE(Extensions::Plan)

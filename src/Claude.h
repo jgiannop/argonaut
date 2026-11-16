@@ -83,10 +83,12 @@ public:
     // Lists models: checks a key without spending anything.
     void testKey(const QString &key, std::function<void(bool ok, const QString &message)> done);
     // Counts a request's input tokens (the body as for /v1/messages, without max_tokens).
-    void countTokens(QJsonObject request, std::function<void(qint64 tokens, const Error &error)> done);
+    // (Virtual, with send: an extension has no key, and asks through Argonaut
+    // instead; see extensions/organize.)
+    virtual void countTokens(QJsonObject request, std::function<void(qint64 tokens, const Error &error)> done);
     // Sends a Messages request. Model, max_tokens and fallbacks are filled in
     // when missing; 429/5xx/529 are retried twice. Spending is recorded.
-    void send(QJsonObject request, std::function<void(const Response &response, const Error &error)> done);
+    virtual void send(QJsonObject request, std::function<void(const Response &response, const Error &error)> done);
 
     // Turns an HTTP error body into a message for people (exposed for tests).
     static Error parseError(int status, const QByteArray &body, const QString &networkError);

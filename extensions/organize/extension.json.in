@@ -1,0 +1,13 @@
+{
+    "id": "organize-with-claude",
+    "name": "Organize with Claude",
+    "description": "File → Organize with Claude… (or a right-click on a folder's empty space): Claude looks at the names, sizes, dates and types of a folder's items and proposes folders and better names. You look at the plan in the preview pane, tick what you want, and Argonaut does it; Ctrl+Z undoes it. It needs your Claude API key (Preferences → Claude), which stays with Argonaut.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "uses": ["claude"],
+    "start": "when-needed",
+    "commands": [{"id": "organize", "label": "Organize with Claude…", "menu": "file"},
+                 {"id": "organize-here", "label": "Organize with Claude…", "target": "folder"}],
+    "exec": ["@ARGONAUT_ORGANIZE_EXTENSION_EXE@"]
+}

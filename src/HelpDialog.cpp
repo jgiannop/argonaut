@@ -538,10 +538,18 @@ that check is free. The key is kept in your keyring.</p>
 before anything is sent; nothing is sent until you press <b>Start</b>.</li>
 <li>When names say too little, Claude may ask to read the beginning of a few files: you choose
 <b>Allow</b> or <b>Don't share</b>. Programs are never read.</li>
-<li>Read the report, untick any change you don't want, and press <b>Apply</b>.</li>
+<li>While Claude is asked, the preview pane at the right says <b>Waiting for Claude's answer</b>, with how long
+it has been; it can take a minute. <b>Stop Waiting</b> gives up on it (what was already asked is still paid for).</li>
+<li>The plan appears in the preview pane at the right: the report, then every change with a tick. Click a change
+to see its file in the folder; you can look around meanwhile, the plan stays. Untick what you don't want and press
+<b>Apply</b>, or <b>Dismiss</b>.</li>
 </ol>
-<p>Claude never touches your files: it only proposes. Argonaut creates the folders and moves and renames the items
-you kept, never overwriting anything. [[Ctrl+Z]] puts everything back (once for the moves, once more for the new folders).</p>
+<p>Claude never touches your files: it only proposes. Argonaut checks every change (one it won't do is shown in red
+with the reason), checks again when you press Apply in case the folder changed meanwhile, creates the folders and
+moves and renames the items you kept, never overwriting anything. [[Ctrl+Z]] puts everything back (once for the
+moves, once more for the new folders).</p>
+<p>This is the <b>Organize with Claude</b> extension (<a href="topic:extensions">Edit → Extensions</a>): switch it
+off there if you don't want it. It never has your key: it tells Argonaut what to ask, and Argonaut asks.</p>
 <h2>Privacy and cost</h2>
 <p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
 of some files (some text, the first pages of a PDF, a small preview of an image). <b>Preferences → Claude</b> sets the
@@ -584,8 +592,14 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b> and
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b> and
 <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
+<b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
+Extensions window says which extensions use Claude and what each has cost so far.</p>
+<p>An extension can also <b>propose changes</b> to a folder: moves and new names. They appear in the preview pane
+with a tick each; Argonaut checks them, does what you keep through its own file engine, and [[Ctrl+Z]] undoes
+it. The extension itself moves nothing.</p>
 <p>An extension may ask you something while it works, such as a login. The window that asks is Argonaut's and
 always says which extension is asking; what you type there, a password included, is handed to that extension.</p>
 <p><b>System Dashboard</b>: choose <b>View → System Dashboard</b>, or find it in the command palette

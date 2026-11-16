@@ -136,6 +136,9 @@ qt_add_library(argonaut_app STATIC
     src/FadeOverlay.cpp
     src/PdfView.h
     src/PdfView.cpp
+    src/PlanView.h
+    src/PlanView.cpp
+    src/RichView.h
     src/ExtensionMenu.h
     src/ExtensionMenu.cpp
     src/ExtensionsDialog.h
@@ -174,8 +177,6 @@ qt_add_library(argonaut_app STATIC
     src/CommandPalette.cpp
     src/ExtensionForm.h
     src/ExtensionForm.cpp
-    src/OrganizerDialog.h
-    src/OrganizerDialog.cpp
 )
 
 target_link_libraries(argonaut_app PUBLIC argonaut_core Qt6::Widgets)
@@ -378,6 +379,20 @@ if(UNIX)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/running-processes/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/running-processes)
     endif()
+
+    # Organize with Claude: asks Claude through Argonaut and proposes a plan
+    # that Argonaut shows, checks and carries out.
+    qt_add_executable(argonaut-organize-extension extensions/organize/main.cpp)
+    target_link_libraries(argonaut-organize-extension PRIVATE argonaut_core)
+    set(ARGONAUT_ORGANIZE_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-organize-extension")
+    configure_file(extensions/organize/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/organize-with-claude/extension.json @ONLY)
+    set(ARGONAUT_ORGANIZE_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-organize-extension")
+    configure_file(extensions/organize/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/organize-with-claude/extension.json @ONLY)
+    install(TARGETS argonaut-organize-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/organize-with-claude/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/organize-with-claude)
 
     # Space Overview: the open folder's size and the biggest things inside it,
     # in the preview pane (measured with Analyze's DiskUsageModel).

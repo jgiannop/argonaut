@@ -77,7 +77,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 
 **Organize with Claude** (optional, needs your own Anthropic API key)
 
-File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose folders, better names and a short report for a messy folder. You review the plan as a checklist and apply what you keep; Ctrl+Z puts everything back. See [Claude and your privacy](#claude-and-your-privacy).
+File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose folders, better names and a short report for a messy folder. The plan appears in the preview pane as a checklist; you apply what you keep, and Ctrl+Z puts everything back. It is an extension (switch it off in Edit → Extensions), and it never has your key: Argonaut asks Claude for it. See [Claude and your privacy](#claude-and-your-privacy).
 
 ### Keyboard shortcuts
 

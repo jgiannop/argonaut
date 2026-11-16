@@ -4,6 +4,7 @@
 
 #include "DirectoryModel.h"
 #include "Extensions.h"
+#include "FakeApi.h"
 #include "Sandbox.h"
 #include "TestSupport.h"
 
@@ -79,6 +80,9 @@ private slots:
     void spaceOverview();
     void runningServices();
     void runningProcesses();
+    void claudeThroughArgonaut();
+    void plansAreProposedNotDone();
+    void organizeWithClaude();
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
@@ -1330,6 +1334,358 @@ void TestExtensions::runningProcesses()
     QVERIFY(QImage(shown.last().at(2).value<Extensions::PreviewReply>().image).height() <= short5);
     host.resultShown("running-processes", "processes", false);
     host.setEnabled("running-processes", false);
+}
+
+// An extension asks Claude through Argonaut: it never has the key, and the
+// model and the limits are the user's. Only an extension that said it uses
+// Claude, and only while it does what the user chose.
+void TestExtensions::claudeThroughArgonaut()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    FakeApi api;
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ANTHROPIC_API_KEY", "key-of-the-test");
+    const QString folder = g_extensions + "/asker";
+    QDir().mkpath(folder);
+    QFile::copy(g_extensions + "/fake/fake.py", folder + "/fake.py");
+    QFile::setPermissions(folder + "/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    writeFile(folder + "/extension.json", R"({"id": "asker", "name": "Asker", "protocol": 1, "exec": ["fake.py"], "uses": ["claude", "something-else"]})");
+    struct Restore
+    {
+        QString folder;
+        ~Restore()
+        {
+            qunsetenv("ARGONAUT_CLAUDE_BASE_URL");
+            qunsetenv("ANTHROPIC_API_KEY");
+            QSettings().remove("extensions/asker");
+            QDir(folder).removeRecursively();
+        }
+    } restore{folder};
+    QSettings().remove("extensions/asker");
+    writeFile(m_dir + "/ask-claude.txt", "x");
+    QDir().mkpath(m_dir + "/sneaky");
+
+    Host host;
+    for (const Extensions::Manifest &m : host.extensions()) {
+        if (m.id == "asker")
+            QVERIFY(m.usesClaude);
+        if (m.id == "fake")
+            QVERIFY(!m.usesClaude);
+    }
+    host.setEnabled("asker", true);
+    host.setEnabled("fake", true);
+    QSignalSpy said(&host, &Host::message);
+    auto heard = [&](const QString &from, const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(0).toString() == from && one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    host.watch(m_dir);
+
+    // Nobody chose anything of its: Claude isn't asked, and nothing was sent.
+    host.watch(m_dir + "/sneaky");
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude s1 error: Claude is asked only while"), 10000);
+    QVERIFY(api.requests.isEmpty());
+
+    // The user chooses its command: it asks what there is (free), counts (free), and asks.
+    api.replies.append({200, R"({"input_tokens": 42})", {}});
+    api.replies.append({200, R"({"id":"msg_1","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Hello from the pretend API"}],"usage":{"input_tokens":1000,"output_tokens":500}})", {}});
+    const QList<Extensions::Item> one{{m_dir + "/ask-claude.txt", "text/plain", false}};
+    Extensions::Command hello;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.commands(m_dir, one)) {
+            if (c.extension == "asker" && c.id == "hello")
+                hello = c;
+        }
+        return !hello.id.isEmpty();
+    }(), 10000);
+    QSignalSpy waiting(&host, &Host::claudeWaiting);
+    host.invoke(hello, m_dir, {m_dir + "/ask-claude.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude said: Hello from the pretend API (end_turn) $"), 15000);
+    // While Claude was asked, that was said (for a window to show), and then that it is over.
+    // Not for the questions that are free and quick.
+    QCOMPARE(int(waiting.size()), 2);
+    QCOMPARE(waiting.at(0).at(0).toString(), QStringLiteral("asker"));
+    QCOMPARE(waiting.at(0).at(1).toString(), QStringLiteral("Asker"));
+    QCOMPARE(waiting.at(0).at(2).toInt(), 1);
+    QCOMPARE(waiting.at(1).at(2).toInt(), 0);
+    QVERIFY(heard("Asker", "claude info key=True model=" + Claude::model() + " mode="));
+    QVERIFY(heard("Asker", "claude count 42"));
+    QCOMPARE(int(api.requests.size()), 2);
+    QCOMPARE(api.requests.at(0).path, QByteArray("/v1/messages/count_tokens"));
+    QCOMPARE(api.requests.at(1).path, QByteArray("/v1/messages"));
+    for (const FakeApi::Request &request : std::as_const(api.requests)) {
+        QCOMPARE(request.headers.value("x-api-key"), QByteArray("key-of-the-test")); // Argonaut's, not the extension's
+        QCOMPARE(request.body.value("model").toString(), Claude::model());            // the user's model, whatever it asked for
+        QVERIFY(!request.body.contains("stream"));
+        QCOMPARE(request.body.value("system").toString(), QStringLiteral("Be brief.")); // what it asks is its own
+    }
+    QVERIFY(api.requests.at(1).body.value("max_tokens").toInt() <= 16000);
+    // What it cost is counted for that extension.
+    QVERIFY2(Host::claudeSpent("asker") > 0, qPrintable(QString::number(Host::claudeSpent("asker"))));
+    QCOMPARE(Host::claudeSpent("fake"), 0.0);
+
+    // An extension that never said it uses Claude: refused, nothing sent.
+    Extensions::Command plain;
+    for (const Extensions::Command &c : host.commands(m_dir, one)) {
+        if (c.extension == "fake" && c.id == "hello")
+            plain = c;
+    }
+    QVERIFY(!plain.id.isEmpty());
+    host.invoke(plain, m_dir, {m_dir + "/ask-claude.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Fake", "claude i1 error: This extension hasn't said that it uses Claude"), 10000);
+    QCOMPARE(int(api.requests.size()), 2);
+
+    // The API says no (a wrong key): the extension is told in words, not left waiting.
+    api.replies.append({200, R"({"input_tokens": 42})", {}});
+    api.replies.append({401, R"({"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}})", {}});
+    said.clear();
+    host.invoke(hello, m_dir, {m_dir + "/ask-claude.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude c1 error: "), 15000);
+
+    // The user stops waiting: the extension is told at once, and the answer
+    // that comes later is dropped. (The API fails and is tried again here,
+    // which takes a few seconds.)
+    api.replies.append({200, R"({"input_tokens": 42})", {}});
+    api.replies.append({529, R"({"type":"error","error":{"type":"overloaded_error","message":"busy"}})", {}});
+    api.replies.append({200, R"({"id":"msg_2","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Too late"}],"usage":{"input_tokens":10,"output_tokens":5}})", {}});
+    said.clear();
+    waiting.clear();
+    host.invoke(hello, m_dir, {m_dir + "/ask-claude.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(!waiting.isEmpty() && waiting.last().at(2).toInt() == 1, 15000);
+    host.stopWaitingForClaude("asker");
+    QCOMPARE(waiting.last().at(2).toInt(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude c1 error: Stopped: you chose not to wait"), 10000);
+    QTest::qWait(2500); // the second try answers meanwhile
+    QVERIFY(!heard("Asker", "Too late"));
+    host.setEnabled("asker", false);
+    host.setEnabled("fake", false);
+}
+
+// An extension proposes changes for a folder; Argonaut checks each move by
+// its own rules and hands the plan to one window. The extension can't make
+// one appear out of the blue, and is told what became of it.
+void TestExtensions::plansAreProposedNotDone()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    for (const char *name : {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "make-plan.txt"})
+        writeFile(m_dir + "/" + name, "x");
+    QDir().mkpath(m_dir + "/sneaky");
+    Host host;
+    host.setEnabled("fake", true);
+    QSignalSpy plans(&host, &Host::planRequested);
+    QSignalSpy said(&host, &Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    host.watch(m_dir);
+    // Nobody chose anything: no plan is shown; it is told so.
+    host.watch(m_dir + "/sneaky");
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan s2 dismissed"), 10000);
+    QCOMPARE(plans.size(), 0);
+
+    const QList<Extensions::Item> one{{m_dir + "/make-plan.txt", "text/plain", false}};
+    Extensions::Command hello;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.commands(m_dir, one)) {
+            if (c.extension == "fake" && c.id == "hello")
+                hello = c;
+        }
+        return !hello.id.isEmpty();
+    }(), 10000);
+    host.invoke(hello, m_dir, {m_dir + "/make-plan.txt"});
+    QTRY_COMPARE_WITH_TIMEOUT(plans.size(), 1, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p2 dismissed"), 10000); // a second one while the first waits: refused
+    QCOMPARE(plans.size(), 1);
+    const Extensions::Plan plan = plans.first().at(0).value<Extensions::Plan>();
+    QCOMPARE(plan.extension, QStringLiteral("fake"));
+    QCOMPARE(plan.extensionName, QStringLiteral("Fake"));
+    QCOMPARE(plan.id, QStringLiteral("p1"));
+    QCOMPARE(plan.title, QStringLiteral("Tidy Up")); // its texts are data: one line
+    QCOMPARE(plan.folder, m_dir);
+    QCOMPARE(plan.note, QStringLiteral("No charge"));
+    QCOMPARE(int(plan.moves.size()), 7); // the one without an item isn't a move
+    // What can be done has no problem; what isn't its to ask for has one.
+    QStringList fine, refused;
+    for (const Extensions::PlanMove &move : plan.moves)
+        (move.problem.isEmpty() ? fine : refused) << move.item;
+    QCOMPARE(fine, (QStringList{"a.txt", "b.txt", "c.txt"}));
+    QCOMPARE(refused, (QStringList{"missing.txt", "d.txt", "../make-plan.txt", "e.txt"}));
+    QCOMPARE(plan.moves.at(1).reason, QStringLiteral("An old text"));
+    QCOMPARE(plan.moves.at(1).folder, QStringLiteral("Texts/Old"));
+    // Nothing was moved by any of this.
+    for (const char *name : {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"})
+        QVERIFY(QFile::exists(m_dir + "/" + name));
+    QVERIFY(!QFileInfo::exists(m_dir + "/Texts"));
+
+    // One window shows it; it is answered once.
+    QVERIFY(host.takePlan("fake", "p1"));
+    QVERIFY(!host.takePlan("fake", "p1"));
+    QVERIFY(!host.takePlan("fake", "p2"));
+    host.answerPlan("fake", "p1", false, 2, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 applied=2 skipped=1"), 10000);
+    said.clear();
+    host.answerPlan("fake", "p1", true); // again: nothing
+    QTest::qWait(300);
+    QVERIFY(!heard("plan p1"));
+
+    // The rules, on their own, as they are when Apply is pressed.
+    QList<Extensions::PlanMove> moves{{"a.txt", "Texts", {}, {}, {}}, {"a.txt", "Other", {}, {}, {}}, {"b.txt", "/etc", {}, {}, {}},
+                                      {"c.txt", {}, "x/y", {}, {}}, {"d.txt", "Sub", "ok.txt", {}, {}}};
+    Host::checkPlan(m_dir, &moves);
+    QVERIFY(moves.at(0).problem.isEmpty());
+    QVERIFY(!moves.at(1).problem.isEmpty()); // the same item twice
+    QVERIFY(!moves.at(2).problem.isEmpty()); // out of the folder
+    QVERIFY(!moves.at(3).problem.isEmpty()); // a name with a path in it
+    QVERIFY(moves.at(4).problem.isEmpty());
+    host.setEnabled("fake", false);
+}
+
+// The Organize with Claude extension, from its menu command to the plan:
+// it asks first (a form, with what it will cost), asks Claude through
+// Argonaut, asks before files are read, and what Claude proposes comes out
+// as a plan for Argonaut to check and show. It never has the key and moves
+// nothing.
+void TestExtensions::organizeWithClaude()
+{
+    Host probe;
+    bool there = false;
+    for (const Extensions::Manifest &m : probe.extensions()) {
+        if (m.id == "organize-with-claude") {
+            there = true;
+            QVERIFY(m.usesClaude);
+            QVERIFY(m.whenNeeded);
+        }
+    }
+    if (!there)
+        QSKIP("the Organize with Claude extension isn't built here");
+    auto toolUse = [](const QString &name, const QJsonObject &input, const QString &id) {
+        const QJsonObject m{{"type", "message"}, {"model", "claude-opus-5-5"}, {"stop_reason", "tool_use"},
+                            {"content", QJsonArray{QJsonObject{{"type", "thinking"}, {"thinking", ""}, {"signature", "sig"}},
+                                                   QJsonObject{{"type", "tool_use"}, {"id", id}, {"name", name}, {"input", input}}}},
+                            {"usage", QJsonObject{{"input_tokens", 5000}, {"output_tokens", 800}}}};
+        return QJsonDocument(m).toJson(QJsonDocument::Compact);
+    };
+    FakeApi api;
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
+    qputenv("ANTHROPIC_API_KEY", "key-of-the-test");
+    QSettings().setValue("claude/mode", QVariant()); // the default: ask before reading
+    QSettings().remove("claude/mode");
+    QSettings().sync();
+    const auto restore = qScopeGuard([] {
+        qunsetenv("ARGONAUT_CLAUDE_BASE_URL");
+        qunsetenv("ANTHROPIC_API_KEY");
+        QSettings().remove("extensions/organize-with-claude");
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString folder = QDir::cleanPath(dir.path());
+    for (const char *name : {"notes.txt", "invoice march.txt", "photo.jpg"})
+        writeFile(folder + "/" + name, "Electricity bill, March 2024");
+
+    Host host;
+    host.setEnabled("organize-with-claude", true);
+    QSignalSpy forms(&host, &Host::formRequested);
+    QSignalSpy plans(&host, &Host::planRequested);
+    QSignalSpy said(&host, &Host::message);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("file")) {
+            if (c.extension == "organize-with-claude")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QCOMPARE(command.label, QStringLiteral("Organize with Claude…"));
+    bool onFolder = false; // and on a folder's empty space
+    for (const Extensions::Command &c : host.commands(folder, {}))
+        onFolder = onFolder || c.extension == "organize-with-claude";
+    QVERIFY(onFolder);
+
+    // Chosen: it counts what there is to send (free) and asks before anything goes to Claude.
+    api.replies.append({200, R"({"input_tokens": 1234})", {}});
+    host.invoke(command, folder, {});
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 1, 15000);
+    Extensions::Form form = forms.last().at(0).value<Extensions::Form>();
+    QCOMPARE(form.id, QStringLiteral("start"));
+    QVERIFY2(form.text.contains("3 items") && form.text.contains("1,234 tokens") && form.text.contains("Sent to Anthropic"), qPrintable(form.text));
+    QCOMPARE(int(form.fields.size()), 2);
+    QCOMPARE(form.fields.at(0).id, QStringLiteral("wishes"));
+    QCOMPARE(form.fields.at(1).kind, Extensions::FormField::Choice);
+    QCOMPARE(form.fields.at(1).value, Claude::modeName(Claude::Mode::Ask));
+    QCOMPARE(form.buttons, QStringList{"Start"});
+    QCOMPARE(int(api.requests.size()), 1);
+    QCOMPARE(api.requests.first().path, QByteArray("/v1/messages/count_tokens"));
+    QCOMPARE(plans.size(), 0);
+
+    // Start: Claude is asked; it wants to read a file, and the user is asked.
+    api.replies.append({200, toolUse("read_files", {{"files", QJsonArray{"notes.txt"}}, {"reason", "Its name says nothing"}}, "toolu_1"), {}});
+    api.replies.append({200, toolUse("propose_plan", {{"report", "## What's here\nA bill, a note and a photo."},
+                                                      {"moves", QJsonArray{QJsonObject{{"item", "notes.txt"}, {"folder", "Bills/2024"},
+                                                                                       {"new_name", "Electricity 2024-03.txt"}, {"reason", "a bill"}},
+                                                                           QJsonObject{{"item", "photo.jpg"}, {"folder", "Photos"}, {"new_name", ""}, {"reason", "a photo"}},
+                                                                           QJsonObject{{"item", "ghost.txt"}, {"folder", "X"}, {"new_name", ""}, {"reason", ""}}}}},
+                                     "toolu_2"),
+                        {}});
+    QVERIFY(host.takeForm("organize-with-claude", "start"));
+    host.answerForm("organize-with-claude", "start", false, {{"wishes", "bills by year"}, {"mode", Claude::modeName(Claude::Mode::Ask)}}, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 2, 15000);
+    form = forms.last().at(0).value<Extensions::Form>();
+    QCOMPARE(form.id, QStringLiteral("read"));
+    QVERIFY2(form.heading.contains("read the beginning of 1 file") && form.text.contains("notes.txt") && form.text.contains("Its name says nothing"),
+             qPrintable(form.heading + " / " + form.text));
+    QCOMPARE(form.buttons, (QStringList{"Allow", "Don't share"}));
+    QCOMPARE(int(api.requests.size()), 2);
+    const QJsonObject first = api.requests.at(1).body;
+    QCOMPARE(api.requests.at(1).headers.value("x-api-key"), QByteArray("key-of-the-test"));
+    const QString sent = QString::fromUtf8(QJsonDocument(first).toJson());
+    QVERIFY2(sent.contains("bills by year") && sent.contains("invoice march.txt"), qPrintable(sent.left(600)));
+    QVERIFY(!sent.contains("Electricity bill")); // names and details: no contents yet
+
+    // Allowed: the file's beginning goes, and what Claude proposes comes as a plan.
+    QVERIFY(host.takeForm("organize-with-claude", "read"));
+    host.answerForm("organize-with-claude", "read", false, {}, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(plans.size(), 1, 15000);
+    QCOMPARE(int(api.requests.size()), 3);
+    QVERIFY(QString::fromUtf8(QJsonDocument(api.requests.at(2).body).toJson()).contains("Electricity bill"));
+    const Extensions::Plan plan = plans.first().at(0).value<Extensions::Plan>();
+    QCOMPARE(plan.extension, QStringLiteral("organize-with-claude"));
+    QCOMPARE(plan.folder, folder);
+    QVERIFY2(plan.title.startsWith("Organize “"), qPrintable(plan.title));
+    QVERIFY(plan.report.contains("A bill, a note and a photo."));
+    QVERIFY2(plan.note.contains("$"), qPrintable(plan.note));
+    QCOMPARE(int(plan.moves.size()), 3);
+    QCOMPARE(plan.moves.at(0).item, QStringLiteral("notes.txt"));
+    QCOMPARE(plan.moves.at(0).folder, QStringLiteral("Bills/2024"));
+    QCOMPARE(plan.moves.at(0).newName, QStringLiteral("Electricity 2024-03.txt"));
+    QVERIFY(plan.moves.at(0).problem.isEmpty() && plan.moves.at(1).problem.isEmpty());
+    QVERIFY(!plan.moves.at(2).problem.isEmpty()); // not in the folder: Argonaut's own check says so
+    // Nothing was moved: that is Argonaut's to do, when the user applies.
+    QVERIFY(QFile::exists(folder + "/notes.txt") && QFile::exists(folder + "/photo.jpg") && !QFileInfo::exists(folder + "/Bills"));
+    QVERIFY(Host::claudeSpent("organize-with-claude") > 0);
+    QVERIFY(host.takePlan("organize-with-claude", "plan"));
+    host.answerPlan("organize-with-claude", "plan", false, 2, 0);
+
+    // Cancel at the first question: Claude is never asked.
+    const int asked = int(api.requests.size());
+    api.replies.append({200, R"({"input_tokens": 10})", {}});
+    host.invoke(command, folder, {});
+    QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 3, 15000);
+    host.answerForm("organize-with-claude", "start", true, {}, 0);
+    QTest::qWait(500);
+    QCOMPARE(int(api.requests.size()), asked + 1); // the count only
+    QCOMPARE(plans.size(), 1);
+    host.setEnabled("organize-with-claude", false);
 }
 
 void TestExtensions::documentPreview()

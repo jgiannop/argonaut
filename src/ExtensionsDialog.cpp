@@ -158,6 +158,12 @@ void ExtensionsDialog::rebuild()
             lines << m.problem;
         if (!m.description.isEmpty())
             lines << m.description;
+        // It asks Claude through Argonaut: with your key, at your cost.
+        if (m.usesClaude) {
+            const double spent = Extensions::Host::claudeSpent(m.id);
+            lines << (spent > 0 ? tr("Uses Claude, with your key and at your cost: $%1 so far").arg(QString::number(spent, 'f', spent < 1 ? 3 : 2))
+                                : tr("Uses Claude, with your key and at your cost"));
+        }
         QString source = m.builtIn ? tr("Comes with Argonaut")
                                    : tr("Added by you: %1").arg(QDir::toNativeSeparators(m.folder));
         if (!m.author.isEmpty() && !m.builtIn)

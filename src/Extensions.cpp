@@ -1,4 +1,5 @@
 #include "Extensions.h"
+#include "Organizer.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -34,6 +35,7 @@ constexpr int MaxPreviewChars = 1024 * 1024; // text, Markdown or HTML of a prev
 constexpr int MaxListingFiles = 20000;
 constexpr int MaxListings = 20;   // per extension
 constexpr int MaxPlaces = 20;     // sidebar rows per extension
+constexpr int MaxClaudePerAction = 12;      // questions to Claude for one thing the user chose
 constexpr int OpenWithinMs = 5 * 60 * 1000; // "open" is an answer: only this long after the user chose something
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
@@ -190,6 +192,10 @@ Manifest readManifest(const QString &folder, bool builtIn)
         program = QDir::cleanPath(m.folder + QLatin1Char('/') + program);
     m.program = program;
     m.arguments = exec;
+    // "uses": what of Argonaut's it asks for beyond showing things.
+    const QJsonArray uses = o.value(QLatin1String("uses")).toArray();
+    for (const QJsonValue &use : uses)
+        m.usesClaude = m.usesClaude || use.toString() == QLatin1String("claude");
     // "start": "when-needed", with what it offers named here.
     m.whenNeeded = o.value(QLatin1String("start")).toString() == QLatin1String("when-needed");
     m.commands = commandsFrom(m.id, o.value(QLatin1String("commands")), MaxCommands);
@@ -624,6 +630,8 @@ void Host::stopIdle()
             continue;
         if (!ext->resultsShown.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || !ext->listings.isEmpty())
             continue; // it has something on screen
+        if (ext->claudePending > 0 || !ext->planPending.isEmpty())
+            continue; // it waits for an answer from Claude, or for the user to look at its plan
         if (now - ext->lastActive < m_idleMs)
             continue;
         stop(ext);
@@ -652,6 +660,211 @@ bool Host::handlesAddress(const QString &address) const
             return true;
     }
     return false;
+}
+
+bool Host::takePlan(const QString &extension, const QString &id)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id == extension && ext->process && ext->planPending == id && !ext->planTaken) {
+            ext->planTaken = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Host::answerPlan(const QString &extension, const QString &id, bool dismissed, int applied, int skipped)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension || ext->planPending != id)
+            continue;
+        ext->planPending.clear();
+        ext->planTaken = false;
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
+        QJsonObject message{{QStringLiteral("type"), QStringLiteral("plan")}, {QStringLiteral("id"), id}};
+        if (dismissed) {
+            message.insert(QStringLiteral("dismissed"), true);
+        } else {
+            message.insert(QStringLiteral("applied"), applied);
+            message.insert(QStringLiteral("skipped"), skipped);
+        }
+        send(ext, message);
+    }
+}
+
+// The rules are the ones Organize always had (Organizer::validate): an item
+// of this folder, into a folder inside it, never onto something that is
+// there, never two to one place, never a folder into itself.
+void Host::checkPlan(const QString &folder, QList<PlanMove> *moves)
+{
+    QList<Organizer::Item> items;
+    const QStringList names = QDir(folder).entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    for (const QString &name : names) {
+        Organizer::Item item;
+        item.name = name;
+        items.append(item);
+    }
+    QList<Organizer::Move> checked;
+    for (const PlanMove &move : std::as_const(*moves)) {
+        Organizer::Move m;
+        m.item = move.item;
+        m.folder = move.folder;
+        m.newName = move.newName;
+        m.reason = move.reason;
+        checked.append(m);
+    }
+    Organizer::validate(folder, items, &checked);
+    for (int i = 0; i < moves->size(); ++i) {
+        // A name is a name: nothing with a path in it reaches the file engine.
+        const bool plain = !checked.at(i).item.contains(QLatin1Char('/')) && checked.at(i).item != QLatin1String("..");
+        (*moves)[i].folder = checked.at(i).folder;
+        (*moves)[i].newName = checked.at(i).newName;
+        (*moves)[i].problem = plain ? checked.at(i).problem : QObject::tr("“%1” isn't in this folder").arg(checked.at(i).item);
+    }
+}
+
+void Host::stopWaitingForClaude(const QString &extension)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension || ext->claudeWaiting.isEmpty())
+            continue;
+        const QStringList ids = ext->claudeWaiting;
+        ext->claudeWaiting.clear();
+        for (const QString &id : ids) {
+            send(ext, {{QStringLiteral("type"), QStringLiteral("claude")},
+                       {QStringLiteral("id"), id},
+                       {QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), QStringLiteral("Stopped: you chose not to wait for Claude")}}}});
+        }
+        emit claudeWaiting(extension, ext->manifest.name, 0);
+    }
+}
+
+double Host::claudeSpent(const QString &extension)
+{
+    return QSettings().value(QStringLiteral("extensions/%1/claudeSpent").arg(extension)).toDouble();
+}
+
+// An extension never has the user's API key. It sends the request it wants
+// made ({"type":"claude","id":…,"request":{…}}, the body of a Messages
+// request) and Argonaut makes it: with the key, the model and the retries
+// that are Argonaut's (Preferences → Claude), and it counts what it cost.
+//   "ask": "info"   whether there is a key, and the model and mode chosen (free)
+//   "ask": "count"  how many tokens the request is (free), and what they would cost
+//   else            the request is sent; the answer comes back whole
+// Only an extension that said "uses": ["claude"], and (but for "info") only
+// while it is doing what the user asked of it, a few questions an action:
+// an extension in the background can't spend the user's money.
+void Host::askClaude(Running *ext, const QJsonObject &message)
+{
+    const QString id = message.value(QLatin1String("id")).toString().left(64);
+    const QString extension = ext->manifest.id;
+    auto refuse = [&](const QString &why) {
+        send(ext, {{QStringLiteral("type"), QStringLiteral("claude")},
+                   {QStringLiteral("id"), id},
+                   {QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), why}}}});
+    };
+    if (!ext->manifest.usesClaude) {
+        refuse(QStringLiteral("This extension hasn't said that it uses Claude (\"uses\": [\"claude\"] in its extension.json)"));
+        return;
+    }
+    if (!m_claude)
+        m_claude = new Claude::Client(this);
+    const QString ask = message.value(QLatin1String("ask")).toString();
+    if (ask == QLatin1String("info")) {
+        const Claude::ModelInfo model = Claude::modelInfo(Claude::model());
+        const Claude::Mode mode = Claude::mode();
+        send(ext, {{QStringLiteral("type"), QStringLiteral("claude")},
+                   {QStringLiteral("id"), id},
+                   {QStringLiteral("hasKey"), !m_claude->apiKey().isEmpty()},
+                   {QStringLiteral("model"), model.id},
+                   {QStringLiteral("modelName"), model.name},
+                   {QStringLiteral("mode"), mode == Claude::Mode::NamesOnly ? QStringLiteral("names") : mode == Claude::Mode::Auto ? QStringLiteral("auto") : QStringLiteral("ask")}});
+        return;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (ext->userActed == 0 || now - ext->userActed > OpenWithinMs) {
+        refuse(QStringLiteral("Claude is asked only while the extension is doing what the user chose"));
+        return;
+    }
+    if (ext->claudeFor != ext->userActed) { // another action of the user's: its own count
+        ext->claudeFor = ext->userActed;
+        ext->claudeAsked = 0;
+    }
+    if (m_claude->apiKey().isEmpty()) {
+        refuse(QStringLiteral("There is no Claude API key yet: Preferences → Claude"));
+        return;
+    }
+    // The request is the extension's, the model and the limits are the user's.
+    QJsonObject request = message.value(QLatin1String("request")).toObject();
+    if (!request.value(QLatin1String("messages")).isArray()) {
+        refuse(QStringLiteral("No request (\"request\": {\"messages\": […]})"));
+        return;
+    }
+    for (const char *key : {"model", "stream", "fallbacks", "service_tier", "metadata", "container", "mcp_servers"})
+        request.remove(QLatin1String(key));
+    if (request.contains(QLatin1String("max_tokens")))
+        request.insert(QStringLiteral("max_tokens"), qBound(1, request.value(QLatin1String("max_tokens")).toInt(), 16000));
+    auto running = [this, extension]() -> Running * { // it may be gone when the answer comes
+        for (Running *each : std::as_const(m_running)) {
+            if (each->manifest.id == extension && each->process)
+                return each;
+        }
+        return nullptr;
+    };
+    if (ask == QLatin1String("count")) {
+        request.remove(QLatin1String("max_tokens"));
+        request.insert(QStringLiteral("model"), Claude::model());
+        ++ext->claudePending;
+        m_claude->countTokens(request, [this, running, id](qint64 tokens, const Claude::Error &error) {
+            Running *ext = running();
+            if (!ext)
+                return;
+            ext->claudePending = qMax(0, ext->claudePending - 1);
+            QJsonObject answer{{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), id}};
+            if (!error.message.isEmpty()) {
+                answer.insert(QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), error.message}, {QStringLiteral("status"), error.status}});
+            } else {
+                answer.insert(QStringLiteral("tokens"), double(tokens));
+                answer.insert(QStringLiteral("dollars"), Claude::cost(Claude::model(), tokens, 0));
+            }
+            send(ext, answer);
+        });
+        return;
+    }
+    if (ext->claudeAsked >= MaxClaudePerAction) {
+        refuse(QStringLiteral("That is many questions for one thing the user chose: Argonaut asks no more until they choose again"));
+        return;
+    }
+    ++ext->claudeAsked;
+    ++ext->claudePending;
+    ext->lastActive = now;
+    ext->claudeWaiting << id;
+    emit claudeWaiting(extension, ext->manifest.name, int(ext->claudeWaiting.size()));
+    m_claude->send(request, [this, running, id, extension](const Claude::Response &response, const Claude::Error &error) {
+        if (response.dollars > 0) { // paid, whether or not the extension is still there to hear the answer
+            QSettings settings;
+            const QString key = QStringLiteral("extensions/%1/claudeSpent").arg(extension);
+            settings.setValue(key, settings.value(key).toDouble() + response.dollars);
+        }
+        Running *ext = running();
+        if (!ext)
+            return;
+        ext->claudePending = qMax(0, ext->claudePending - 1);
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
+        if (!ext->claudeWaiting.removeOne(id))
+            return; // the user stopped waiting for this one: it was answered then
+        emit claudeWaiting(extension, ext->manifest.name, int(ext->claudeWaiting.size()));
+        QJsonObject answer{{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), id}};
+        if (!error.message.isEmpty()) {
+            answer.insert(QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), error.message}, {QStringLiteral("status"), error.status}});
+        } else {
+            answer.insert(QStringLiteral("response"), response.message);
+            answer.insert(QStringLiteral("text"), response.text);
+            answer.insert(QStringLiteral("stop_reason"), response.stopReason);
+            answer.insert(QStringLiteral("dollars"), response.dollars);
+        }
+        send(ext, answer);
+    });
 }
 
 bool Host::openAddress(const QString &address)
@@ -1207,6 +1420,48 @@ void Host::handle(Running *ext, const QByteArray &line)
                                content);
         return;
     }
+    if (type == QLatin1String("plan")) { // changes it proposes for a folder: Argonaut shows, checks and does them
+        const QString id = message.value(QLatin1String("id")).toString().left(64);
+        if (id.isEmpty())
+            return;
+        auto refuse = [&] { send(ext, {{QStringLiteral("type"), QStringLiteral("plan")}, {QStringLiteral("id"), id}, {QStringLiteral("dismissed"), true}}); };
+        // Like a form: only while it is doing what the user asked of it, and one at a time.
+        Plan plan;
+        plan.folder = QDir::cleanPath(message.value(QLatin1String("folder")).toString());
+        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs || !ext->planPending.isEmpty()
+            || !QDir::isAbsolutePath(plan.folder) || !QFileInfo(plan.folder).isDir()) {
+            refuse();
+            return;
+        }
+        plan.extension = ext->manifest.id;
+        plan.extensionName = ext->manifest.name;
+        plan.id = id;
+        plan.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        plan.report = message.value(QLatin1String("report")).toString().left(20000);
+        plan.note = tidy(message.value(QLatin1String("note")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        const QJsonArray moves = message.value(QLatin1String("moves")).toArray();
+        for (const QJsonValue &value : moves) {
+            if (plan.moves.size() >= MaxPlanMoves)
+                break;
+            const QJsonObject o = value.toObject();
+            PlanMove move;
+            move.item = o.value(QLatin1String("item")).toString().left(255);
+            move.folder = o.value(QLatin1String("folder")).toString().left(1000);
+            move.newName = o.value(QLatin1String("new_name")).toString().left(255);
+            move.reason = tidy(o.value(QLatin1String("reason")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            if (!move.item.isEmpty())
+                plan.moves.append(move);
+        }
+        checkPlan(plan.folder, &plan.moves);
+        ext->planPending = id;
+        ext->planTaken = false;
+        emit planRequested(plan);
+        return;
+    }
+    if (type == QLatin1String("claude")) { // a question for Claude: Argonaut asks it, with the user's key
+        askClaude(ext, message);
+        return;
+    }
     if (type == QLatin1String("message")) { // something for the user to read
         const QString text = tidy(message.value(QLatin1String("text")).toString(), MaxMessageChars)
                                  .replace(QLatin1Char('\n'), QLatin1Char(' '));
@@ -1282,6 +1537,13 @@ void Host::forget(Running *ext)
     ext->userActed = 0;
     ext->formPending.clear();
     ext->formTaken = false;
+    ext->planPending.clear();
+    ext->planTaken = false;
+    ext->claudePending = 0;
+    if (!ext->claudeWaiting.isEmpty()) {
+        ext->claudeWaiting.clear();
+        emit claudeWaiting(ext->manifest.id, ext->manifest.name, 0); // it is gone: nobody waits
+    }
     ext->commands.clear();
     ext->commandsSaid = false;
     ext->previewTypes.clear();

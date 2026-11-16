@@ -150,6 +150,14 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
         Extensions::Host::instance()->answerForm(form.extension, form.id, true);
         say(QStringLiteral("“%1” has something to ask, which only the window version can show yet").arg(form.extensionName));
     }, Qt::QueuedConnection);
+    // Nor changes an extension proposes (a plan): dismissed, and said so, so
+    // the extension isn't left waiting.
+    connect(Extensions::Host::instance(), &Extensions::Host::planRequested, this, [this](const Extensions::Plan &plan) {
+        if (!Extensions::Host::instance()->takePlan(plan.extension, plan.id))
+            return;
+        Extensions::Host::instance()->answerPlan(plan.extension, plan.id, true);
+        say(QStringLiteral("“%1” proposes changes, which only the window version can show yet").arg(plan.extensionName));
+    }, Qt::QueuedConnection);
     m_messageTimer.setSingleShot(true);
     m_messageTimer.setInterval(4000);
     connect(&m_messageTimer, &QTimer::timeout, this, [this] {

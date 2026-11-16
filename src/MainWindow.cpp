@@ -14,7 +14,7 @@
 #include "CommandPalette.h"
 #include "ExtensionForm.h"
 #include "DesktopActions.h"
-#include "OrganizerDialog.h"
+#include "Organizer.h"
 #include "Remote.h"
 #include "HelpDialog.h"
 #include "InlineRename.h"
@@ -161,6 +161,8 @@ MainWindow::MainWindow(QWidget *parent)
     // An extension asks something (a login). Not from inside the reading of
     // its message: the dialog runs its own loop.
     connect(Extensions::Host::instance(), &Extensions::Host::formRequested, this, &MainWindow::showExtensionForm, Qt::QueuedConnection);
+    connect(Extensions::Host::instance(), &Extensions::Host::planRequested, this, &MainWindow::showExtensionPlan, Qt::QueuedConnection);
+    connect(Extensions::Host::instance(), &Extensions::Host::claudeWaiting, this, &MainWindow::showClaudeWaiting);
     // An extension has a folder to show for what the user chose from it.
     connect(Extensions::Host::instance(), &Extensions::Host::openRequested, this, [this](const QString &, const QString &folder) {
         if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
@@ -620,9 +622,6 @@ void MainWindow::setupActions()
         }
         updateFloatingBar();
     });
-    m_organizeAct = new QAction(tr("Organize with Claude…"), this);
-    connect(m_organizeAct, &QAction::triggered, this, &MainWindow::organizeWithClaude);
-
     m_paletteAct = new QAction(tr("Command Palette…"), this);
     m_paletteAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
     connect(m_paletteAct, &QAction::triggered, this, &MainWindow::showCommandPalette);
@@ -1920,23 +1919,9 @@ QMenu *MainWindow::scriptsMenu(const QStringList &selection)
 
 // ------------------------------------------------------------ organize ---
 
-void MainWindow::organizeWithClaude()
-{
-    if (m_pane->current.isEmpty() || !QFileInfo(m_pane->current).isWritable() || m_pane->model->isVirtual())
-        return;
-    const QString folder = m_pane->current;
-    OrganizerDialog dialog(folder, this);
-    connect(&dialog, &OrganizerDialog::openPreferences, this, [this] { m_prefsAct->trigger(); });
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    QList<QPair<QString, QPair<QString, QString>>> moves;
-    for (const Organizer::Move &m : dialog.keptMoves())
-        moves.append({m.item, {m.folder, m.newName}});
-    applyOrganizePlan(folder, moves);
-}
-
-// The kept moves: new folders first (undoable on their own), then one move
-// job with renames ("Undo Organize" puts everything back).
+// A plan's kept moves (an extension proposed them: applyExtensionPlan): new
+// folders first (undoable on their own), then one move job with renames
+// ("Undo Organize" puts everything back).
 void MainWindow::applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves)
 {
     QList<TransferResult> created; // the top-most folders made for the plan
@@ -2007,6 +1992,77 @@ void MainWindow::ejectExtensionPlace(const QString &place, const QString &path, 
 
 // An extension asks the user something while it works (a login). Shown by
 // one window only; the answer goes back to the extension.
+// Claude is being asked something for an extension, which takes a while: the
+// preview pane of the window in front says so until the answer is there.
+void MainWindow::showClaudeWaiting(const QString &extension, const QString &name, int waiting)
+{
+    if (waiting <= 0) {
+        if (m_quickLook)
+            m_quickLook->endWorking(extension);
+        return;
+    }
+    if (m_analyzing || m_chooser)
+        return;
+    QWidget *active = QApplication::activeWindow();
+    while (active && active != this && active->parentWidget())
+        active = active->parentWidget()->window();
+    if (active && active != this)
+        return;
+    if (!quickLookVisible())
+        toggleQuickLook();
+    if (m_quickLook)
+        m_quickLook->showWorking(extension, name, tr("Waiting for Claude's answer"));
+}
+
+// Changes an extension proposes: shown in the preview pane of the window in
+// front, to be ticked and applied (or dismissed) there.
+void MainWindow::showExtensionPlan(const Extensions::Plan &plan)
+{
+    if (m_analyzing || m_chooser)
+        return;
+    QWidget *active = QApplication::activeWindow();
+    while (active && active != this && active->parentWidget())
+        active = active->parentWidget()->window();
+    if (active && active != this)
+        return;
+    Extensions::Host *host = Extensions::Host::instance();
+    if (m_quickLook && m_quickLook->hasPlan())
+        return; // this window is showing one
+    if (!host->takePlan(plan.extension, plan.id))
+        return; // another window has it
+    if (!quickLookVisible())
+        toggleQuickLook();
+    if (!m_quickLook || !m_quickLook->showPlan(plan))
+        host->answerPlan(plan.extension, plan.id, true);
+}
+
+// Apply was pressed. The folder may have changed since the plan was shown
+// (nothing was blocked meanwhile): every kept move is checked again, as it
+// is now, and only what still can be done is done, through the file engine,
+// so it can be undone. The extension is told how many were.
+void MainWindow::applyExtensionPlan(const Extensions::Plan &plan, const QList<Extensions::PlanMove> &kept)
+{
+    QList<Extensions::PlanMove> moves = kept;
+    Extensions::Host::checkPlan(plan.folder, &moves);
+    QList<QPair<QString, QPair<QString, QString>>> doing;
+    int skipped = 0;
+    for (const Extensions::PlanMove &move : std::as_const(moves)) {
+        if (!move.problem.isEmpty())
+            ++skipped;
+        else
+            doing.append({move.item, {move.folder, move.newName}});
+    }
+    if (!doing.isEmpty())
+        applyOrganizePlan(plan.folder, doing);
+    Extensions::Host::instance()->answerPlan(plan.extension, plan.id, false, int(doing.size()), skipped);
+    if (skipped > 0) {
+        showMessage(doing.isEmpty() ? tr("Nothing was moved: the folder has changed since the plan was made")
+                                    : tr("Moving %1 items; %2 were left where they are: the folder has changed since the plan was made")
+                                          .arg(doing.size())
+                                          .arg(skipped));
+    }
+}
+
 void MainWindow::showExtensionForm(const Extensions::Form &form)
 {
     // The window in front (or a dialog of its): the user is there.
@@ -3042,7 +3098,6 @@ void MainWindow::updateEditActions()
     m_newFileAct->setEnabled(writable);
     m_renameAct->setEnabled(!inTrash && changeable);
     m_newDocumentMenu->menuAction()->setEnabled(writable);
-    m_organizeAct->setEnabled(writable && !m_pane->model->isSearch() && !m_pane->model->isVirtual());
     const bool fileView = !m_analyzing && m_pane->view && m_pane->model->rowCount() > 0;
     m_selectMatchingAct->setEnabled(fileView);
     m_invertSelectionAct->setEnabled(fileView);
@@ -3162,7 +3217,6 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_copyLocationAct);
         menu->addAction(m_hiddenAct);
         menu->addSeparator();
-        menu->addAction(m_organizeAct);
         addExtensionCommands(menu, {});
         if (QMenu *scripts = scriptsMenu({})) {
             menu->addSeparator();
@@ -3406,8 +3460,6 @@ QWidget *MainWindow::buildMenuBar()
     file->addAction(m_newFolderAct);
     file->addAction(m_newFileAct);
     file->addMenu(m_newDocumentMenu);
-    file->addSeparator();
-    file->addAction(m_organizeAct);
     file->addSeparator();
     file->addAction(m_openAct);
     file->addAction(m_propertiesAct);
@@ -4311,6 +4363,22 @@ void MainWindow::toggleQuickLook()
         m_previewSplitter->setStretchFactor(1, 0);
         connect(m_quickLook, &QuickLook::closeRequested, this, &MainWindow::hideQuickLook);
         connect(m_quickLook, &QuickLook::keysBackRequested, this, [this] { m_pane->view->setFocus(); });
+        connect(m_quickLook, &QuickLook::planApplied, this, &MainWindow::applyExtensionPlan);
+        connect(m_quickLook, &QuickLook::workingStopRequested, this, [](const QString &extension) {
+            Extensions::Host::instance()->stopWaitingForClaude(extension);
+        });
+        connect(m_quickLook, &QuickLook::planDismissed, this, [](const Extensions::Plan &plan) {
+            Extensions::Host::instance()->answerPlan(plan.extension, plan.id, true);
+        });
+        // A move was clicked: its file, in its folder, so it can be looked at.
+        connect(m_quickLook, &QuickLook::planItemActivated, this, [this](const QString &path) {
+            const QString folder = QFileInfo(path).absolutePath();
+            if (!QFileInfo::exists(path))
+                return;
+            if (m_pane->current != folder)
+                navigateTo(folder);
+            selectPaths({path});
+        });
         connect(m_quickLook, &QuickLook::openRequested, this, [this](const QString &path) {
             if (QFileInfo(path).isDir())
                 navigateTo(path);
@@ -4536,7 +4604,7 @@ void MainWindow::startChooser(const ChooserRequest &request)
             button->hide();
     m_chooser->setUnavailableActions({m_splitAct, m_terminalAct, m_openTerminalHereAct, m_analyzeAct, m_newTabAct,
                                       m_reopenTabAct, m_openInNewTabAct, m_quitAct, m_prefsAct, m_extensionsAct, m_paletteAct,
-                                      m_organizeAct, m_copyToOtherAct, m_moveToOtherAct, m_aboutAct, m_guideAct,
+                                      m_copyToOtherAct, m_moveToOtherAct, m_aboutAct, m_guideAct,
                                       m_shortcutsAct});
 
     m_contentLayout->addWidget(m_chooser->bar());

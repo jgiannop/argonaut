@@ -32,6 +32,8 @@ class QuickLook;
 namespace Extensions {
 struct PreviewReply;
 struct Form;
+struct Plan;
+struct PlanMove;
 }
 namespace FileRules {
 struct Question;
@@ -279,7 +281,6 @@ private:
     QAction *m_extensionsAct = nullptr; // Ctrl+Shift+X: the Extensions window
     QAction *m_aboutAct = nullptr;
     QAction *m_paletteAct = nullptr;   // Ctrl+Shift+P: run any command by name
-    QAction *m_organizeAct = nullptr;  // Organize with Claude…
     QAction *m_restoreAllAct = nullptr;  // Trash: Restore All
     QToolButton *m_trashRestoreAllButton = nullptr;
     // Dragging: hold still over a folder and it opens (or expands in place).
@@ -292,12 +293,14 @@ private:
     void showExtensionInfoMenu(const QPoint &globalPos);
     void refreshExtensionMenus(); // the commands extensions put in File, Edit, View and Go
     void showExtensionForm(const Extensions::Form &form);
+    void showExtensionPlan(const Extensions::Plan &plan);
+    void showClaudeWaiting(const QString &extension, const QString &name, int waiting);
+    void applyExtensionPlan(const Extensions::Plan &plan, const QList<Extensions::PlanMove> &kept);
     bool letGoOf(const QString &root, const QString &name); // before a drive or server goes: nothing of ours uses it
     void ejectExtensionPlace(const QString &place, const QString &path, const QString &name);
     QHash<QString, QMenu *> m_extensionMenus; // "view" → the View menu
     void showExtensionResult(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
     QMenu *scriptsMenu(const QStringList &selection);
-    void organizeWithClaude();
     void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
     QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
     QToolButton *m_filterButton = nullptr;  // search filters: type and date

@@ -17,6 +17,7 @@
 #include "DiskUsageModel.h"
 #include "InlineRename.h"
 #include "MainWindow.h"
+#include "PlanView.h"
 #include "PdfPages.h"
 #include "PdfView.h"
 #include "MountActions.h"
@@ -40,6 +41,7 @@
 #include "FileChooserRequest.h"
 #endif
 
+#include <QPushButton>
 #include <QPainter>
 #include <QPageSize>
 #include <QScrollBar>
@@ -116,6 +118,8 @@ private slots:
     void diffIsColoured();
     void extensionListIsAPlace();
     void unmountedDriveInTheSidebar();
+    void extensionPlanInThePane();
+    void waitingForClaudeIsShown();
     void extensionResultStaysLive();
     void longPictureFromAnExtensionScrolls();
     void extensionResultCanBeSearched();
@@ -1870,6 +1874,157 @@ exit 2
     emit w->m_sidebar->itemClicked(row("PRETEND-ONE"));
     QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, mountPoint, 10000);
     QVERIFY(QFileInfo(mountPoint).isDir());
+}
+
+// Changes an extension proposes are shown in the preview pane: a tick a
+// move, what can't be done unticked with the reason. The plan keeps the pane
+// while files are looked at. Apply checks again (the folder may have
+// changed), does what still can be done through the file engine, and it
+// can be undone; the extension only hears how it went.
+void TestMainWindow::extensionPlanInThePane()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt"), b = make("b.txt"), c = make("c.txt"), trigger = make("make-plan.txt");
+    make("d.txt");
+    make("e.txt");
+    open(m_dir);
+    QSignalSpy said(host, &Extensions::Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    auto propose = [&] {
+        const QList<Extensions::Item> one{{trigger, "text/plain", false}};
+        for (const Extensions::Command &command : host->commands(m_dir, one)) {
+            if (command.id == "hello") {
+                host->invoke(command, m_dir, {trigger});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(propose(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook && w->m_quickLook->hasPlan(), 10000);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *pane = w->m_quickLook;
+    PlanView *plan = pane->planView();
+    QCOMPARE(plan->moveCount(), 7);
+    QVERIFY(!pane->hasOpenButton());
+    // What can be done is ticked; what can't is said why, and can't be ticked.
+    QVERIFY(plan->moveText(0).startsWith("a.txt") && plan->moveText(0).contains("→ Texts/") && plan->moveText(0).contains("A text"));
+    QVERIFY(plan->isMoveTicked(0) && plan->isMoveTicked(1) && plan->isMoveTicked(2));
+    QVERIFY2(plan->moveText(2).contains("renamed.txt"), qPrintable(plan->moveText(2)));
+    for (int row = 3; row < 7; ++row) {
+        QVERIFY2(!plan->canMoveBeTicked(row) && !plan->isMoveTicked(row), qPrintable(plan->moveText(row)));
+        QVERIFY2(plan->moveText(row).contains("Can't be done"), qPrintable(plan->moveText(row)));
+        plan->setMoveTicked(row, true); // not even by asking
+        QVERIFY(!plan->isMoveTicked(row));
+    }
+    QCOMPARE(int(plan->keptMoves().size()), 3);
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) { // to look at it
+        QTest::qWait(300);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+    }
+
+    // Looking at a file meanwhile doesn't take the plan away, nor does another result.
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::qWait(200);
+    QVERIFY(pane->hasPlan());
+    Extensions::PreviewReply other;
+    other.kind = Extensions::PreviewReply::Text;
+    other.text = "something else";
+    w->showExtensionResult("fake", "Other", other);
+    QVERIFY(pane->hasPlan());
+
+    // Dismiss: nothing moves, and the extension is told.
+    plan->dismissButton()->click();
+    QVERIFY(!pane->hasPlan());
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 dismissed"), 10000);
+    QVERIFY(QFile::exists(a) && QFile::exists(b) && QFile::exists(c) && !QFileInfo::exists(m_dir + "/Texts"));
+
+    // Again; this time one move is unticked, and a file goes away before Apply.
+    said.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(propose(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasPlan(), 10000);
+    plan->setMoveTicked(2, false); // c.txt keeps its name
+    QCOMPARE(int(plan->keptMoves().size()), 2);
+    QVERIFY(QFile::remove(b)); // by another program, meanwhile
+    runJob([&] { plan->applyButton()->click(); });
+    QVERIFY(!pane->hasPlan());
+    QVERIFY(QFile::exists(m_dir + "/Texts/a.txt") && !QFile::exists(a)); // moved
+    QVERIFY(QFile::exists(c) && !QFile::exists(m_dir + "/renamed.txt")); // unticked: untouched
+    QVERIFY(!QFileInfo::exists(m_dir + "/Texts/Old"));                    // its file was gone: nothing made for it
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 applied=1 skipped=1"), 10000);
+    // It went through the file engine: undo puts the file back.
+    QVERIFY(w->m_undoAct->isEnabled());
+    runJob([&] { w->m_undoAct->trigger(); });
+    QVERIFY(QFile::exists(a) && !QFile::exists(m_dir + "/Texts/a.txt"));
+
+    // Closing the pane with a plan in it dismisses the plan.
+    said.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(propose(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasPlan(), 10000);
+    w->hideQuickLook();
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 dismissed"), 10000);
+    QVERIFY(QFile::exists(a));
+    host->setEnabled("fake", false);
+}
+
+// While Claude is asked something for an extension, the preview pane says
+// so (with how long it has been), and keeps saying it while files are
+// looked at; it ends with the answer, or when the user stops waiting.
+void TestMainWindow::waitingForClaudeIsShown()
+{
+    const QString a = make("a.txt");
+    open(m_dir);
+    QVERIFY(!w->quickLookVisible());
+    w->showClaudeWaiting("some-extension", "Some Extension", 1);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *pane = w->m_quickLook;
+    QVERIFY(pane->isWorking());
+    QVERIFY2(pane->workingText().startsWith("Waiting for Claude's answer."), qPrintable(pane->workingText()));
+    QVERIFY(!pane->hasOpenButton());
+    QVERIFY(pane->stopWaitingButton()->isVisibleTo(pane));
+    // It is seen to go on: after a while it says how long it has been.
+    QTRY_VERIFY_WITH_TIMEOUT(pane->workingText().contains("seconds so far"), 6000);
+    // A file selected meanwhile doesn't take it away.
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::qWait(200);
+    QVERIFY(pane->isWorking());
+    // Another extension's end isn't this one's.
+    w->showClaudeWaiting("another", "Another", 0);
+    QVERIFY(pane->isWorking());
+    // "Stop Waiting" asks for that.
+    QSignalSpy stop(pane, &QuickLook::workingStopRequested);
+    pane->stopWaitingButton()->click();
+    QCOMPARE(stop.size(), 1);
+    QCOMPARE(stop.first().at(0).toString(), QStringLiteral("some-extension"));
+    // The answer is there: the pane is free again, and follows the files.
+    w->showClaudeWaiting("some-extension", "Some Extension", 0);
+    QVERIFY(!pane->isWorking());
+    QVERIFY(!pane->stopWaitingButton()->isVisibleTo(pane));
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTRY_VERIFY(pane->hasOpenButton());
+
+    // A plan that arrives while it is waiting takes the pane (it is what was waited for).
+    w->showClaudeWaiting("some-extension", "Some Extension", 1);
+    QVERIFY(pane->isWorking());
+    Extensions::Plan plan;
+    plan.extension = "some-extension";
+    plan.extensionName = "Some Extension";
+    plan.id = "p";
+    plan.folder = m_dir;
+    plan.moves = {{"a.txt", "Texts", {}, "A text", {}}};
+    QVERIFY(pane->showPlan(plan));
+    QVERIFY(pane->hasPlan() && !pane->isWorking());
+    w->hideQuickLook();
 }
 
 void TestMainWindow::extensionResultStaysLive()

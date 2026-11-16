@@ -3,6 +3,7 @@
 #include "Extensions.h"
 #include "Preview.h"
 
+#include <QElapsedTimer>
 #include <QPixmap>
 #include <QWidget>
 
@@ -50,6 +51,21 @@ public:
     // there is) and when it no longer is. An `update` for a result that
     // isn't the one shown does nothing. True: it is shown now.
     bool showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content);
+    // Changes an extension proposes: shown until they are applied or
+    // dismissed (planApplied / planDismissed); selecting a file meanwhile
+    // doesn't replace them. False: another plan has the pane.
+    bool showPlan(const Extensions::Plan &plan);
+    bool hasPlan() const;
+    // An extension is waiting for something that takes a while (Claude's
+    // answer): the pane says so, with how long it has been, until
+    // endWorking (or a plan, or the pane closing). Selecting a file
+    // meanwhile doesn't take it away; "Stop Waiting" asks to (workingStopRequested).
+    void showWorking(const QString &extension, const QString &title, const QString &text);
+    void endWorking(const QString &extension);
+    bool isWorking() const { return !m_workingFor.isEmpty(); }
+    QString workingText() const; // what it says (tests)
+    QPushButton *stopWaitingButton() const { return m_stopWaiting; } // (tests)
+    class PlanView *planView() const { return m_plan; } // (tests)
     QString resultId() const { return m_resultId; } // the named result shown, if any (tests)
     QString path() const { return m_item.path; }
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
@@ -66,6 +82,10 @@ public:
     bool hasOpenButton() const;                          // "Open" is there: not for an extension's result, which is no file (tests)
 
 signals:
+    void planApplied(const Extensions::Plan &plan, const QList<Extensions::PlanMove> &kept);
+    void planDismissed(const Extensions::Plan &plan);
+    void workingStopRequested(const QString &extension);
+    void planItemActivated(const QString &path); // a move was clicked: show its file in the folder
     void keysBackRequested(); // Esc or Enter in the search field: the keys are the files' again
     void openRequested(const QString &path);
     void closeRequested();
@@ -93,6 +113,14 @@ private:
     QLabel *m_details = nullptr;
     QStackedWidget *m_pages = nullptr;
     class PictureView *m_picture = nullptr;
+    class PlanView *m_plan = nullptr;      // changes an extension proposes, to tick and apply
+    void closePlan(bool dismissed);
+    QString m_workingFor;                  // the extension the pane says "working" for
+    QString m_workingText;
+    QElapsedTimer m_workingSince;
+    QTimer *m_workingTimer = nullptr;      // moves the dots and counts the seconds
+    QPushButton *m_stopWaiting = nullptr;
+    void updateWorking();
     PdfView *m_pdf = nullptr;        // the PDF reader: every page, in the sandbox (PdfView)
     class QScrollArea *m_scroll = nullptr; // an extension's picture that is taller than the pane ("scroll")
     QLabel *m_scrollPicture = nullptr;

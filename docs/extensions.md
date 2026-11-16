@@ -18,7 +18,7 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Nine extensions come with Argonaut and are good to read: Connect to Server
+Ten extensions come with Argonaut and are good to read: Connect to Server
 ([`extensions/connect`](../extensions/connect): rows in the sidebar, a kind of
 address that is its to open, and forms for the questions a server asks),
 System Dashboard
@@ -30,7 +30,9 @@ measured), Running Services
 ([`extensions/services`](../extensions/services): systemd's running services,
 most memory first: a picture in the window, a list in the terminal), Running
 Processes ([`extensions/processes`](../extensions/processes): the same for
-every process, read from `/proc`), Document Preview
+every process, read from `/proc`), Organize with Claude
+([`extensions/organize`](../extensions/organize): it asks Claude through
+Argonaut and proposes a plan that Argonaut shows and carries out), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
 spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands
@@ -104,6 +106,7 @@ only those are looked at then.
 | `name`, `description`, `version`, `author` | Shown in the Extensions window. |
 | `start` | `"when-needed"`: your program isn't started with Argonaut, only when something of yours is used. See [Starting only when needed](#starting-only-when-needed). |
 | `commands`, `previews` | For a `when-needed` extension: what you offer, so it can be shown while your program isn't running. |
+| `uses` | `["claude"]`: you ask Claude through Argonaut ([Asking Claude](#asking-claude)). Shown in the Extensions window. |
 | `addresses` | The kinds of address that are yours to open, by what comes before `://`: `["sftp", "smb"]`. See [Addresses](#addresses). |
 
 ### Starting only when needed
@@ -522,6 +525,102 @@ Rules, because a dialog that asks for a password is a serious thing:
   that line.
 - What is typed is handed to you and kept nowhere by Argonaut. Don't write
   passwords to disk or to your output.
+
+### Proposing changes
+
+When what you have worked out is a set of changes to a folder (items to
+move into sub-folders, better names), don't make them: **propose** them.
+Argonaut shows them in the preview pane with a tick each, the user keeps
+what they want, and Argonaut makes the changes itself, through its own file
+engine, so Ctrl+Z undoes them.
+
+```json
+{"type": "plan", "id": "tidy", "title": "Tidy Downloads", "folder": "/home/ann/Downloads",
+ "report": "## What is here\nMostly invoices and photos.",
+ "note": "Looked at 212 items",
+ "moves": [
+     {"item": "invoice-march.pdf", "folder": "Invoices/2026", "reason": "An invoice"},
+     {"item": "IMG_2041.jpg", "folder": "Photos", "new_name": "Harbour at dusk.jpg", "reason": "A photo"}
+ ]}
+```
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Comes back with the answer. |
+| `folder` | Required. The folder the changes are about: an absolute path to a folder that exists. |
+| `moves` | Up to 500. Each has an `item` (a **name** in that folder, not a path), and a `folder` to move it into (relative, inside the plan's folder; it is made if it isn't there), or a `new_name`, or both; and a `reason`, one line. |
+| `title`, `note` | The pane's title, and a line under the moves. |
+| `report` | Markdown shown above the moves: what you found. Nothing it names is loaded. |
+
+Argonaut checks every move by its own rules, and shows one it won't make
+in red with the reason, unticked: an item that isn't in the folder, a
+target outside the folder, a name that isn't a file name, two items to one
+place, a place that is taken, a folder into itself. When the user presses
+Apply it checks again, because the folder may have changed meanwhile. Then
+it tells you:
+
+```json
+{"type": "plan", "id": "tidy", "applied": 2, "skipped": 0}
+{"type": "plan", "id": "tidy", "dismissed": true}
+```
+
+The rules are those of a form: a plan is shown only while you are doing
+something the user asked of you, one at a time (a second one, or one out
+of the blue, is answered `"dismissed": true` at once). The terminal
+interface doesn't show plans yet.
+
+### Asking Claude
+
+An extension can have Claude asked something **through Argonaut**, with the
+API key and the model the user set in Preferences → Claude, at the user's
+cost. Your extension never has the key (it is also taken out of your
+environment), so there is nothing for it to keep safe or to leak, and the
+user enters it once, for every extension.
+
+Say so in `extension.json`; the Extensions window then shows it, and what
+you have cost so far:
+
+```json
+"uses": ["claude"]
+```
+
+Then send the body of a [Messages request](https://docs.anthropic.com/en/api/messages):
+
+```json
+{"type": "claude", "id": "q1",
+ "request": {"system": "You name files.", "max_tokens": 2000,
+             "messages": [{"role": "user", "content": "A name for a photo of a harbour at dusk"}]}}
+```
+
+and the whole response comes back, with its text put together and what it cost:
+
+```json
+{"type": "claude", "id": "q1", "response": {"content": […], "stop_reason": "end_turn", "usage": {…}},
+ "text": "Harbour at dusk", "stop_reason": "end_turn", "dollars": 0.0031}
+{"type": "claude", "id": "q1", "error": {"message": "There is no Claude API key yet: Preferences → Claude", "status": 0}}
+```
+
+Tools work as in the API: send `tools`, find the `tool_use` blocks in
+`response.content`, and send the conversation back with your `tool_result`
+in the next request.
+
+Two questions are free and need no user action:
+
+| `"ask"` | You get |
+|---|---|
+| `"info"` | `hasKey`, the `model` and `modelName` the user chose, and `mode` (`"names"`, `"ask"` or `"auto"`: what the user lets Claude see; respect it). |
+| `"count"` (with a `request`) | `tokens`: how many the request is, and `dollars`: what sending them would cost. Tell the user before you spend. |
+
+While a request is under way, Argonaut says so in the preview pane
+("Waiting for Claude's answer", with the seconds), so you needn't. The user
+can stop waiting there: you then get an `error` for that request at once,
+and its answer is dropped when it comes.
+
+What is not yours to decide: the `model` (the user's), `max_tokens` above
+16000, streaming. And when: **a request is sent only while you are doing
+something the user chose** (a command of yours within the last five
+minutes, renewed by each form they answer), at most 12 for one such choice.
+An extension in the background can't spend the user's money.
 
 ### Previews
 

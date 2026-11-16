@@ -22,6 +22,8 @@
 #include <QRegularExpression>
 #include "PdfPages.h"
 #include "PdfView.h"
+#include "PlanView.h"
+#include "RichView.h"
 
 #include <QKeyEvent>
 #include <QMimeDatabase>
@@ -65,17 +67,6 @@ protected:
 
 private:
     QPixmap m_pixmap;
-};
-
-// Rich text from an extension, shown and nothing more: links don't go
-// anywhere and nothing it names (pictures, style sheets) is loaded.
-class RichView : public QTextBrowser
-{
-public:
-    using QTextBrowser::QTextBrowser;
-
-protected:
-    QVariant loadResource(int, const QUrl &) override { return {}; }
 };
 
 QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
@@ -159,6 +150,18 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
         m_pdf->clear();
         loadPreview(m_generation);
     });
+    // Changes an extension proposes (a plan): its moves to tick, Dismiss and Apply.
+    m_plan = new PlanView(m_pages);
+    connect(m_plan, &PlanView::applyRequested, this, [this] {
+        if (m_plan->isEmpty())
+            return;
+        const Extensions::Plan plan = m_plan->plan();
+        const QList<Extensions::PlanMove> kept = m_plan->keptMoves();
+        closePlan(false); // the pane is free again before anything moves
+        emit planApplied(plan, kept);
+    });
+    connect(m_plan, &PlanView::dismissRequested, this, [this] { closePlan(true); });
+    connect(m_plan, &PlanView::itemActivated, this, &QuickLook::planItemActivated);
     m_scroll = new QScrollArea(m_pages);
     m_scroll->setObjectName("qlScroll");
     m_scroll->setFrameShape(QFrame::NoFrame);
@@ -200,8 +203,22 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     info->addWidget(m_infoIcon);
     info->addSpacing(10);
     info->addWidget(m_infoText);
+    // Only while something is waited for (showWorking).
+    m_stopWaiting = new QPushButton(tr("Stop Waiting"), m_infoPage);
+    m_stopWaiting->setObjectName("prefButton");
+    m_stopWaiting->setFocusPolicy(Qt::NoFocus);
+    m_stopWaiting->hide();
+    info->addSpacing(14);
+    info->addWidget(m_stopWaiting, 0, Qt::AlignHCenter);
     info->addStretch();
-    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll), static_cast<QWidget *>(m_pdf),
+    connect(m_stopWaiting, &QPushButton::clicked, this, [this] {
+        if (!m_workingFor.isEmpty())
+            emit workingStopRequested(m_workingFor);
+    });
+    m_workingTimer = new QTimer(this);
+    m_workingTimer->setInterval(400);
+    connect(m_workingTimer, &QTimer::timeout, this, &QuickLook::updateWorking);
+    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll), static_cast<QWidget *>(m_pdf), static_cast<QWidget *>(m_plan),
                           static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
     layout->addWidget(m_pages, 1);
@@ -239,8 +256,95 @@ QSize QuickLook::pictureBox() const
     return (QSizeF(area) * dpr).toSize();
 }
 
+// Something an extension waits for (Claude's answer): the pane says so,
+// with dots that move and the seconds, so the wait is seen to go on.
+void QuickLook::showWorking(const QString &extension, const QString &title, const QString &text)
+{
+    if (hasPlan())
+        return;
+    if (m_workingFor != extension) {
+        endWorking(m_workingFor);
+        clear();
+        m_workingSince.start();
+    }
+    m_workingFor = extension;
+    m_workingText = text;
+    m_open->hide();
+    m_title->setText(title);
+    m_details->clear();
+    m_note->clear();
+    m_infoIcon->clear();
+    m_infoText->setStyleSheet(QString());
+    m_stopWaiting->show();
+    m_pages->setCurrentWidget(m_infoPage);
+    m_workingTimer->start();
+    updateWorking();
+}
+
+void QuickLook::endWorking(const QString &extension)
+{
+    if (m_workingFor.isEmpty() || m_workingFor != extension)
+        return;
+    m_workingFor.clear();
+    m_workingTimer->stop();
+    m_stopWaiting->hide();
+    clear();
+}
+
+void QuickLook::updateWorking()
+{
+    if (m_workingFor.isEmpty())
+        return;
+    const qint64 seconds = m_workingSince.elapsed() / 1000;
+    const QString dots(1 + int(m_workingSince.elapsed() / 400) % 3, QLatin1Char('.'));
+    QString text = m_workingText + dots;
+    if (seconds >= 3)
+        text += QLatin1Char('\n') + tr("%1 seconds so far. It can take a minute.").arg(seconds);
+    m_infoText->setText(text);
+}
+
+QString QuickLook::workingText() const
+{
+    return isWorking() ? m_infoText->text() : QString();
+}
+
+// A plan has the pane until it is applied or dismissed: selecting files (to
+// look at what a move is about) doesn't take it away.
+bool QuickLook::showPlan(const Extensions::Plan &plan)
+{
+    if (hasPlan())
+        return false; // one at a time
+    endWorking(m_workingFor); // what was waited for is here
+    clear();
+    m_open->hide();
+    m_title->setText(plan.title.isEmpty() ? tr("Proposed changes") : plan.title);
+    m_details->setText(tr("From the extension “%1” · %2").arg(plan.extensionName, tildePath(plan.folder)));
+    m_note->setText(plan.note);
+    m_plan->setPlan(plan);
+    m_pages->setCurrentWidget(m_plan);
+    return true;
+}
+
+bool QuickLook::hasPlan() const
+{
+    return m_pages->currentWidget() == m_plan && !m_plan->isEmpty();
+}
+
+void QuickLook::closePlan(bool dismissed)
+{
+    if (m_plan->isEmpty())
+        return;
+    const Extensions::Plan plan = m_plan->plan();
+    m_plan->clear();
+    clear();
+    if (dismissed)
+        emit planDismissed(plan);
+}
+
 void QuickLook::showItem(const Item &item)
 {
+    if (hasPlan() || isWorking())
+        return; // the plan stays (it is answered with Apply or Dismiss), and so does "working"
     closeResult(); // a file takes the pane back
     m_pdf->clear();
     m_item = item;
@@ -406,6 +510,8 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
 
 bool QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
 {
+    if (hasPlan() || isWorking())
+        return false; // not over a plan that waits for its answer, or over "working"
     const bool same = !content.resultId.isEmpty() && isVisible() && content.resultId == m_resultId
                       && content.extension == m_resultExtension;
     if (same) {
@@ -549,6 +655,8 @@ QString QuickLook::shownText() const
 
 void QuickLook::clear()
 {
+    if (hasPlan() || isWorking())
+        return; // a plan waits for its answer, or something is waited for: nothing else takes the pane
     closeResult();
     m_pdf->clear();
     ++m_generation; // drop what's still loading
@@ -649,6 +757,12 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 
 void QuickLook::hideEvent(QHideEvent *event)
 {
+    closePlan(true); // the pane was closed: the plan is not applied
+    if (isWorking()) { // nor is the waiting shown any more (it goes on: the plan will open the pane)
+        m_workingFor.clear();
+        m_workingTimer->stop();
+        m_stopWaiting->hide();
+    }
     closeResult();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();
