@@ -616,6 +616,31 @@ to the folder the shell is in (and reads the folder again if they are already th
 )"));
 #endif
 
+    add("textmode", tr("Argonaut in a Terminal"), tr(R"(
+<p>Argonaut also runs without a window, inside a terminal: for a server reached over SSH, or for working from
+the keyboard. Start it with <code>argonaut --tui</code> (or <code>argonaut-tui</code>), optionally followed by a
+folder, or by two folders to start with two panes. It uses the same engine as this window: copying and moving
+show progress and can be undone, deleting goes to the Trash, anything permanent is asked about first, and Git
+repositories show their marks and branch.</p>
+<ul>
+<li><b>Moving:</b> the arrow keys, [[PgUp]] / [[PgDn]], [[Home]] / [[End]]. [[Enter]] opens a folder or a file
+(with its app; where there is no desktop, a text file is shown in the terminal). [[Backspace]], or Enter on
+<code>..</code>, goes up. [[g]] goes to a folder you type.</li>
+<li><b>Two panes:</b> [[F4]] shows a second pane beside the first, or goes back to one. [[Tab]] changes pane;
+[[F5]] copies and [[F6]] moves to the other pane.</li>
+<li><b>Grid or list:</b> [[F9]] shows the pane as a grid of names, or as a list with sizes and dates.</li>
+<li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell in the lower half, in the pane's
+folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
+files to its folder and <code>exit</code> closes it.</li>
+<li><b>Files:</b> [[Space]] or [[Insert]] selects, [[F7]] makes a folder, [[F2]] renames, [[F8]] or [[Delete]]
+moves to the Trash, [[Shift+Delete]] deletes for good (it asks, and only <b>y</b> means yes), [[Ctrl+Z]] and
+[[Ctrl+Y]] undo and redo, [[F3]] reads a text file.</li>
+<li><b>Mouse:</b> click, double-click, right-click to select, the wheel, and the words on the bottom line.</li>
+<li>[[F1]] lists every key; [[F10]] or [[q]] quits.</li>
+</ul>
+<p>Menus, search, tabs and the preview pane are not in the terminal version yet.</p>
+)"));
+
     QString prefs = tr(R"(
 <h2>Themes</h2>
 <p><b>Edit → Preferences</b> ([[Ctrl+,]]) has seven themes: Follow System, Light, Dark, Midnight Blue,

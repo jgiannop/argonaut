@@ -107,7 +107,7 @@ Ignore message types and keys you don't know; newer versions may add some.
 ### From Argonaut
 
 ```json
-{"type": "hello", "protocol": 1, "app": "argonaut", "version": "0.6.0"}
+{"type": "hello", "protocol": 1, "app": "argonaut", "version": "0.8.0"}
 {"type": "watch", "folder": "/home/me/Documents"}
 {"type": "refresh", "folder": "/home/me/Documents"}
 {"type": "unwatch", "folder": "/home/me/Documents"}

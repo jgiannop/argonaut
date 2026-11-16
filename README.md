@@ -24,8 +24,9 @@ A fast file manager built with C++ and Qt 6, inspired by GNOME Files (Nautilus).
 - **Analyze view** (Ctrl+3, or the pie button): how much disk space every folder and sub-folder uses, as a tree with usage bars, biggest first. Sizes match `du` exactly (space on disk, hard links counted once; symlinks and other drives aren't followed). Folders appear while it measures; opening a folder inside what's been measured is instant. **Show Files When Analyzing** (View menu or right-click) also lists each folder's biggest files. Copying, moving, trashing, extracting and Undo update the sizes at once, without measuring everything again. Right-click to open, trash or scan again
 - Live updates when files change on disk
 - **Connect to Server** (sidebar, Go menu, or an address in the path bar): `sftp://`, `smb://`, `ftp://`, WebDAV and more through GVfs, with a login dialog; connected servers and phones appear in the sidebar with a disconnect button
-- **Extensions**: small programs in any language that add marks to files, information to the path bar, commands to the right-click menu and previews for more kinds of files, switched on one by one in Preferences ([how to write one](docs/extensions.md)). Git support is the first; **System Dashboard** (View menu, or the command palette) shows processor, memory, disk and network use in the preview pane, updating as you watch
+- **Extensions**: small programs in any language that add marks to files, information to the path bar, commands to the right-click menu or the menu bar, previews for more kinds of files and results in the preview pane, switched on one by one in **Edit → Extensions** ([how to write one](docs/extensions.md)). Git support is the first; **System Dashboard** (View menu, or the command palette) shows processor, memory, disk and network use in the preview pane, updating as you watch
 - **Git repositories**: M / A / U / C badges on changed, added, new and conflicting files, a dot on folders with changes inside, and the branch in the path bar. Repositories whose own settings would make git run programs are never checked
+- **In a terminal too**: `argonaut --tui` is the same file manager without a window, with one or two panes, a list or grid view, the mouse, and a shell panel under the files ([more](#in-a-terminal))
 - Fast with big folders: 20,000 files load in about 0.15 s (one system call per file)
 
 **Files**
@@ -148,7 +149,7 @@ For an optimized build, use `release` instead of `debug`.
 Download `argonaut-files_<version>_amd64.deb` from the [releases page](https://github.com/jgiannop/argonaut/releases) and install it with:
 
 ```bash
-sudo apt install ./argonaut-files_0.7.0_amd64.deb
+sudo apt install ./argonaut-files_0.8.0_amd64.deb
 ```
 
 apt also offers the helpers Argonaut uses when they're there (GVfs for servers, bubblewrap for its sandbox, poppler-utils and exiftool for details, Tracker for searching inside documents).
@@ -234,6 +235,9 @@ Open the folder in VS Code and install the recommended extensions when asked (C/
 
 ```
 src/               Application source code
+src/tui/           The terminal interface (argonaut --tui)
+extensions/        The extensions that come with Argonaut (Git, System Dashboard, Document Preview…)
+docs/              The guide for writing extensions; the comparison with GNOME's file dialog
 tests/             Qt Test suites (run with ctest)
 CMakeLists.txt     Build definition
 CMakePresets.json  Debug and release build and test presets
