@@ -117,6 +117,8 @@ QString userFolder()
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/argonaut/extensions");
 }
 
+QList<Command> commandsFrom(const QString &extension, const QJsonValue &value, int max);
+
 Manifest readManifest(const QString &folder, bool builtIn)
 {
     Manifest m;
@@ -188,6 +190,14 @@ Manifest readManifest(const QString &folder, bool builtIn)
         program = QDir::cleanPath(m.folder + QLatin1Char('/') + program);
     m.program = program;
     m.arguments = exec;
+    // "start": "when-needed", with what it offers named here.
+    m.whenNeeded = o.value(QLatin1String("start")).toString() == QLatin1String("when-needed");
+    m.commands = commandsFrom(m.id, o.value(QLatin1String("commands")), MaxCommands);
+    const QJsonArray previews = o.value(QLatin1String("previews")).toArray();
+    for (const QJsonValue &type : previews) {
+        if (m.previewTypes.size() < 100 && !type.toString().isEmpty())
+            m.previewTypes << type.toString().left(100);
+    }
     const QFileInfo info(program);
     if (!info.isFile() || !info.isExecutable())
         m.problem = QCoreApplication::translate("Extensions", "Its program is missing or not executable: %1").arg(program);
@@ -211,6 +221,15 @@ Host::Host(QObject *parent) : QObject(parent)
     qRegisterMetaType<Extensions::Badge>();
     qRegisterMetaType<Extensions::PreviewReply>();
     qRegisterMetaType<Extensions::Form>();
+    // How long a when-needed extension may sit with nothing to do.
+    bool ok = false;
+    const int idle = qEnvironmentVariableIntValue("ARGONAUT_EXTENSION_IDLE_MS", &ok);
+    if (ok && idle > 0)
+        m_idleMs = idle;
+    auto *idleTimer = new QTimer(this);
+    idleTimer->setInterval(qBound(50, m_idleMs / 3, 20000));
+    connect(idleTimer, &QTimer::timeout, this, &Host::stopIdle);
+    idleTimer->start();
     rescan();
 }
 
@@ -442,6 +461,11 @@ PreviewReply Host::readContent(const QJsonObject &message)
 
 QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value, int max) const
 {
+    return commandsFrom(ext->manifest.id, value, max);
+}
+
+QList<Command> commandsFrom(const QString &extension, const QJsonValue &value, int max)
+{
     QList<Command> out;
     const QJsonArray list = value.toArray();
     for (const QJsonValue &entry : list) {
@@ -449,7 +473,7 @@ QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value, i
             break;
         const QJsonObject o = entry.toObject();
         Command c;
-        c.extension = ext->manifest.id;
+        c.extension = extension;
         c.id = o.value(QLatin1String("id")).toString().left(64);
         c.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
         if (c.id.isEmpty() || c.label.isEmpty())
@@ -527,13 +551,14 @@ QList<Command> Host::commands(const QString &folder, const QList<Item> &selectio
         return true;
     };
     for (const Running *ext : m_running) {
-        if (!ext->process)
+        if (!isAvailable(ext))
             continue;
-        for (const Command &c : ext->commands) {
+        const QList<Command> everywhere = commandsOf(ext);
+        for (const Command &c : everywhere) {
             if (fits(c))
                 out.append(c);
         }
-        if (folder.isEmpty())
+        if (folder.isEmpty() || !ext->process)
             continue;
         const auto data = ext->folders.constFind(folder);
         if (data == ext->folders.constEnd())
@@ -550,14 +575,59 @@ QList<Command> Host::menuCommands(const QString &menu) const
 {
     QList<Command> out;
     for (const Running *ext : m_running) {
-        if (!ext->process)
+        if (!isAvailable(ext))
             continue;
-        for (const Command &c : ext->commands) {
+        const QList<Command> everywhere = commandsOf(ext);
+        for (const Command &c : everywhere) {
             if (c.menu == menu)
                 out.append(c);
         }
     }
     return out;
+}
+
+// ------------------------------------------------- started when needed ---
+
+bool Host::isAvailable(const Running *ext) const
+{
+    return ext->process || (ext->manifest.whenNeeded && ext->failures < MaxFailures && !m_quitting);
+}
+
+QList<Command> Host::commandsOf(const Running *ext) const
+{
+    return ext->process && ext->commandsSaid ? ext->commands : ext->manifest.commands;
+}
+
+QStringList Host::previewTypesOf(const Running *ext) const
+{
+    return ext->process && ext->previewsSaid ? ext->previewTypes : ext->manifest.previewTypes;
+}
+
+// Something of a when-needed extension is used: its program is started if
+// it isn't running (what is sent next waits in the pipe for it), and it
+// isn't idle.
+void Host::wake(Running *ext)
+{
+    ext->lastActive = QDateTime::currentMSecsSinceEpoch();
+    if (!ext->process && ext->manifest.whenNeeded && ext->failures < MaxFailures && !m_quitting)
+        start(ext);
+}
+
+// A when-needed extension with nothing on screen, nothing asked and nothing
+// said for a while is stopped: it starts again with the next use.
+void Host::stopIdle()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (Running *ext : std::as_const(m_running)) {
+        if (!ext->process || !ext->manifest.whenNeeded)
+            continue;
+        if (!ext->resultsShown.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || !ext->listings.isEmpty())
+            continue; // it has something on screen
+        if (now - ext->lastActive < m_idleMs)
+            continue;
+        stop(ext);
+        forget(ext);
+    }
 }
 
 namespace {
@@ -675,7 +745,10 @@ void Host::activatePlace(const QString &path, const QString &action)
 void Host::invoke(const Command &command, const QString &folder, const QStringList &selection, const QString &input)
 {
     for (Running *ext : std::as_const(m_running)) {
-        if (ext->manifest.id != command.extension || !ext->process)
+        if (ext->manifest.id != command.extension)
+            continue;
+        wake(ext); // a when-needed one starts now
+        if (!ext->process)
             continue;
         ext->userActed = QDateTime::currentMSecsSinceEpoch();
         send(ext, {{QStringLiteral("type"), QStringLiteral("invoke")},
@@ -689,7 +762,7 @@ void Host::invoke(const Command &command, const QString &folder, const QStringLi
 bool Host::canPreview(const QString &mimeType) const
 {
     for (const Running *ext : m_running) {
-        if (ext->process && !ext->previewTypes.isEmpty() && typeMatches(mimeType, ext->previewTypes))
+        if (isAvailable(ext) && typeMatches(mimeType, previewTypesOf(ext)) && !previewTypesOf(ext).isEmpty())
             return true;
     }
     return false;
@@ -698,7 +771,10 @@ bool Host::canPreview(const QString &mimeType) const
 int Host::requestPreview(const QString &path, const QString &mimeType, const QSize &pixels)
 {
     for (Running *ext : std::as_const(m_running)) {
-        if (!ext->process || ext->previewTypes.isEmpty() || !typeMatches(mimeType, ext->previewTypes))
+        if (!isAvailable(ext) || previewTypesOf(ext).isEmpty() || !typeMatches(mimeType, previewTypesOf(ext)))
+            continue;
+        wake(ext);
+        if (!ext->process)
             continue;
         const int id = ++m_previewRequest;
         send(ext, {{QStringLiteral("type"), QStringLiteral("preview")},
@@ -804,7 +880,8 @@ void Host::startAsNeeded()
     if (m_watched.isEmpty() || m_quitting)
         return; // nothing to ask yet: programs start with the first folder
     for (Running *ext : std::as_const(m_running)) {
-        if (!ext->process && ext->failures < MaxFailures)
+        // Not the ones that asked to be started only when something of theirs is used.
+        if (!ext->process && ext->failures < MaxFailures && !ext->manifest.whenNeeded)
             start(ext);
     }
 }
@@ -869,6 +946,11 @@ void Host::resultShown(const QString &extension, const QString &id, bool shown, 
     for (Running *ext : std::as_const(m_running)) {
         if (ext->manifest.id != extension)
             continue;
+        if (shown)
+            ext->resultsShown.insert(id);
+        else
+            ext->resultsShown.remove(id);
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
         QJsonObject message{{QStringLiteral("type"), QStringLiteral("result")},
                             {QStringLiteral("id"), id},
                             {QStringLiteral("shown"), shown}};
@@ -931,11 +1013,15 @@ void Host::handle(Running *ext, const QByteArray &line)
         return; // not ours to understand: skipped
     const QJsonObject message = doc.object();
     const QString type = message.value(QLatin1String("type")).toString();
+    if (type != QLatin1String("folder") && type != QLatin1String("commands") && type != QLatin1String("previews"))
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch(); // it is doing something for the user
     if (type == QLatin1String("commands")) { // what it offers everywhere
         ext->commands = readCommands(ext, message.value(QLatin1String("commands")), MaxCommands);
+        ext->commandsSaid = true;
         return;
     }
     if (type == QLatin1String("previews")) { // the types it shows in the preview pane
+        ext->previewsSaid = true;
         ext->previewTypes.clear();
         const QJsonArray types = message.value(QLatin1String("types")).toArray();
         for (const QJsonValue &t : types) {
@@ -1181,6 +1267,11 @@ void Host::forget(Running *ext)
     ext->userActed = 0;
     ext->formPending.clear();
     ext->formTaken = false;
+    ext->commands.clear();
+    ext->commandsSaid = false;
+    ext->previewTypes.clear();
+    ext->previewsSaid = false;
+    ext->resultsShown.clear();
     const QStringList lists = ext->listings.keys();
     ext->listings.clear();
     for (const QString &id : lists)

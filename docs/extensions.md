@@ -95,7 +95,41 @@ only those are looked at then.
 | `protocol` | Required. `1`. |
 | `exec` | Required. The program and its arguments, as a list (or one string for a program alone). A relative program is inside the extension's folder. It must be executable. |
 | `name`, `description`, `version`, `author` | Shown in the Extensions window. |
+| `start` | `"when-needed"`: your program isn't started with Argonaut, only when something of yours is used. See [Starting only when needed](#starting-only-when-needed). |
+| `commands`, `previews` | For a `when-needed` extension: what you offer, so it can be shown while your program isn't running. |
 | `addresses` | The kinds of address that are yours to open, by what comes before `://`: `["sftp", "smb"]`. See [Addresses](#addresses). |
+
+### Starting only when needed
+
+Every running extension is a program in memory. If yours is used now and
+then (a command in a menu, a preview for one kind of file), ask to be
+started only then:
+
+```json
+{
+    "id": "word-count",
+    "protocol": 1,
+    "exec": ["word-count.py"],
+    "start": "when-needed",
+    "commands": [{"id": "count", "label": "Count Words", "kind": "files", "types": ["text/*"]}],
+    "previews": ["text/x-my-format"]
+}
+```
+
+`commands` is what a `commands` message would hold, and `previews` the
+`types` of a `previews` message. Argonaut shows them from this file. When
+the user chooses one of the commands, previews a file of one of the types,
+or opens one of your `addresses`, your program is started, gets `hello` and
+then the message, exactly as if it had been running all along. What you
+then say yourself (`commands`, `previews`) replaces what the file said.
+
+After about a minute with nothing to do, the program is stopped (its input
+is closed; exit when that happens) and the file speaks for it again. It is
+not stopped while a named result of yours is on screen, a form is open, or
+you have sidebar rows or lists.
+
+Don't ask for this if you put marks on files or text in the path bar: for
+that you must be running whenever a folder is shown.
 
 ## The conversation
 

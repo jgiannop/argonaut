@@ -78,6 +78,7 @@ private slots:
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
+    void startedOnlyWhenNeeded();
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void gitChangesCommitAndBranches();
@@ -671,6 +672,106 @@ void TestExtensions::connectToServer()
     QTest::qWait(500);
     QCOMPARE(open.size(), 1);
     QVERIFY(row("alice@example.com").id.isEmpty());
+}
+
+// An extension that says "start": "when-needed" names what it offers in
+// its extension.json: that is shown without its program running. The
+// program starts when one of those is used and is stopped again after a
+// while with nothing to do (not while a result of its is on screen).
+void TestExtensions::startedOnlyWhenNeeded()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    const QString folder = g_extensions + "/lazy";
+    QDir().mkpath(folder);
+    QFile::copy(g_extensions + "/fake/fake.py", folder + "/fake.py");
+    QFile::setPermissions(folder + "/fake.py", QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    writeFile(folder + "/extension.json", R"({"id": "lazy", "name": "Lazy", "protocol": 1, "exec": ["fake.py"],
+        "start": "when-needed",
+        "commands": [{"id": "hello", "label": "Lazy Hello"}, {"id": "showme", "label": "Lazy Menu", "menu": "view"}, {"label": "no id"}],
+        "previews": ["text/x-lazy"]})");
+    qputenv("ARGONAUT_EXTENSION_IDLE_MS", "700");
+    struct Restore
+    {
+        QString folder;
+        ~Restore()
+        {
+            qunsetenv("ARGONAUT_EXTENSION_IDLE_MS");
+            QDir(folder).removeRecursively();
+        }
+    } restore{folder};
+    auto starts = [&] {
+        QFile f(folder + "/starts");
+        return f.open(QIODevice::ReadOnly) ? int(f.readAll().size()) : 0;
+    };
+    Host host;
+    host.setEnabled("lazy", true);
+    host.watch(m_dir);
+    const QList<Extensions::Item> one{{m_dir + "/a.txt", "text/plain", false}};
+    auto labels = [&] {
+        QStringList out;
+        for (const Extensions::Command &c : host.commands(m_dir, one)) {
+            if (c.extension == "lazy")
+                out << c.label;
+        }
+        return out;
+    };
+    // A folder is shown, and nothing of its is used: it isn't started, and
+    // what its extension.json names is offered all the same.
+    QTest::qWait(400);
+    QVERIFY(!host.isRunning("lazy"));
+    QCOMPARE(starts(), 0);
+    QCOMPARE(host.state("lazy"), Host::State::Waiting);
+    QCOMPARE(labels(), QStringList{"Lazy Hello"});
+    QCOMPARE(int(host.menuCommands("view").size()), 1);
+    QCOMPARE(host.menuCommands("view").first().label, QStringLiteral("Lazy Menu"));
+    QVERIFY(host.canPreview("text/x-lazy"));
+    QVERIFY(!host.canPreview("text/csv")); // what its program would say isn't known yet
+
+    // A command is chosen: it starts, and gets the command.
+    QSignalSpy said(&host, &Host::message);
+    host.invoke(host.commands(m_dir, one).first(), m_dir, {m_dir + "/a.txt"});
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("invoked hello on 1: a.txt"));
+    QVERIFY(host.isRunning("lazy"));
+    QCOMPARE(starts(), 1);
+    // Running, what it says itself counts.
+    QTRY_VERIFY_WITH_TIMEOUT(labels().contains("Fake: Say Hello"), 10000);
+    QVERIFY(host.canPreview("text/csv"));
+
+    // Nothing to do for a while: stopped, and its extension.json speaks for it again.
+    QTRY_VERIFY_WITH_TIMEOUT(!host.isRunning("lazy"), 10000);
+    QCOMPARE(labels(), QStringList{"Lazy Hello"});
+    QVERIFY(!host.canPreview("text/csv"));
+    QCOMPARE(host.state("lazy"), Host::State::Waiting);
+
+    // A preview asked of it starts it again; the answer comes.
+    QSignalSpy ready(&host, &Host::previewReady);
+    const int request = host.requestPreview(m_dir + "/a.txt", "text/x-lazy", QSize(400, 300));
+    QVERIFY(request != 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 10000);
+    QCOMPARE(ready.first().at(0).toInt(), request);
+    QCOMPARE(starts(), 2);
+
+    // A result of its on screen: not idle, however long nothing is said.
+    QSignalSpy shown(&host, &Host::showRequested);
+    for (const Extensions::Command &c : host.commands(m_dir, {})) {
+        if (c.extension == "lazy" && c.id == "live")
+            host.invoke(c, m_dir, {});
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!shown.isEmpty(), 10000);
+    host.resultShown("lazy", "live1", true, QSize(300, 200));
+    QTest::qWait(2000);
+    QVERIFY(host.isRunning("lazy"));
+    host.resultShown("lazy", "live1", false);
+    QTRY_VERIFY_WITH_TIMEOUT(!host.isRunning("lazy"), 10000);
+    QCOMPARE(starts(), 2);
+
+    // Switched off: nothing of its is offered, and nothing starts it.
+    host.setEnabled("lazy", false);
+    QVERIFY(labels().isEmpty());
+    QVERIFY(!host.canPreview("text/x-lazy"));
+    QCOMPARE(host.requestPreview(m_dir + "/a.txt", "text/x-lazy", QSize(400, 300)), 0);
 }
 
 // The System Dashboard extension: its command answers with a picture as a

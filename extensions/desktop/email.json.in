@@ -5,5 +5,7 @@
     "version": "@PROJECT_VERSION@",
     "author": "Argonaut",
     "protocol": 1,
+    "start": "when-needed",
+    "commands": [{"id": "send", "label": "Send by Email…", "kind": "files"}],
     "exec": ["@ARGONAUT_DESKTOP_EXTENSION_EXE@", "email"]
 }

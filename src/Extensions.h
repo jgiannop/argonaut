@@ -185,6 +185,13 @@ struct Manifest
     QString author;
     QString folder;      // where extension.json is
     QStringList addresses; // the kinds of address it opens ("sftp", "smb"): typed in the path bar, they go to it
+    // An extension that is only needed now and then says so ("start":
+    // "when-needed") and names what it offers here, so that can be shown
+    // without its program running. The program starts when one of them is
+    // used, and is stopped again after a while with nothing to do.
+    bool whenNeeded = false;
+    QList<Command> commands;  // "commands": as in a "commands" message
+    QStringList previewTypes; // "previews": the types it previews
     QString program;     // absolute path of the program to start
     QStringList arguments;
     bool builtIn = false; // came with Argonaut (not from the user's folder): on unless switched off
@@ -345,6 +352,10 @@ private:
         QHash<QString, Listing> listings; // by id
         QList<Place> places;              // its sidebar rows
         qint64 userActed = 0;             // when the user last chose something of its (ms since the epoch)
+        bool commandsSaid = false;        // it has sent "commands": those count, not the manifest's
+        bool previewsSaid = false;        // …and "previews"
+        qint64 lastActive = 0;            // a when-needed one: when it last had something to do
+        QSet<QString> resultsShown;       // its named results on screen: it isn't idle
         QString formPending;              // the form it waits on (its id); one at a time
         bool formTaken = false;           // a window is showing it
     };
@@ -359,12 +370,20 @@ private:
     static PreviewReply readContent(const QJsonObject &message);
     void exited(Running *ext);
     void forget(Running *ext); // drops what it said and tells the views
+    // What it offers now: what its program said, or (not said yet, or a
+    // when-needed one that isn't running) what its extension.json says.
+    QList<Command> commandsOf(const Running *ext) const;
+    QStringList previewTypesOf(const Running *ext) const;
+    bool isAvailable(const Running *ext) const; // running, or startable when needed
+    void wake(Running *ext);                    // starts a when-needed one; it has something to do
+    void stopIdle();
 
     QList<Manifest> m_manifests;
     QList<Running *> m_running; // the switched-on, usable ones, in order
     QHash<QString, int> m_watched;
     bool m_quitting = false;
     int m_previewRequest = 0;
+    int m_idleMs = 60000; // ARGONAUT_EXTENSION_IDLE_MS in tests
     QString m_interface = QStringLiteral("window");
 };
 

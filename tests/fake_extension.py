@@ -32,6 +32,7 @@ for line in sys.stdin:
             {"id": "nolabel"}]})
     if m.get("type") == "hello":
         say({"type": "previews", "types": ["text/csv", "image/x-xcf"]})
+    if m.get("type") == "hello" and os.environ.get("ARGONAUT_EXTENSION_ID") != "lazy":
         # Sidebar rows: one that is asked when clicked (and can be
         # disconnected), one that is a folder, and some that are wrong.
         here = os.path.dirname(os.path.abspath(__file__))
