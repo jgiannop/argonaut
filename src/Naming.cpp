@@ -229,6 +229,41 @@ QList<TransferResult> applyBatch(const QList<RenameItem> &items, QString *error)
     return steps;
 }
 
+int commandScore(const QString &text, const QString &query)
+{
+    if (query.isEmpty())
+        return 1;
+    if (text.startsWith(query))
+        return 1000;
+    const qsizetype at = text.indexOf(query);
+    if (at >= 0) {
+        const bool wordStart = at == 0 || !text.at(at - 1).isLetterOrNumber();
+        return (wordStart ? 800 : 500) - int(qMin<qsizetype>(at, 200));
+    }
+    // Every word somewhere.
+    const QStringList words = query.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (words.size() > 1) {
+        bool all = true;
+        for (const QString &w : words)
+            all = all && text.contains(w);
+        if (all)
+            return 300;
+    }
+    // Letters in order, preferring the start of words ("nf" -> "New Folder").
+    int score = 0;
+    qsizetype pos = 0;
+    for (const QChar c : query) {
+        if (c == QLatin1Char(' '))
+            continue;
+        const qsizetype found = text.indexOf(c, pos);
+        if (found < 0)
+            return 0;
+        score += (found == 0 || !text.at(found - 1).isLetterOrNumber()) ? 10 : 1;
+        pos = found + 1;
+    }
+    return 100 + qMin(score, 99);
+}
+
 } // namespace Naming
 
 namespace Templates {

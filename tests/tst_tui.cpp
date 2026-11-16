@@ -55,6 +55,7 @@ private slots:
     void scrollbars();
     void placesAtTheLeft();
     void previewAtTheRight();
+    void commandPalette();
     void shellInTheFolder();
     void shellPanel();
 
@@ -1348,6 +1349,122 @@ void TestTui::opensFiles()
     QCOMPARE(view.size(), 1);
 
     QCOMPARE(app->folder(0), m_left);
+}
+
+// Ctrl+P: the command palette. Type a few letters, Enter does it; a command
+// is the same as its key, so it asks what its key asks.
+void TestTui::commandPalette()
+{
+    QVERIFY(screen(140, 30).contains("^P Commands"));
+    keys({Key::control('p')});
+    QVERIFY(app->isPaletteOpen());
+    QString text = screen(100, 30);
+    QVERIFY2(text.contains("Commands") && text.contains("> "), qPrintable(text));
+    QVERIFY(text.contains("Go to Folder…") && text.contains("New Folder…"));
+    QVERIFY(text.contains("Type to find a command"));
+    QStringList names = app->paletteNames();
+    QVERIFY(names.contains("Copy to the Other Pane")); // two panes here
+    QVERIFY(names.contains("Go to Trash") && names.contains("Quit Argonaut"));
+    QVERIFY(!names.contains("Go Back") && !names.contains("View as List")); // nowhere to go back to; it is a list already
+    // The keys are the palette's: "q" is a letter, nothing happens to the files.
+    QSignalSpy quit(app.get(), &App::quitRequested);
+    type("q");
+    QCOMPARE(quit.size(), 0);
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Quit Argonaut"));
+    keys({Key::of(Key::Backspace)});
+
+    // A few letters find it: the start of a word, letters in order, accents and case aside.
+    type("new");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("New Folder…"));
+    keys({Key::control('u')});
+    type("vg");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("View as Grid"));
+    keys({Key::control('u')});
+    type("zzzz");
+    QVERIFY(app->paletteNames().isEmpty());
+    QVERIFY(screen(100, 30).contains("No command fits that"));
+    keys({Key::of(Key::Enter)}); // nothing to do: still open
+    QVERIFY(app->isPaletteOpen());
+    keys({Key::of(Key::Escape)});
+    QVERIFY(!app->isPaletteOpen());
+
+    // Enter does it. A view by name; a place by name.
+    keys({Key::control('p')});
+    type("big");
+    keys({Key::of(Key::Enter)});
+    QVERIFY(!app->isPaletteOpen());
+    QCOMPARE(app->view(0), App::View::Icons);
+    keys({Key::control('p')});
+    QVERIFY(app->paletteNames().contains("View as List") && !app->paletteNames().contains("View as Big Icons"));
+    type("list");
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->view(0), App::View::List);
+    keys({Key::control('p')});
+    type("trash");
+    QVERIFY(app->paletteNames().contains("Go to Trash"));
+    keys({Key::of(Key::Down), Key::of(Key::Up)});
+    const int trashRow = int(app->paletteNames().indexOf("Go to Trash"));
+    for (int i = 0; i < trashRow; ++i)
+        keys({Key::of(Key::Down)});
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), Trash::homeFilesDir());
+    keys({Key::control('p')});
+    QVERIFY(app->paletteNames().contains("Go Back"));
+    type("back");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+
+    // A command that asks, asks: deleting for good still needs its "y".
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::control('p')});
+    type("delete perm");
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("Delete Permanently…"));
+    keys({Key::of(Key::Enter)});
+    QVERIFY(!app->isPaletteOpen());
+    QVERIFY(app->isAsking());
+    keys({Key::of(Key::Enter)}); // not "y"
+    settle();
+    QVERIFY(exists(m_left + "/alpha.txt"));
+    // Trash through the palette, then undo through it.
+    keys({Key::control('p')});
+    type("move to trash");
+    runJob([this] { keys({Key::of(Key::Enter)}); });
+    QVERIFY(!exists(m_left + "/alpha.txt"));
+    keys({Key::control('p')});
+    type("undo");
+    QVERIFY(app->paletteNames().first().startsWith("Undo"));
+    runJob([this] { keys({Key::of(Key::Enter)}); });
+    QVERIFY(exists(m_left + "/alpha.txt"));
+
+    // The mouse: a click on a command does it, one beside the palette closes it.
+    keys({Key::control('p')});
+    type("hidden");
+    Screen s(100, 30);
+    app->render(s);
+    int row = -1;
+    for (int y = 0; y < 30; ++y) {
+        if (s.line(y).contains("Show Hidden Files"))
+            row = y;
+    }
+    QVERIFY(row > 0);
+    QVERIFY(!screen(100, 30).contains(".secret"));
+    app->mouse({Tui::Mouse::Press, 40, row});
+    settle();
+    QVERIFY(!app->isPaletteOpen());
+    QVERIFY(screen(100, 30).contains(".secret"));
+    keys({Key::control('p')});
+    app->mouse({Tui::Mouse::Press, 2, 20});
+    QVERIFY(!app->isPaletteOpen());
+    // The key line's "^P Commands" opens it too.
+    app->render(s);
+    const int at = int(s.line(29).indexOf("^P"));
+    QVERIFY(at > 0);
+    app->mouse({Tui::Mouse::Press, at + 1, 29});
+    QVERIFY(app->isPaletteOpen());
+    keys({Key::control('p')}); // again: closed
+    QVERIFY(!app->isPaletteOpen());
 }
 
 // F3: the preview at the right, of the item under the cursor: a text

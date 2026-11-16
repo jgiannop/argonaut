@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include <algorithm>
 #include <iterator>
 
 #include "Shell.h"
@@ -580,8 +581,14 @@ void App::shellClosed(const QString &folder)
 // big icons; round and round. Remembered for each pane.
 void App::toggleGrid()
 {
+    const View now = pane().view;
+    setView(now == View::List ? View::Grid : now == View::Grid ? View::Icons : View::List);
+}
+
+void App::setView(View view)
+{
     Pane &p = pane();
-    p.view = p.view == View::List ? View::Grid : p.view == View::Grid ? View::Icons : View::List;
+    p.view = view;
     p.top = 0; // counted in lines of the view; the next frame brings the cursor into sight
     p.lineHeight = 1;
     p.widthStale = true;
@@ -807,6 +814,9 @@ void App::key(const Key &key)
     case Mode::Conflict:
         conflictKey(key);
         return;
+    case Mode::Palette:
+        paletteKey(key);
+        return;
     case Mode::Help: {
         // Longer than the screen: the arrows and the page keys move through
         // it. Any other key closes it.
@@ -847,6 +857,10 @@ void App::key(const Key &key)
                 return;
             }
             m_shell->key(key); // everything else is typed into the shell
+            return;
+        }
+        if (key.isControl('p')) { // the command palette, from the files, the places or the preview
+            openPalette();
             return;
         }
         if (m_inSidebar && sidebarKey(key))
@@ -932,6 +946,22 @@ void App::mouse(const Mouse &mouse)
         // The wheel moves through a help longer than the screen.
         if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
             m_helpTop = qBound(0, m_helpTop + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, m_helpLines - m_helpShown));
+            emit changed();
+        }
+        return;
+    }
+    if (m_mode == Mode::Palette) {
+        // A click on a command runs it; one beside the palette closes it.
+        const int row = m_paletteTop + (mouse.y - m_paletteY);
+        const bool inside = mouse.x >= m_paletteX && mouse.x < m_paletteX + m_paletteWidth && mouse.y >= m_paletteY - 3
+                            && mouse.y <= m_paletteY + qMax(1, m_paletteShown);
+        if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
+            m_paletteCursor = qBound(0, m_paletteCursor + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, int(m_paletteHits.size()) - 1));
+            emit changed();
+        } else if (mouse.kind == Mouse::Press && inside && mouse.y >= m_paletteY && row < m_paletteHits.size()) {
+            runPaletteRow(row);
+        } else if (mouse.kind == Mouse::Press && !inside) {
+            m_mode = Mode::Normal;
             emit changed();
         }
         return;
@@ -1290,6 +1320,8 @@ void App::render(Screen &screen)
     if (m_shell)
         drawShell(screen, x0, right, 1 + paneHeight, shellHeight);
     drawBottom(screen);
+    if (m_mode == Mode::Palette)
+        drawPalette(screen); // over everything
     if (m_shell && m_inShell && m_mode == Mode::Normal) {
         int x = 0, y = 0;
         if (m_shell->cursor(&x, &y) && y < shellHeight - 1)
@@ -1486,6 +1518,247 @@ void App::nextArea(bool backwards)
         m_active = next;
     }
     emit changed();
+}
+
+// ----------------------------------------------------- command palette ---
+
+// Everything that can be done now, by name, with the key that does the
+// same. A command is the same key press, so it can't behave differently.
+QList<App::Command> App::commands()
+{
+    QList<Command> list;
+    auto press = [this](const Key &key) {
+        return [this, key] {
+            // A command about the files: the keys are the files' again.
+            m_inSidebar = false;
+            m_inPreview = false;
+            normalKey(key);
+        };
+    };
+    const Pane &p = pane();
+    list.append({QStringLiteral("Help: All Keys"), QStringLiteral("F1"), press(Key::of(Key::F1))});
+    list.append({QStringLiteral("Go to Folder…"), QStringLiteral("g"), press(Key::character('g'))});
+    list.append({QStringLiteral("Go Home"), QStringLiteral("~"), press(Key::character('~'))});
+    list.append({QStringLiteral("Go Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace))});
+    if (!p.back.isEmpty()) {
+        Key back = Key::of(Key::Left);
+        back.alt = true;
+        list.append({QStringLiteral("Go Back"), QStringLiteral("Alt+Left"), press(back)});
+    }
+    list.append({QStringLiteral("New Folder…"), QStringLiteral("F7"), press(Key::of(Key::F7))});
+    if (!targets().isEmpty()) {
+        list.append({QStringLiteral("Rename…"), QStringLiteral("F2"), press(Key::of(Key::F2))});
+        list.append({QStringLiteral("Open"), QStringLiteral("Enter"), press(Key::of(Key::Enter))});
+        list.append({QStringLiteral("Move to Trash"), QStringLiteral("F8"), press(Key::of(Key::F8))});
+        list.append({QStringLiteral("Delete Permanently…"), QStringLiteral("D"), press(Key::character('D'))});
+        if (m_split) {
+            list.append({QStringLiteral("Copy to the Other Pane"), QStringLiteral("F5"), press(Key::of(Key::F5))});
+            list.append({QStringLiteral("Move to the Other Pane"), QStringLiteral("F6"), press(Key::of(Key::F6))});
+        }
+    }
+    if (m_ops->canUndo())
+        list.append({m_ops->undoText(), QStringLiteral("Ctrl+Z"), press(Key::control('z'))});
+    if (m_ops->canRedo())
+        list.append({m_ops->redoText(), QStringLiteral("Ctrl+Y"), press(Key::control('y'))});
+    list.append({QStringLiteral("Select All"), QStringLiteral("Ctrl+A"), press(Key::control('a'))});
+    if (!p.selected.isEmpty())
+        list.append({QStringLiteral("Clear the Selection"), QStringLiteral("Esc"), press(Key::of(Key::Escape))});
+    // The views by name: no going round with F9 to reach one.
+    if (p.view != View::List)
+        list.append({QStringLiteral("View as List"), QStringLiteral("F9"), [this] { setView(View::List); }});
+    if (p.view != View::Grid)
+        list.append({QStringLiteral("View as Grid"), QStringLiteral("F9"), [this] { setView(View::Grid); }});
+    if (p.view != View::Icons)
+        list.append({QStringLiteral("View as Big Icons"), QStringLiteral("F9"), [this] { setView(View::Icons); }});
+    list.append({m_showHidden ? QStringLiteral("Hide Hidden Files") : QStringLiteral("Show Hidden Files"), QStringLiteral("."),
+                 press(Key::character('.'))});
+    list.append({QStringLiteral("Read the Folder Again"), QStringLiteral("Ctrl+R"), press(Key::control('r'))});
+    list.append({m_preview ? QStringLiteral("Hide the Preview") : QStringLiteral("Show the Preview"), QStringLiteral("F3"),
+                 press(Key::of(Key::F3))});
+    list.append({m_split ? QStringLiteral("One Pane") : QStringLiteral("Split: Two Panes"), QStringLiteral("F4"), press(Key::of(Key::F4))});
+    list.append({m_sidebar ? QStringLiteral("Hide the Places") : QStringLiteral("Show the Places"), QStringLiteral("Ctrl+B"),
+                 press(Key::control('b'))});
+    list.append({m_shell ? QStringLiteral("Go to the Terminal") : QStringLiteral("Open the Terminal"), QStringLiteral("F12"),
+                 [this] { toggleShell(); }});
+    // The places, each by its name.
+    if (m_places.isEmpty())
+        m_places = Places::list();
+    for (int i = 0; i < m_places.size(); ++i) {
+        const Places::Entry &place = m_places.at(i);
+        if (place.path == p.current || Extensions::Host::isPlacePath(place.path))
+            continue;
+        list.append({QStringLiteral("Go to %1").arg(place.name), QString(), [this, i] { openPlace(i); }});
+    }
+    list.append({QStringLiteral("Quit Argonaut"), QStringLiteral("q"), press(Key::character('q'))});
+    return list;
+}
+
+void App::openPalette()
+{
+    m_paletteAll = commands();
+    m_paletteText.clear();
+    m_mode = Mode::Palette;
+    filterPalette();
+}
+
+// The commands that fit what is typed, best first (Naming::commandScore:
+// the same rule as the window's palette, folded for case and accents).
+void App::filterPalette()
+{
+    const QString query = DirectoryModel::foldForSearch(m_paletteText.simplified());
+    QList<QPair<int, int>> hits; // score, index
+    for (int i = 0; i < m_paletteAll.size(); ++i) {
+        const int score = Naming::commandScore(DirectoryModel::foldForSearch(m_paletteAll.at(i).name), query);
+        if (score > 0)
+            hits.append({score, i});
+    }
+    std::stable_sort(hits.begin(), hits.end(), [](const QPair<int, int> &a, const QPair<int, int> &b) { return a.first > b.first; });
+    m_paletteHits.clear();
+    for (const auto &hit : std::as_const(hits))
+        m_paletteHits.append(hit.second);
+    m_paletteCursor = 0;
+    m_paletteTop = 0;
+    emit changed();
+}
+
+QStringList App::paletteNames() const
+{
+    QStringList names;
+    for (int index : m_paletteHits)
+        names << m_paletteAll.at(index).name;
+    return names;
+}
+
+void App::runPaletteRow(int row)
+{
+    if (row < 0 || row >= m_paletteHits.size())
+        return;
+    const Command command = m_paletteAll.at(m_paletteHits.at(row));
+    m_mode = Mode::Normal; // first: the command may ask something itself
+    emit changed();
+    if (command.run)
+        command.run();
+}
+
+void App::paletteKey(const Key &key)
+{
+    const int count = int(m_paletteHits.size());
+    switch (key.code) {
+    case Key::Escape:
+        m_mode = Mode::Normal;
+        emit changed();
+        return;
+    case Key::Enter:
+        runPaletteRow(m_paletteCursor);
+        return;
+    case Key::Up:
+        m_paletteCursor = count == 0 ? 0 : (m_paletteCursor + count - 1) % count; // round and round
+        emit changed();
+        return;
+    case Key::Down:
+    case Key::Tab:
+        m_paletteCursor = count == 0 ? 0 : (m_paletteCursor + 1) % count;
+        emit changed();
+        return;
+    case Key::PageUp:
+        m_paletteCursor = qMax(0, m_paletteCursor - qMax(1, m_paletteShown - 1));
+        emit changed();
+        return;
+    case Key::PageDown:
+        m_paletteCursor = qMax(0, qMin(count - 1, m_paletteCursor + qMax(1, m_paletteShown - 1)));
+        emit changed();
+        return;
+    case Key::Backspace:
+        if (m_paletteText.isEmpty()) {
+            m_mode = Mode::Normal; // nothing left to take away: out
+            emit changed();
+            return;
+        }
+        m_paletteText.chop(m_paletteText.size() > 1 && m_paletteText.at(m_paletteText.size() - 1).isLowSurrogate() ? 2 : 1);
+        filterPalette();
+        return;
+    case Key::Char:
+        if (key.isControl('p') || key.isControl('g')) { // again: close
+            m_mode = Mode::Normal;
+            emit changed();
+        } else if (key.isControl('u')) {
+            m_paletteText.clear();
+            filterPalette();
+        } else if (!key.ctrl && !key.alt && key.ch >= 32 && m_paletteText.size() < 80) {
+            m_paletteText += QString::fromUcs4(&key.ch, 1);
+            filterPalette();
+        }
+        return;
+    default:
+        return;
+    }
+}
+
+// The palette: a box near the top with what is typed and the commands that
+// fit, each with its key at the right.
+void App::drawPalette(Screen &screen)
+{
+    const int w = screen.width();
+    const int h = screen.height();
+    const int width = qMin(64, w - 4);
+    const int x = (w - width) / 2;
+    const int top = 2;
+    const int count = int(m_paletteHits.size());
+    const int rows = qBound(1, qMin(count, 12), qMax(1, h - top - 6));
+    const Style box{Ink::Normal, Paper::Bar, false};
+    const Style edge{Ink::Accent, Paper::Bar, false};
+    screen.fill(x, top, width, rows + 4, box);
+    const QString line(width - 2, QChar(0x2500));
+    screen.put(x, top, QStringLiteral("┌") + line + QStringLiteral("┐"), edge);
+    screen.put(x + 2, top, QStringLiteral(" Commands "), {Ink::Accent, Paper::Bar, true});
+    screen.put(x, top + 2, QStringLiteral("├") + line + QStringLiteral("┤"), edge);
+    screen.put(x, top + 3 + rows, QStringLiteral("└") + line + QStringLiteral("┘"), edge);
+    for (int y = top + 1; y < top + 3 + rows; ++y) {
+        if (y == top + 2)
+            continue;
+        screen.put(x, y, QStringLiteral("│"), edge);
+        screen.put(x + width - 1, y, QStringLiteral("│"), edge);
+    }
+    // What is typed, its end in sight.
+    const int room = width - 6;
+    QString typed = m_paletteText;
+    while (Screen::widthOf(typed) > room)
+        typed.remove(0, 1);
+    screen.put(x + 2, top + 1, QStringLiteral("> "), {Ink::Accent, Paper::Bar, true});
+    screen.put(x + 4, top + 1, typed, box);
+    screen.setCursor(x + 4 + Screen::widthOf(typed), top + 1);
+
+    m_paletteX = x;
+    m_paletteWidth = width;
+    m_paletteY = top + 3;
+    m_paletteShown = rows;
+    m_paletteCursor = count == 0 ? 0 : qBound(0, m_paletteCursor, count - 1);
+    if (m_paletteCursor < m_paletteTop)
+        m_paletteTop = m_paletteCursor;
+    if (m_paletteCursor >= m_paletteTop + rows)
+        m_paletteTop = m_paletteCursor - rows + 1;
+    m_paletteTop = qBound(0, m_paletteTop, qMax(0, count - rows));
+    if (count == 0) {
+        screen.put(x + 2, m_paletteY, QStringLiteral("No command fits that"), {Ink::Dim, Paper::Bar, false});
+        return;
+    }
+    for (int i = 0; i < rows && m_paletteTop + i < count; ++i) {
+        const Command &command = m_paletteAll.at(m_paletteHits.at(m_paletteTop + i));
+        const bool cursor = m_paletteTop + i == m_paletteCursor;
+        const Style style{Ink::Normal, cursor ? Paper::Cursor : Paper::Bar, cursor};
+        screen.fill(x + 1, m_paletteY + i, width - 2, 1, style);
+        const int keysWidth = Screen::widthOf(command.keys);
+        screen.put(x + 2, m_paletteY + i, Screen::elided(command.name, width - 5 - keysWidth, false), style);
+        if (keysWidth > 0)
+            screen.put(x + width - 2 - keysWidth, m_paletteY + i, command.keys, {cursor ? Ink::Normal : Ink::Dim, style.paper, false});
+    }
+    // More than fit: the scrollbar's handle on the right edge.
+    if (count > rows) {
+        const int thumb = qBound(1, rows * rows / count, rows - 1);
+        const int at = (rows - thumb) * m_paletteTop / (count - rows);
+        for (int i = at; i < at + thumb; ++i)
+            screen.put(x + width - 1, m_paletteY + i, QStringLiteral("█"), edge);
+    }
 }
 
 // ------------------------------------------------------------- preview ---
@@ -2264,6 +2537,10 @@ void App::drawBottom(Screen &screen)
     m_keySpots.clear();
     m_keysY = keysY;
 
+    if (m_mode == Mode::Palette) {
+        screen.put(1, keysY, QStringLiteral("Type to find a command   Up/Down: choose   Enter: do it   Esc: close"), kBar);
+        return;
+    }
     if (m_mode == Mode::Prompt) {
         const Style label{Ink::Accent, Paper::Normal, true};
         const int used = screen.put(1, messageY, m_promptLabel, label);
@@ -2310,7 +2587,8 @@ void App::drawBottom(Screen &screen)
         Key::Code code;
     } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "Preview", Key::F3}, {"F4", "Split", Key::F4},
                 {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6}, {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8},
-                {"F9", "Grid", Key::F9}, {"q", "Quit", Key::F10}, {"F12", "Terminal", Key::F12}};
+                {"F9", "Grid", Key::F9}, {"^P", "Commands", Key::None}, {"q", "Quit", Key::F10},
+                {"F12", "Terminal", Key::F12}};
     // "q", not "F10": GNOME Terminal keeps F10 for its own menu, so there it
     // never arrives. (F10 and Ctrl+Q quit too, where they get through.)
     bool tight = false; // short words, where the line is too narrow for the usual ones
@@ -2321,6 +2599,12 @@ void App::drawBottom(Screen &screen)
             return QStringLiteral("Folder");
         if (tight && code == Key::F12 && !m_inShell)
             return QStringLiteral("Term");
+        if (tight && code == Key::None)
+            return QStringLiteral("Cmds");
+        if (tight && code == Key::F3)
+            return QStringLiteral("View");
+        if (tight && code == Key::F2)
+            return QStringLiteral("Name");
         if (code == Key::F9) // what the key goes to next
             return pane().view == View::List ? QStringLiteral("Grid") : pane().view == View::Grid ? QStringLiteral("Icons") : QStringLiteral("List");
         if (code == Key::F12 && m_inShell)
@@ -2353,7 +2637,7 @@ void App::drawBottom(Screen &screen)
         const int from = x;
         x += screen.put(x, keysY, key, {Ink::Accent, Paper::Bar, true});
         x += screen.put(x, keysY, QLatin1Char(' ') + what, kBar);
-        m_keySpots.append({from, x, Key::of(entry.code)}); // clickable
+        m_keySpots.append({from, x, entry.code == Key::None ? Key::control('p') : Key::of(entry.code)}); // clickable
         x += gap;
     }
 }
@@ -2373,6 +2657,7 @@ void App::drawHelp(Screen &screen)
         "  Alt+Left                          back to where you were",
         "  F4                                a second pane beside this one, or back to one",
         "  Tab, Shift+Tab                    the next of the panes and the places at the left",
+        "  Ctrl+P                            the command palette: type a few letters of what you want to do",
         "  Ctrl+B                            show or hide the places at the left",
         "                                    (in them: Up, Down, Enter opens one in the pane; a click does too)",
         "  F9                                this pane as a list, a grid of names, or big icons",

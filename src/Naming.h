@@ -32,6 +32,12 @@ QString baseName(const QString &name, bool isDir, QString *extension = nullptr);
 // that contain it, so typing "holiday" works too.
 bool matchesPattern(const QString &name, const QString &pattern);
 
+// How well a command's name fits what was typed in a command palette (0: not
+// at all). Both already folded (DirectoryModel::foldForSearch). The start of
+// the name is best, then the start of a word, then anywhere, then all the
+// words, then the letters in order ("nf" → "new folder").
+int commandScore(const QString &text, const QString &query);
+
 // ------------------------------------------------------------ batch rename
 
 struct RenameOptions

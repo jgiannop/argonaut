@@ -76,6 +76,8 @@ public:
     QString folder(int pane) const;
     int activePane() const { return m_active; }
     bool isSplit() const { return m_split; }
+    bool isPaletteOpen() const { return m_mode == Mode::Palette; } // the command palette (Ctrl+P)
+    QStringList paletteNames() const;                               // what it lists now, best first (tests)
     bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
     bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
     bool isPreviewLoading() const { return m_previewLoading; }
@@ -143,7 +145,21 @@ private:
         int barY = 0, barHeight = 0; // the scrollbar, from the last frame (height 0: there is none)
         bool widthStale = true;
     };
-    enum class Mode { Normal, Prompt, Question, Conflict, Help };
+    enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette };
+    // Something that can be done now, for the command palette (Ctrl+P).
+    struct Command
+    {
+        QString name;
+        QString keys; // the key that does the same, to learn it
+        std::function<void()> run;
+    };
+    QList<Command> commands();
+    void openPalette();
+    void filterPalette();
+    void paletteKey(const Key &key);
+    void runPaletteRow(int row);
+    void drawPalette(Screen &screen);
+    void setView(View view);
 
     Pane &pane() { return m_panes[m_active]; }
     const Pane &pane() const { return m_panes[m_active]; }
@@ -252,6 +268,12 @@ private:
     int m_previewTop = 0;
     int m_previewX = 0, m_previewWidth = 0;        // from the last frame (0: not on screen)
     int m_previewY = 0, m_previewShown = 0, m_previewTotal = 0;
+    // The command palette: every command, and those that fit what is typed.
+    QString m_paletteText;
+    QList<Command> m_paletteAll;
+    QList<int> m_paletteHits;    // into m_paletteAll, best first
+    int m_paletteCursor = 0, m_paletteTop = 0;
+    int m_paletteX = 0, m_paletteY = 0, m_paletteWidth = 0, m_paletteShown = 0; // its rows, from the last frame
     int m_helpTop = 0;           // the help's first line shown
     int m_helpLines = 0, m_helpShown = 0; // from the last frame
     Mode m_mode = Mode::Normal;
