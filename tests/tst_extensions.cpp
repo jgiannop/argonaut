@@ -76,6 +76,7 @@ private slots:
     void documentPreview();
     void systemDashboard();
     void spaceOverview();
+    void runningServices();
     void placesAndOpeningFolders();
     void formsAndAddresses();
     void connectToServer();
@@ -934,6 +935,7 @@ void TestExtensions::spaceOverview()
     auto content = shown.first().at(2).value<Extensions::PreviewReply>();
     QCOMPARE(content.kind, Extensions::PreviewReply::Image);
     QCOMPARE(content.extension, QStringLiteral("space-overview"));
+    QVERIFY(content.scroll); // as long as the list is: Argonaut scrolls it
     QCOMPARE(content.resultId, QStringLiteral("space"));
     QVERIFY(!content.update);
     QVERIFY(!QImage(content.image).isNull());
@@ -1009,6 +1011,151 @@ void TestExtensions::spaceOverview()
         QVERIFY2(line.size() <= 50, qPrintable(line));
     terminal.resultShown("space-overview", "space", false);
     terminal.setEnabled("space-overview", false);
+}
+
+// The Running Services extension: systemd's running services (a pretend
+// systemctl here), the system's and the user's, most memory first; a
+// picture in a window, every one of them as text in a terminal, made again
+// while it is shown.
+void TestExtensions::runningServices()
+{
+    Host probe;
+    bool there = false;
+    for (const Extensions::Manifest &m : probe.extensions())
+        there = there || m.id == "running-services";
+    if (!there)
+        QSKIP("the Running Services extension isn't built here (Linux only)");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // What it is asked is written down; "--user" gets the user's services.
+    const QString script = dir.filePath("systemctl");
+    {
+        QFile file(script);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QStringLiteral(R"(#!/bin/sh
+echo "$@" >> '%1/asked'
+if [ "$1" = "--user" ]; then
+printf 'MainPID=11\nControlGroup=/none\nMemoryCurrent=2000000000\nId=music.service\nDescription=A Music Player\n\n'
+printf 'MemoryCurrent=[not set]\nId=uncounted.service\nDescription=Nobody counts it\n'
+else
+printf 'MainPID=1\nControlGroup=/none\nMemoryCurrent=500000000\nId=small.service\nDescription=A Small One\n\n'
+printf 'MemoryCurrent=3000000000\nId=database.service\nDescription=The <b>Database</b>\n\n'
+printf 'MemoryCurrent=90000000000\nId=user@1000.service\nDescription=User Manager for UID 1000\n\n'
+printf 'MemoryCurrent=1000000\nId=tiny.service\nDescription=Tiny\n'
+fi
+)").arg(dir.path()).toUtf8());
+        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+    qputenv("ARGONAUT_SYSTEMCTL_PROGRAM", script.toLocal8Bit());
+    const auto restore = qScopeGuard([] { qunsetenv("ARGONAUT_SYSTEMCTL_PROGRAM"); });
+    static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
+
+    // In the terminal interface: every service, a line each.
+    {
+        Host terminal;
+        terminal.setInterface("terminal");
+        terminal.setEnabled("running-services", true);
+        Extensions::Command command;
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (const Extensions::Command &c : terminal.menuCommands("view")) {
+                if (c.extension == "running-services")
+                    command = c;
+            }
+            return !command.id.isEmpty();
+        }(), 10000);
+        QCOMPARE(command.label, QStringLiteral("Running Services"));
+        for (const Extensions::Command &c : terminal.commands(dir.path(), {})) // in the View menu, not in the right-click menu
+            QVERIFY(c.extension != "running-services");
+        QSignalSpy text(&terminal, &Host::showRequested);
+        terminal.invoke(command, dir.path(), {});
+        QTRY_COMPARE_WITH_TIMEOUT(text.size(), 1, 10000);
+        auto content = text.last().at(2).value<Extensions::PreviewReply>();
+        QCOMPARE(content.kind, Extensions::PreviewReply::Ansi);
+        QCOMPARE(content.resultId, QStringLiteral("services"));
+        QVERIFY(!content.update);
+        QVERIFY(content.text.contains(QStringLiteral("\x1b[")));
+        const QString plain = QString(content.text).remove(codes);
+        for (const char *part : {"RUNNING SERVICES", "3 system", "2 user", "BY MEMORY", "database", "music (user)", "small", "tiny", "uncounted (user)",
+                                 "3.0 GB", "2.0 GB", "500.0 MB", "Together they use 5.5 GB"})
+            QVERIFY2(plain.contains(QString::fromUtf8(part)), qPrintable(plain));
+        // Most memory first, the one nobody counts last; a whole session is no service.
+        QVERIFY(plain.indexOf("database") < plain.indexOf("music"));
+        QVERIFY(plain.indexOf("music") < plain.indexOf("small"));
+        QVERIFY(plain.indexOf("small") < plain.indexOf("tiny"));
+        QVERIFY(plain.indexOf("tiny") < plain.indexOf("uncounted"));
+        QVERIFY(!plain.contains("user@1000") && !plain.contains(".service"));
+        // It only asks: "show", for the running services, of the system and of the user.
+        QFile asked(dir.filePath("asked"));
+        QVERIFY(asked.open(QIODevice::ReadOnly));
+        const QStringList questions = QString::fromUtf8(asked.readAll()).split('\n', Qt::SkipEmptyParts);
+        QVERIFY(questions.size() >= 2);
+        for (const QString &question : questions)
+            QVERIFY2(QString(question).remove("--user ").startsWith("show --type=service --state=running "), qPrintable(question));
+        // On screen, 34 characters wide: made for that, and again by itself.
+        Extensions::ResultLook cells;
+        cells.columns = 34;
+        cells.rows = 20;
+        terminal.resultShown("running-services", "services", true, QSize(), cells);
+        QTRY_VERIFY_WITH_TIMEOUT(text.size() >= 2, 10000);
+        content = text.last().at(2).value<Extensions::PreviewReply>();
+        QVERIFY(content.update);
+        for (const QString &line : QString(content.text).remove(codes).split(QLatin1Char('\n')))
+            QVERIFY2(line.size() <= 34, qPrintable(line));
+        QTRY_VERIFY_WITH_TIMEOUT(text.size() >= 3, 10000);
+        // No longer shown: it stops asking.
+        terminal.resultShown("running-services", "services", false);
+        QTest::qWait(500);
+        const int count = int(text.size());
+        QTest::qWait(3600);
+        QCOMPARE(int(text.size()), count);
+        terminal.setEnabled("running-services", false);
+    }
+
+    // In a window: a picture, in the theme's colours.
+    Host host;
+    host.setEnabled("running-services", true);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("view")) {
+            if (c.extension == "running-services")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QSignalSpy shown(&host, &Host::showRequested);
+    host.invoke(command, dir.path(), {});
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 1, 10000);
+    auto content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Image);
+    QCOMPARE(content.extension, QStringLiteral("running-services"));
+    QVERIFY(content.scroll); // as long as the list is: Argonaut scrolls it
+    QVERIFY(!QImage(content.image).isNull());
+    Extensions::ResultLook look;
+    look.window = "#fdf6e3";
+    look.surface = "#eee8d5";
+    look.text = "#073642";
+    look.dim = "#657b83";
+    look.accent = "#d33682";
+    look.border = "#d6cfba";
+    host.resultShown("running-services", "services", true, QSize(500, 900), look);
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 2, 10000);
+    content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QVERIFY(content.update);
+    const QImage image(content.image);
+    QCOMPARE(image.width(), 500);
+    QVERIFY(image.height() <= 900);
+    QCOMPARE(image.pixelColor(2, 2), QColor("#fdf6e3"));
+    bool card = false, accent = false;
+    for (int y = 0; y < image.height(); y += 2) {
+        for (int x = 0; x < image.width(); x += 2) {
+            card = card || image.pixelColor(x, y) == QColor("#eee8d5");
+            accent = accent || image.pixelColor(x, y) == QColor("#d33682");
+        }
+    }
+    QVERIFY(card);   // its panels
+    QVERIFY(accent); // its bars
+    host.resultShown("running-services", "services", false);
+    host.setEnabled("running-services", false);
 }
 
 void TestExtensions::documentPreview()

@@ -85,6 +85,7 @@ struct PreviewReply
     QString text;          // Text, Markdown, Html (Qt's rich-text subset, no scripts, nothing loaded), Diff (a unified diff, coloured by Argonaut)
     bool monospace = false; // Text: in a fixed-width font
     QString image;         // Image: a picture file the extension wrote
+    bool scroll = false;   // Image: shown at its own size and scrolled where it is taller than the pane (a long list), not scaled to fit
     QString note;          // one line under the preview ("3 sheets")
     // A result ("show") can have a name, so the extension can replace it
     // while it is shown (a dashboard that updates) and is told when it is

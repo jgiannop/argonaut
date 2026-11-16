@@ -454,6 +454,7 @@ PreviewReply Host::readContent(const QJsonObject &message)
         if (QDir::isAbsolutePath(image) && info.isFile() && !info.isSymLink()) {
             reply.kind = PreviewReply::Image;
             reply.image = image;
+            reply.scroll = message.value(QLatin1String("scroll")).toBool();
         }
     }
     return reply;

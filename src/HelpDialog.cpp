@@ -576,7 +576,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b> and
+<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b> and
 <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension may ask you something while it works, such as a login. The window that asks is Argonaut's and
 always says which extension is asking; what you type there, a password included, is handed to that extension.</p>
@@ -590,6 +590,11 @@ pane shows how big the open folder is, how full its disk is, and the biggest fol
 it, each with a bar for its share. It is a quick look and only shows: it measures when you choose it (choose it
 again to measure again), and to open folders in the tree or delete from it you use
 <a href="topic:analyze">Analyze</a>.</p>
+<p><b>Running Services</b>: choose <b>View → Running Services</b>, or find it in the command palette. The preview
+pane shows the services that are running now, the one using the most memory first: the system's and those of your
+own session (marked <i>user</i>), with what each is and a bar against the biggest. It updates every three
+seconds until you select a file or close the pane. It only shows: nothing is started or stopped. A service's memory
+is that of all its programs together, as systemd counts it.</p>
 <p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
 Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
 (.xlsx, .ods: the first sheet as a table).</p>
@@ -661,8 +666,8 @@ its key.</li>
 "big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same. Commands that
 extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
-drawn with characters, and updates as it does here, and <b>Space Overview</b> shows how big the folder is and
-the biggest things inside it.</li>
+drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
+the biggest things inside it, and <b>Running Services</b> lists every running service, most memory first.</li>
 <li><b>Mouse:</b> click, double-click, the wheel, and the words on the bottom line. A right-click works as it does
 here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
 pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is

@@ -343,6 +343,20 @@ if(UNIX)
         install(TARGETS argonaut-dashboard-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-dashboard/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-dashboard)
+
+        # Running Services: systemd's running services, most memory first, in
+        # the preview pane (systemctl and /proc, so Linux only).
+        qt_add_executable(argonaut-services-extension extensions/services/main.cpp)
+        target_link_libraries(argonaut-services-extension PRIVATE argonaut_core)
+        set(ARGONAUT_SERVICES_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-services-extension")
+        configure_file(extensions/services/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/running-services/extension.json @ONLY)
+        set(ARGONAUT_SERVICES_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-services-extension")
+        configure_file(extensions/services/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/running-services/extension.json @ONLY)
+        install(TARGETS argonaut-services-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/running-services/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/running-services)
     endif()
 
     # Space Overview: the open folder's size and the biggest things inside it,

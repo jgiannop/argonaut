@@ -20,6 +20,8 @@
 #include <QTextBrowser>
 #include <QTimer>
 #include <QRegularExpression>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QThreadPool>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -111,6 +113,15 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_picture = new PictureView(m_pages);
     m_movieLabel = new QLabel(m_pages);
     m_movieLabel->setAlignment(Qt::AlignCenter);
+    m_scroll = new QScrollArea(m_pages);
+    m_scroll->setObjectName("qlScroll");
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setFocusPolicy(Qt::NoFocus);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_scroll->viewport()->setAutoFillBackground(false);
+    m_scrollPicture = new QLabel;
+    m_scroll->setWidget(m_scrollPicture);
     m_text = new QPlainTextEdit(m_pages);
     m_text->setObjectName("qlText");
     m_text->setReadOnly(true);
@@ -144,7 +155,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     info->addSpacing(10);
     info->addWidget(m_infoText);
     info->addStretch();
-    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel),
+    for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll),
                           static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
     layout->addWidget(m_pages, 1);
@@ -297,12 +308,25 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
         if (!size.isValid() || size.width() > 16384 || size.height() > 16384)
             return false; // not a picture, or one too big to be a preview
         const QSize box = pictureBox();
-        if (size.width() > box.width() || size.height() > box.height())
+        if (!reply.scroll && (size.width() > box.width() || size.height() > box.height()))
             reader.setScaledSize(size.scaled(box, Qt::KeepAspectRatio));
         QImage image = reader.read();
         if (image.isNull())
             return false;
         image.setDevicePixelRatio(devicePixelRatioF());
+        if (reply.scroll) {
+            // A long picture (a list drawn for the pane's width): at its own
+            // size, scrolled. Made again in place, it stays where it was
+            // scrolled to.
+            const bool again = m_pages->currentWidget() == m_scroll;
+            const int at = again ? m_scroll->verticalScrollBar()->value() : 0;
+            m_scrollPicture->setPixmap(QPixmap::fromImage(image));
+            m_scrollPicture->setFixedSize((QSizeF(image.size()) / devicePixelRatioF()).toSize());
+            m_pages->setCurrentWidget(m_scroll);
+            m_scroll->verticalScrollBar()->setValue(at);
+            m_kind = Preview::Kind::Image;
+            break;
+        }
         m_picture->setImage(image);
         m_pages->setCurrentWidget(m_picture);
         m_kind = Preview::Kind::Image;
@@ -393,6 +417,21 @@ void QuickLook::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     if (!m_resultId.isEmpty())
         m_resultTimer->start(); // the extension draws for the new size
+}
+
+int QuickLook::pictureScrollRange() const
+{
+    return m_pages->currentWidget() == m_scroll ? m_scroll->verticalScrollBar()->maximum() : -1;
+}
+
+int QuickLook::pictureScrollValue() const
+{
+    return m_pages->currentWidget() == m_scroll ? m_scroll->verticalScrollBar()->value() : -1;
+}
+
+void QuickLook::scrollPictureTo(int value)
+{
+    m_scroll->verticalScrollBar()->setValue(value);
 }
 
 QString QuickLook::shownText() const

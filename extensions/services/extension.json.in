@@ -1,0 +1,11 @@
+{
+    "id": "running-services",
+    "name": "Running Services",
+    "description": "View → Running Services (or the command palette): the services that are running now, the one using the most memory first, in the preview pane. The system's and your own session's (systemd). It updates every three seconds while it is shown, and only shows: nothing is started or stopped.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "commands": [{"id": "services", "label": "Running Services", "menu": "view"}],
+    "exec": ["@ARGONAUT_SERVICES_EXTENSION_EXE@"]
+}

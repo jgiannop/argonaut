@@ -18,7 +18,7 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Seven extensions come with Argonaut and are good to read: Connect to Server
+Eight extensions come with Argonaut and are good to read: Connect to Server
 ([`extensions/connect`](../extensions/connect): rows in the sidebar, a kind of
 address that is its to open, and forms for the questions a server asks),
 System Dashboard
@@ -26,7 +26,9 @@ System Dashboard
 shown as a result that updates while it is on screen), Space Overview
 ([`extensions/space`](../extensions/space): the open folder's size and the
 biggest things inside it, a result that fills in while the folder is
-measured), Document Preview
+measured), Running Services
+([`extensions/services`](../extensions/services): systemd's running services,
+most memory first: a picture in the window, a list in the terminal), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
 spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands
@@ -530,7 +532,7 @@ the file really is. When the user previews such a file, you get:
 | `diff` | A unified diff (what `git diff` prints), in a fixed-width font with added lines on green and removed lines on red, in the theme's colours. The text is shown as it is. |
 | `text` | The text as it is; `monospace` for a fixed-width font without wrapping. |
 | `html` | Qt's rich-text subset: headings, lists, tables, bold, colours. No scripts, and nothing the HTML names is loaded (no pictures, no style sheets). Links are shown but don't open. |
-| `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. |
+| `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. With `"scroll": true` beside it, the picture is not scaled: it is shown at its own size and scrolls where it is taller than the pane, for a list you drew (draw it as wide as the `width` a `result` message told you, and as long as the list is, at most 16384 pixels); made again while it is shown, it stays where it was scrolled to. |
 | `none` | "Not from me": Argonaut shows its own preview for the file. |
 
 `text` may be up to a million characters; `note` is one line under the

@@ -14,7 +14,7 @@
 // colours, or text with colour codes in the terminal interface.
 //
 //   argonaut-space-extension                 the extension (talks on stdin/stdout)
-//   argonaut-space-extension --png FILE FOLDER [WIDTH HEIGHT [dark|light]]
+//   argonaut-space-extension --png FILE FOLDER [WIDTH [dark|light]]
 //                                            measures FOLDER and draws once into FILE
 //   argonaut-space-extension --text FOLDER [COLUMNS]
 //                                            prints it once as the terminal interface shows it
@@ -124,20 +124,19 @@ QString percent(qint64 part, qint64 whole)
 
 // ------------------------------------------------------------ picture ---
 
-// For a pane `width` pixels wide and at most `height` tall: as many rows as
-// fit, and one line for the rest.
-QImage draw(const Overview &o, int width, int height, const Look &look)
+// For a pane `width` pixels wide: every row, however tall that makes the
+// picture (Argonaut scrolls it: "scroll"), up to a few hundred, and one
+// line for the rest.
+QImage draw(const Overview &o, int width, const Look &look)
 {
     width = qBound(240, width, 4000);
-    height = qBound(240, height, 4000);
     g_font = look.font;
     const double u = qBound(10.0, width / 34.0, 20.0); // the size of ordinary text
     const double rowHeight = u * 2.7;
     const double headHeight = u * (o.diskTotal > 0 ? 9.6 : 5.6);
     const double listTop = headHeight + 2 * u;
-    const int fit = qMax(3, int((height - listTop - u * 4.2) / rowHeight));
-    const bool more = o.rows.size() > fit;
-    const int shown = more ? fit - 1 : int(o.rows.size());
+    const int shown = qMin<int>(o.rows.size(), 250); // a picture has a limit to its height
+    const bool more = o.rows.size() > shown;
     const double listHeight = u * 3.2 + rowHeight * qMax(1, shown) + (more ? u * 1.9 : 0);
 
     QImage image(width, int(listTop + listHeight + u + 0.5), QImage::Format_RGB32);
@@ -213,19 +212,6 @@ QImage draw(const Overview &o, int width, int height, const Look &look)
 
 // ---------------------------------------------- the same, in a terminal ---
 
-QString padded(const QString &text, int width, bool right = false)
-{
-    const QString cut = text.size() > width ? text.left(qMax(0, width - 1)) + QChar(0x2026) : text;
-    const QString space(width - int(cut.size()), QLatin1Char(' '));
-    return right ? space + cut : cut + space;
-}
-
-QString blocks(int width, double share, int color)
-{
-    const int filled = qBound(0, int(width * share + 0.5), width);
-    return sgr(color) + QString(filled, QChar(0x2588)) + sgr(kTrack) + QString(width - filled, QChar(0x2588)) + kReset;
-}
-
 QString drawAnsi(const Overview &o, int columns)
 {
     columns = qBound(24, columns, 200);
@@ -292,8 +278,7 @@ int main(int argc, char **argv)
     }
     if (app.arguments().value(1) == QLatin1String("--png")) {
         const QImage image = draw(measured(app.arguments().value(3, QDir::homePath())), app.arguments().value(4, QStringLiteral("560")).toInt(),
-                                  app.arguments().value(5, QStringLiteral("800")).toInt(),
-                                  lookFor(app.arguments().value(6) != QLatin1String("light")));
+                                  lookFor(app.arguments().value(5) != QLatin1String("light")));
         return save(image, app.arguments().value(2)) ? 0 : 1;
     }
 
@@ -302,7 +287,7 @@ int main(int argc, char **argv)
     if (runtime.isEmpty() || !QFileInfo(runtime).isWritable())
         runtime = QDir::tempPath();
     const QString picture = QStringLiteral("%1/argonaut-space-%2.png").arg(runtime).arg(::getpid());
-    int width = 560, height = 760;
+    int width = 560;
     Look look = lookFor(true);
     bool shown = false;    // Argonaut has it on screen
     bool terminal = false; // it is Argonaut's terminal interface: text, not a picture
@@ -327,10 +312,11 @@ int main(int argc, char **argv)
             message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
             message.insert(QStringLiteral("text"), drawAnsi(current, columns));
         } else {
-            if (!save(draw(current, width, height, look), picture))
+            if (!save(draw(current, width, look), picture))
                 return;
             message.insert(QStringLiteral("kind"), QStringLiteral("image"));
             message.insert(QStringLiteral("image"), picture);
+            message.insert(QStringLiteral("scroll"), true); // longer than the pane: it scrolls
         }
         if (update)
             message.insert(QStringLiteral("update"), true);
@@ -397,7 +383,6 @@ int main(int argc, char **argv)
                 if (!shown)
                     continue;
                 width = message.value(QLatin1String("width")).toInt();
-                height = message.value(QLatin1String("height")).toInt();
                 if (message.value(QLatin1String("columns")).toInt() > 0)
                     columns = message.value(QLatin1String("columns")).toInt();
                 look = lookFor(message.value(QLatin1String("dark")).toBool(), message.value(QLatin1String("colors")).toObject(),

@@ -126,3 +126,18 @@ inline int levelIndex(double share)
 {
     return share >= 0.9 ? kFull : share >= 0.75 ? kNearlyFull : kAccent;
 }
+
+// A text in exactly `width` cells: cut with … or filled with spaces (at the left for `right`).
+inline QString padded(const QString &text, int width, bool right = false)
+{
+    const QString cut = text.size() > width ? text.left(qMax(0, width - 1)) + QChar(0x2026) : text;
+    const QString space(width - int(cut.size()), QLatin1Char(' '));
+    return right ? space + cut : cut + space;
+}
+
+// A bar of `width` cells, `share` of it in `color`.
+inline QString blocks(int width, double share, int color)
+{
+    const int filled = qBound(0, int(width * share + 0.5), width);
+    return sgr(color) + QString(filled, QChar(0x2588)) + sgr(kTrack) + QString(width - filled, QChar(0x2588)) + kReset;
+}

@@ -56,6 +56,9 @@ if(TARGET argonaut-git-extension)
     if(TARGET argonaut-dashboard-extension)
         add_dependencies(tst_extensions argonaut-dashboard-extension)
     endif()
+    if(TARGET argonaut-services-extension)
+        add_dependencies(tst_extensions argonaut-services-extension)
+    endif()
 endif()
 
 # Places, bookmarks, other programs.

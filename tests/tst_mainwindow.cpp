@@ -109,6 +109,7 @@ private slots:
     void diffIsColoured();
     void extensionListIsAPlace();
     void extensionResultStaysLive();
+    void longPictureFromAnExtensionScrolls();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
     void themesFromFiles();
@@ -1620,6 +1621,46 @@ void TestMainWindow::extensionPlacesInTheSidebar()
 // A result with a name (a dashboard): its extension is told it is on screen
 // and how much room there is, may replace it while it is, and is told when
 // it no longer is. A late update never takes the pane from a file or opens it.
+// A picture from an extension that is longer than the pane (a list it
+// drew: "scroll") is shown at its own size and scrolls; made again while it
+// is shown, it stays where it was scrolled to. Without "scroll" a picture
+// is scaled to fit, as before.
+void TestMainWindow::longPictureFromAnExtensionScrolls()
+{
+    open(m_dir);
+    QImage tall(qEnvironmentVariableIsSet("ARGONAUT_TEST_PICTURE") ? QImage(qEnvironmentVariable("ARGONAUT_TEST_PICTURE")) : QImage(200, 3000, QImage::Format_RGB32));
+    if (!qEnvironmentVariableIsSet("ARGONAUT_TEST_PICTURE"))
+    tall.fill(QColor("#336699"));
+    const QString file = m_dir + "/tall.png";
+    QVERIFY(tall.save(file));
+    Extensions::PreviewReply content;
+    content.kind = Extensions::PreviewReply::Image;
+    content.image = file;
+    content.extension = "fake";
+    content.resultId = "long";
+    content.scroll = true;
+    w->showExtensionResult("fake", "Long", content);
+    QVERIFY(w->m_quickLook && w->m_quickLook->isVisible());
+    QTRY_VERIFY(w->m_quickLook->pictureScrollRange() > 1500); // 3000 pixels of it, a pane's height on screen
+    QCOMPARE(w->m_quickLook->pictureScrollValue(), 0);
+    w->m_quickLook->scrollPictureTo(1200);
+    QCOMPARE(w->m_quickLook->pictureScrollValue(), 1200);
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) { // to look at it
+        QTest::qWait(200);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+    }
+    // The same result again: where it was.
+    content.update = true;
+    w->showExtensionResult("fake", "Long", content);
+    QCOMPARE(w->m_quickLook->pictureScrollValue(), 1200);
+    // Not asked to scroll: the whole picture, made to fit.
+    content.update = false;
+    content.resultId = "fits";
+    content.scroll = false;
+    w->showExtensionResult("fake", "Fits", content);
+    QCOMPARE(w->m_quickLook->pictureScrollRange(), -1);
+}
+
 void TestMainWindow::extensionResultStaysLive()
 {
     if (QStandardPaths::findExecutable("python3").isEmpty())

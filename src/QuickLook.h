@@ -53,6 +53,11 @@ public:
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
     bool fromExtension() const { return m_fromExtension; } // an extension made what's shown
     QString shownText() const;                           // the text or rich text shown (tests)
+    // A picture that scrolls is shown (an extension's, with "scroll"): how far it can be
+    // scrolled and where it is, in pixels; -1: none is shown (tests).
+    int pictureScrollRange() const;
+    int pictureScrollValue() const;
+    void scrollPictureTo(int value);
 
 signals:
     void openRequested(const QString &path);
@@ -79,6 +84,8 @@ private:
     QLabel *m_details = nullptr;
     QStackedWidget *m_pages = nullptr;
     class PictureView *m_picture = nullptr;
+    class QScrollArea *m_scroll = nullptr; // an extension's picture that is taller than the pane ("scroll")
+    QLabel *m_scrollPicture = nullptr;
     QLabel *m_movieLabel = nullptr;
     QMovie *m_movie = nullptr;
     QPlainTextEdit *m_text = nullptr;
