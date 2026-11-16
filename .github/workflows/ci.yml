@@ -27,6 +27,46 @@ jobs:
       - name: Test
         run: ctest --preset debug
 
+  # The package builds and installs on every system a release is made for
+  # (release.yml has the same list): a newer compiler or Qt that the code
+  # doesn't suit is found here, not on the day of a release.
+  package:
+    name: package on ${{ matrix.system }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: ubuntu24.04, image: 'ubuntu:24.04' }
+          - { system: ubuntu26.04, image: 'ubuntu:26.04' }
+          - { system: debian13, image: 'debian:13' }
+    steps:
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates build-essential cmake ninja-build qt6-base-dev qt6-tools-dev \
+            libvterm-dev libarchive-dev libncurses-dev dpkg-dev file
+
+      - uses: actions/checkout@v5
+
+      - name: Build the package
+        run: |
+          cmake --preset package
+          cmake --build build/package
+          cpack --config build/package/CPackConfig.cmake
+
+      - name: Check that it installs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends ./build/package/*.deb
+          argonaut --version
+          QT_QPA_PLATFORM=offscreen argonaut --help > /dev/null
+
   # The same tests with memory-error checkers (AddressSanitizer + UBSan):
   # a bad read or write stops the test instead of passing by luck.
   sanitize:

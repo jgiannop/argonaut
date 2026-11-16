@@ -206,6 +206,13 @@ int main(int argc, char *argv[])
     }
 
 #if defined(ARGONAUT_TUI)
+    // The version is asked for on machines without a display too (a server).
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--version") == 0 || qstrcmp(argv[i], "-v") == 0) {
+            std::printf("Argonaut %s\n", ARGONAUT_VERSION);
+            return 0;
+        }
+    }
     // `argonaut --tui [folders]`: the terminal interface, no window at all.
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--tui") == 0)

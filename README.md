@@ -145,13 +145,15 @@ For an optimized build, use `release` instead of `debug`.
 
 ## Installing (Linux)
 
-### From a .deb package (Ubuntu 24.04 and newer)
+### From a .deb package (Ubuntu 24.04, Ubuntu 26.04, Debian 13)
 
-Download `argonaut-files_<version>_amd64.deb` from the [releases page](https://github.com/jgiannop/argonaut/releases) and install it with:
+The [releases page](https://github.com/jgiannop/argonaut/releases) has a package for each system, named after it: `argonaut-files_<version>_ubuntu24.04_amd64.deb`, `…_ubuntu26.04_amd64.deb`, `…_debian13_amd64.deb`. Take the one for yours (`lsb_release -ds` says which it is): a package only installs on the system it was built for, because the libraries it needs are named differently on each. Then:
 
 ```bash
-sudo apt install ./argonaut-files_0.11.0_amd64.deb
+sudo apt install ./argonaut-files_0.11.0_ubuntu24.04_amd64.deb
 ```
+
+On a server without a desktop, add `--no-install-recommends` and run `argonaut-tui`: the terminal version needs no display.
 
 apt also offers the helpers Argonaut uses when they're there (GVfs for servers, bubblewrap for its sandbox, poppler-utils and exiftool for details, Tracker for searching inside documents).
 
