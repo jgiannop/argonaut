@@ -123,6 +123,8 @@ Ignore message types and keys you don't know; newer versions may add some.
 - `unwatch`: no view shows it any more. Forget it.
 - `preview`: the user is previewing a file of a kind you announced (see
   [Previews](#previews)).
+- `place`: the user clicked one of your sidebar rows, or its ⏏ (see
+  [Places in the sidebar](#places-in-the-sidebar)).
 - `result`: a result you named is on screen now, or no longer is (see
   [Results that update](#results-that-update)).
 - `invoke`: the user chose one of your commands (and said yes to its
@@ -298,6 +300,53 @@ your commands):
 
 Git's **Show Changes** is exactly this: the list of changed files, and each
 file's diff as its preview.
+
+### Places in the sidebar
+
+An extension that brings somewhere new to go (a cloud drive, a kind of
+server, a phone) can have rows in the sidebar, in a group of their own at
+the end:
+
+```json
+{"type": "places", "places": [
+    {"id": "work", "label": "Work Drive", "icon": "cloud",
+     "folder": "/home/me/.cache/my-drive/work", "eject": true,
+     "tooltip": "me@example.com"},
+    {"id": "connect", "label": "Connect a Drive…", "icon": "cloud"}
+]}
+```
+
+Send it whenever your rows change; it replaces what you said before (an
+empty list takes them all away).
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Comes back when the row is used. |
+| `label` | Required. Up to 60 characters. |
+| `icon` | `"cloud"`, `"network"`, `"drive"`, `"removable"` or `"folder"` (the default). |
+| `folder` | A real folder, by its full path. A click opens it, like any place; files can be dropped on the row. |
+| `eject` | `true`: the row has a ⏏ button (and "Disconnect" in its right-click menu). |
+| `tooltip` | A line or two shown over the row. |
+
+A row **without** a `folder` is a request to you. When it is clicked, and
+when a row's ⏏ is pressed, you are told:
+
+```json
+{"type": "place", "id": "connect", "action": "open"}
+{"type": "place", "id": "work", "action": "eject"}
+```
+
+Do what it takes (sign in, mount, unmount), send `places` again if your rows
+changed, and to show the user where they now are:
+
+```json
+{"type": "open", "folder": "/home/me/.cache/my-drive/work"}
+```
+
+`open` shows a folder in the pane the user is in. It is an **answer**:
+Argonaut obeys one `open` after the user chose something of yours (a row, or
+one of your commands), within five minutes, and ignores any other. An
+extension can't move the user about on its own. At most 20 rows.
 
 ### Previews
 

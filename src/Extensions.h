@@ -118,6 +118,21 @@ struct Listing
     bool previews = false; // the extension is asked for the preview of every file in it
 };
 
+// A row an extension adds to the sidebar (a connected server, a cloud
+// drive). With a `folder` a click opens that folder; without one the
+// extension is told and does what it takes (connects, then asks for the
+// folder to be opened). It has an address of its own, placePath().
+struct Place
+{
+    QString extension; // its extension's id
+    QString id;
+    QString label;
+    QString tooltip;
+    QString icon;      // "network", "cloud", "drive", "removable" or "folder"
+    QString folder;    // where a click goes; empty: the extension is asked
+    bool eject = false; // has a ⏏ button (disconnect); the extension is told when it is pressed
+};
+
 // A selected item, as far as commands care.
 struct Item
 {
@@ -199,6 +214,16 @@ public:
     void resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels = QSize(),
                      const ResultLook &look = ResultLook());
 
+    // Sidebar rows from extensions, in the extensions' order.
+    QList<Place> places() const;
+    // "extension-place:///<extension>/<id>": the address of a row that has
+    // no folder of its own.
+    static QString placePath(const QString &extension, const QString &id);
+    static bool isPlacePath(const QString &path);
+    // The user clicked the row ("open") or its ⏏ ("eject"): its extension
+    // is told {"type":"place","id":…,"action":…}.
+    void activatePlace(const QString &placePath, const QString &action);
+
     // Previews: true if a running extension said it previews this type.
     // requestPreview() asks it and returns the request's number (0: nobody
     // to ask); the answer comes as previewReady with that number, or never
@@ -233,6 +258,10 @@ signals:
     void extensionsChanged();                  // the list, or what is switched on
     void message(const QString &extension, const QString &text); // something to tell the user
     void previewReady(int request, const Extensions::PreviewReply &reply);
+    void placesChanged();                                  // the sidebar rows from extensions
+    // An extension asks for a folder to be shown, as the answer to something
+    // the user just chose from it (a command, a sidebar row).
+    void openRequested(const QString &extension, const QString &folder);
     void listingChanged(const QString &listingPath);       // its files or title changed, or it is gone
     void showListingRequested(const QString &listingPath); // the user asked to see it
     // A result to show in the preview pane (a command's answer: a diff, a report).
@@ -257,6 +286,8 @@ private:
         QList<Command> commands; // everywhere
         QStringList previewTypes; // what it previews ("text/markdown", "image/*")
         QHash<QString, Listing> listings; // by id
+        QList<Place> places;              // its sidebar rows
+        qint64 userActed = 0;             // when the user last chose something of its (ms since the epoch)
     };
 
     void startAsNeeded();

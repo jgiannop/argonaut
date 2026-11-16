@@ -156,6 +156,11 @@ MainWindow::MainWindow(QWidget *parent)
                 refreshChrome();
         }
     });
+    // An extension has a folder to show for what the user chose from it.
+    connect(Extensions::Host::instance(), &Extensions::Host::openRequested, this, [this](const QString &, const QString &folder) {
+        if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
+            navigateTo(folder);
+    });
     connect(Extensions::Host::instance(), &Extensions::Host::showRequested, this,
             [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
                 // A new version of a result on screen goes to the window showing it.
@@ -1700,7 +1705,7 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
     QMenu *menu = makeMenu();
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->addAction(tr("Open"), this, [this, path] { navigateTo(path); });
-    if (m_openTerminalHereAct) {
+    if (m_openTerminalHereAct && !Extensions::Host::isPlacePath(path)) {
         menu->addAction(tr("Open in Terminal"), this, [this, path] {
             m_contextFolder = path;
             m_openTerminalHereAct->trigger();
@@ -1726,6 +1731,12 @@ void MainWindow::showSidebarMenu(const QPoint &pos)
         const QString name = item->text();
         menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Disconnect"), this,
                         [this, path, name] { ejectDrive(path, name); });
+    } else if (kind == Sidebar::ExtensionItem && Sidebar::canEject(item)) {
+        // Its extension does the disconnecting.
+        menu->addSeparator();
+        const QString place = Sidebar::extensionPlace(item);
+        menu->addAction(glyphIcon(Glyph::Eject, m_theme.fg), tr("Disconnect"), this,
+                        [place] { Extensions::Host::instance()->activatePlace(place, QStringLiteral("eject")); });
     } else if (kind == Sidebar::DriveItem && Sidebar::canEject(item)) {
         menu->addSeparator();
         const QString name = item->text();
@@ -2077,6 +2088,12 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     // A server address (typed, a bookmark, the command line): connect first.
     if (path == Sidebar::connectPlace()) {
         m_connectAct->trigger();
+        return false;
+    }
+    // A sidebar row an extension answers for: it is told, and asks for a
+    // folder to be opened when it has one (after connecting, say).
+    if (Extensions::Host::isPlacePath(path)) {
+        Extensions::Host::instance()->activatePlace(path, QStringLiteral("open"));
         return false;
     }
     if (Remote::isRemoteAddress(path)) {
@@ -2704,11 +2721,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *me = static_cast<QMouseEvent *>(event);
         QListWidgetItem *item = m_sidebar->itemAt(me->position().toPoint());
         if (item && me->button() == Qt::MiddleButton && !Sidebar::pathOf(item).isEmpty()) {
-            openTab(Sidebar::pathOf(item), false);
+            if (!Extensions::Host::isPlacePath(Sidebar::pathOf(item))) // nothing to open in a tab until its extension has a folder
+                openTab(Sidebar::pathOf(item), false);
             return true;
         }
         if (me->button() == Qt::LeftButton && m_sidebar->ejectButtonHit(item, me->position().toPoint())) {
-            ejectDrive(Sidebar::pathOf(item), item->text());
+            if (Sidebar::kindOf(item) == Sidebar::ExtensionItem)
+                Extensions::Host::instance()->activatePlace(Sidebar::extensionPlace(item), QStringLiteral("eject"));
+            else
+                ejectDrive(Sidebar::pathOf(item), item->text());
             return true; // don't also open it
         }
     } else if (m_pane->detailView && watched == m_pane->detailView->viewport()
@@ -3889,7 +3910,7 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
     }
     const QString targetDir = QDir::cleanPath(Sidebar::pathOf(item));
     const Qt::DropAction action =
-        targetDir.isEmpty()
+        targetDir.isEmpty() || Extensions::Host::isPlacePath(Sidebar::pathOf(item)) // a row that isn't a folder (yet)
             ? Qt::IgnoreAction
             : dropActionFor(sources, targetDir, drop->modifiers(), drop->possibleActions());
 

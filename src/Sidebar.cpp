@@ -1,5 +1,7 @@
 #include "Sidebar.h"
 
+#include "Extensions.h"
+
 #include "Bookmarks.h"
 #include "DirectoryModel.h"
 #include "Remote.h"
@@ -29,6 +31,7 @@ constexpr int PathRole = Qt::UserRole;
 constexpr int SeparatorRole = Qt::UserRole + 1;
 constexpr int KindRole = Qt::UserRole + 2;  // Sidebar::Kind
 constexpr int EjectRole = Qt::UserRole + 3; // bool: show an eject button
+constexpr int ExtensionRole = Qt::UserRole + 4; // an extension's row: its place address
 
 constexpr int RefreshDelayMs = 250; // one rebuild for a burst of changes
 constexpr int MountPollMs = 3000;   // where mount changes can't be watched
@@ -91,6 +94,8 @@ Sidebar::Sidebar(QWidget *parent) : QListWidget(parent), m_refreshTimer(new QTim
     m_refreshTimer->setInterval(RefreshDelayMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &Sidebar::refresh);
     watchForChanges();
+    // Extensions add and take away rows of their own.
+    connect(Extensions::Host::instance(), &Extensions::Host::placesChanged, this, &Sidebar::refreshSoon);
 }
 
 Sidebar::~Sidebar()
@@ -269,8 +274,35 @@ void Sidebar::refresh()
     }
     addRow(tr("Connect to Server…"), connectPlace(), Glyph::Network, PlaceItem)->setToolTip(tr("sftp, smb, ftp, WebDAV…"));
 #endif
+    // Rows from extensions (a cloud drive, a kind of server we don't know):
+    // a group of their own at the end.
+    const QList<Extensions::Place> added = Extensions::Host::instance()->places();
+    if (!added.isEmpty())
+        addSeparator();
+    for (const Extensions::Place &place : added) {
+        const Glyph glyph = place.icon == QLatin1String("network") ? Glyph::Network
+                            : place.icon == QLatin1String("cloud") ? Glyph::Cloud
+                            : place.icon == QLatin1String("drive") ? Glyph::Drive
+                            : place.icon == QLatin1String("removable") ? Glyph::Removable : Glyph::Folder;
+        const QString address = Extensions::Host::placePath(place.extension, place.id);
+        QListWidgetItem *item = addRow(place.label, place.folder.isEmpty() ? address : place.folder, glyph, ExtensionItem);
+        item->setData(ExtensionRole, address);
+        item->setData(EjectRole, place.eject);
+        const QString from = Extensions::Host::instance()->nameOf(place.extension);
+        QString tip = place.tooltip.isEmpty() ? (place.folder.isEmpty() ? place.label : QDir::toNativeSeparators(place.folder)) : place.tooltip;
+        if (!from.isEmpty())
+            tip += QLatin1Char('\n') + tr("From the extension “%1”").arg(from);
+        if (place.eject)
+            tip += QLatin1Char('\n') + tr("Disconnect: click ⏏");
+        item->setToolTip(tip);
+    }
     verticalScrollBar()->setValue(scroll);
     emit refreshed();
+}
+
+QString Sidebar::extensionPlace(const QListWidgetItem *item)
+{
+    return item ? item->data(ExtensionRole).toString() : QString();
 }
 
 void Sidebar::selectPath(const QString &path)

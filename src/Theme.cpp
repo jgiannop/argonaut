@@ -391,6 +391,16 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
             p->drawEllipse(QPointF(11, 11.25), 0.85, 0.85);
         });
         break;
+    case Glyph::Cloud: { // storage somewhere else (an extension's place)
+        QPainterPath cloud;
+        cloud.moveTo(4.75, 12.5);
+        cloud.cubicTo(1.5, 12.5, 1.5, 8.0, 4.5, 7.75);
+        cloud.cubicTo(4.75, 3.75, 10.25, 3.25, 11.0, 6.75);
+        cloud.cubicTo(15.0, 6.75, 15.0, 12.5, 11.5, 12.5);
+        cloud.closeSubpath();
+        p->drawPath(cloud);
+        break;
+    }
     case Glyph::Removable:
         p->drawRoundedRect(QRectF(4.25, 5.5, 7.5, 8.75), 1.5, 1.5);
         p->drawRect(QRectF(6, 1.75, 4, 3.75));

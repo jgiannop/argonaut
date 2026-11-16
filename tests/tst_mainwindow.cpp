@@ -106,6 +106,7 @@ private slots:
     void diffIsColoured();
     void extensionListIsAPlace();
     void extensionResultStaysLive();
+    void extensionPlacesInTheSidebar();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1264,6 +1265,68 @@ void TestMainWindow::terminalBringsTheFilesAlong()
 #else
     QSKIP("no embedded terminal in this build");
 #endif
+}
+
+// An extension's rows in the sidebar: a click on one that is a folder opens
+// it; one that isn't asks its extension, which answers with the folder to
+// open; ⏏ is the extension's to carry out.
+void TestMainWindow::extensionPlacesInTheSidebar()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString fakeFolder = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake";
+    auto row = [this](const QString &text) -> QListWidgetItem * {
+        for (int i = 0; i < w->m_sidebar->count(); ++i) {
+            if (w->m_sidebar->item(i)->text() == text)
+                return w->m_sidebar->item(i);
+        }
+        return nullptr;
+    };
+    open(m_dir);
+    QVERIFY(!row("Fake Cloud"));
+    host->setEnabled("fake", true);
+    QTRY_VERIFY_WITH_TIMEOUT(row("Fake Cloud") && row("Fake Folder"), 10000);
+    QCOMPARE(Sidebar::kindOf(row("Fake Cloud")), Sidebar::ExtensionItem);
+    QVERIFY(Sidebar::canEject(row("Fake Cloud")));
+    QVERIFY(!Sidebar::canEject(row("Fake Folder")));
+    QVERIFY(row("Fake Cloud")->toolTip().contains("A pretend drive") && row("Fake Cloud")->toolTip().contains("Fake"));
+
+    // A row with a folder is a place like any other.
+    QCOMPARE(Sidebar::pathOf(row("Fake Folder")), fakeFolder);
+    emit w->m_sidebar->itemClicked(row("Fake Folder"));
+    QCOMPARE(w->m_pane->current, fakeFolder);
+    QCOMPARE(w->m_sidebar->currentItem(), row("Fake Folder"));
+
+    // A row without one: nothing opens until its extension says what.
+    open(m_dir);
+    emit w->m_sidebar->itemClicked(row("Fake Cloud"));
+    QCOMPARE(w->m_pane->current, m_dir);
+    QTRY_COMPARE_WITH_TIMEOUT(w->m_pane->current, fakeFolder, 10000);
+    QTest::qWait(200);
+    QCOMPARE(w->m_pane->current, fakeFolder); // not the second folder it named
+    // No tab for it on a middle click, and nothing can be dropped on it.
+    const int tabs = w->m_tabBar->count();
+    QListWidgetItem *cloud = row("Fake Cloud");
+    const QPoint middle = w->m_sidebar->visualItemRect(cloud).center();
+    QTest::mouseClick(w->m_sidebar->viewport(), Qt::MiddleButton, Qt::NoModifier, middle);
+    QCOMPARE(w->m_tabBar->count(), tabs);
+
+    // ⏏ goes to the extension, which takes the row away; the drive code isn't asked.
+    QPoint eject;
+    const QRect rect = w->m_sidebar->visualItemRect(cloud);
+    for (int x = rect.right(); x > rect.left() && eject.isNull(); --x) {
+        if (w->m_sidebar->ejectButtonHit(cloud, QPoint(x, rect.center().y())))
+            eject = QPoint(x - 2, rect.center().y());
+    }
+    QVERIFY(!eject.isNull());
+    QTest::mouseClick(w->m_sidebar->viewport(), Qt::LeftButton, Qt::NoModifier, eject);
+    QTRY_VERIFY_WITH_TIMEOUT(!row("Fake Cloud"), 10000);
+    QVERIFY(row("Fake Folder"));
+
+    // The extension switched off: its rows are gone.
+    host->setEnabled("fake", false);
+    QTRY_VERIFY_WITH_TIMEOUT(!row("Fake Folder"), 10000);
 }
 
 // A result with a name (a dashboard): its extension is told it is on screen

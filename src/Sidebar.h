@@ -20,7 +20,7 @@ class Sidebar : public QListWidget
     Q_OBJECT
 
 public:
-    enum Kind { PlaceItem, BookmarkItem, DriveItem, NetworkItem };
+    enum Kind { PlaceItem, BookmarkItem, DriveItem, NetworkItem, ExtensionItem };
 
     explicit Sidebar(QWidget *parent = nullptr);
     ~Sidebar() override;
@@ -40,6 +40,11 @@ public:
     static bool canEject(const QListWidgetItem *item); // has an ⏏ button
     // True if `viewportPos` is on the row's ⏏ button.
     bool ejectButtonHit(const QListWidgetItem *item, const QPoint &viewportPos) const;
+
+    // A row an extension added: its address (Extensions::Host::placePath),
+    // else empty. Its path is the folder it opens, or that address when
+    // the extension is to be asked.
+    static QString extensionPlace(const QListWidgetItem *item);
 
     // The path of the "Connect to Server…" row: not a folder, a command.
     static QString connectPlace();

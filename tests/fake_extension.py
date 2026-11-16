@@ -29,6 +29,26 @@ for line in sys.stdin:
             {"id": "nolabel"}]})
     if m.get("type") == "hello":
         say({"type": "previews", "types": ["text/csv", "image/x-xcf"]})
+        # Sidebar rows: one that is asked when clicked (and can be
+        # disconnected), one that is a folder, and some that are wrong.
+        here = os.path.dirname(os.path.abspath(__file__))
+        say({"type": "places", "places": [
+            {"id": "cloud1", "label": "Fake\nCloud", "icon": "cloud", "eject": True, "tooltip": "A pretend drive"},
+            {"id": "direct", "label": "Fake Folder", "icon": "skull", "folder": here},
+            {"id": "norel", "label": "Not Relative", "folder": "relative/folder"},
+            {"id": "cloud1", "label": "Twice"},
+            {"id": "", "label": "No id"},
+            {"id": "nolabel"}]})
+        say({"type": "open", "folder": here})  # out of the blue: not obeyed
+    if m.get("type") == "place":
+        here = os.path.dirname(os.path.abspath(__file__))
+        if m.get("action") == "open":
+            say({"type": "open", "folder": "not/absolute"})
+            say({"type": "open", "folder": here})
+            say({"type": "open", "folder": "/"})  # a second answer to one click: not obeyed
+        if m.get("action") == "eject":
+            say({"type": "places", "places": [{"id": "direct", "label": "Fake Folder", "folder": here}]})
+            say({"type": "message", "text": "ejected " + m.get("id", "")})
     if m.get("type") == "preview":
         name = os.path.basename(m.get("path", ""))
         reply = {"type": "preview", "id": m.get("id")}

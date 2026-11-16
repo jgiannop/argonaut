@@ -1,6 +1,7 @@
 #include "Extensions.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -32,6 +33,8 @@ constexpr int MaxMessageChars = 200;
 constexpr int MaxPreviewChars = 1024 * 1024; // text, Markdown or HTML of a preview
 constexpr int MaxListingFiles = 20000;
 constexpr int MaxListings = 20;   // per extension
+constexpr int MaxPlaces = 20;     // sidebar rows per extension
+constexpr int OpenWithinMs = 5 * 60 * 1000; // "open" is an answer: only this long after the user chose something
 constexpr int MaxFailures = 3; // then it stays off until switched on again or restart
 
 const QStringList &colors()
@@ -542,11 +545,51 @@ QList<Command> Host::menuCommands(const QString &menu) const
     return out;
 }
 
+QList<Place> Host::places() const
+{
+    QList<Place> out;
+    for (const Running *ext : m_running) {
+        if (ext->process)
+            out.append(ext->places);
+    }
+    return out;
+}
+
+QString Host::placePath(const QString &extension, const QString &id)
+{
+    return QStringLiteral("extension-place:///") + extension + QLatin1Char('/') + QString::fromLatin1(QUrl::toPercentEncoding(id));
+}
+
+bool Host::isPlacePath(const QString &path)
+{
+    return path.startsWith(QLatin1String("extension-place:///"));
+}
+
+void Host::activatePlace(const QString &path, const QString &action)
+{
+    if (!isPlacePath(path) || (action != QLatin1String("open") && action != QLatin1String("eject")))
+        return;
+    for (Running *ext : std::as_const(m_running)) {
+        if (!ext->process)
+            continue;
+        for (const Place &place : std::as_const(ext->places)) {
+            if (placePath(place.extension, place.id) != path)
+                continue;
+            ext->userActed = QDateTime::currentMSecsSinceEpoch();
+            send(ext, {{QStringLiteral("type"), QStringLiteral("place")},
+                       {QStringLiteral("id"), place.id},
+                       {QStringLiteral("action"), action}});
+            return;
+        }
+    }
+}
+
 void Host::invoke(const Command &command, const QString &folder, const QStringList &selection, const QString &input)
 {
     for (Running *ext : std::as_const(m_running)) {
         if (ext->manifest.id != command.extension || !ext->process)
             continue;
+        ext->userActed = QDateTime::currentMSecsSinceEpoch();
         send(ext, {{QStringLiteral("type"), QStringLiteral("invoke")},
                    {QStringLiteral("command"), command.id},
                    {QStringLiteral("folder"), folder},
@@ -813,6 +856,49 @@ void Host::handle(Running *ext, const QByteArray &line)
         emit previewReady(message.value(QLatin1String("id")).toInt(), reply);
         return;
     }
+    if (type == QLatin1String("places")) { // its rows in the sidebar; replaces what it said before
+        QList<Place> places;
+        QSet<QString> ids;
+        const QJsonArray list = message.value(QLatin1String("places")).toArray();
+        for (const QJsonValue &entry : list) {
+            if (places.size() >= MaxPlaces)
+                break;
+            const QJsonObject o = entry.toObject();
+            Place place;
+            place.extension = ext->manifest.id;
+            place.id = o.value(QLatin1String("id")).toString().left(200);
+            place.label = tidy(o.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+            if (place.id.isEmpty() || place.label.isEmpty() || ids.contains(place.id))
+                continue;
+            ids.insert(place.id);
+            place.tooltip = tidy(o.value(QLatin1String("tooltip")).toString(), MaxTooltipChars);
+            static const QStringList icons{QStringLiteral("network"), QStringLiteral("cloud"), QStringLiteral("drive"),
+                                           QStringLiteral("removable"), QStringLiteral("folder")};
+            place.icon = o.value(QLatin1String("icon")).toString();
+            if (!icons.contains(place.icon))
+                place.icon = QStringLiteral("folder");
+            // A folder to open directly must be a real one, by its full path.
+            const QString folder = o.value(QLatin1String("folder")).toString();
+            if (!folder.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir())
+                place.folder = QDir::cleanPath(folder);
+            place.eject = o.value(QLatin1String("eject")).toBool();
+            places.append(place);
+        }
+        ext->places = places;
+        emit placesChanged();
+        return;
+    }
+    if (type == QLatin1String("open")) { // show this folder: the answer to what the user chose
+        const QString folder = message.value(QLatin1String("folder")).toString();
+        // Never out of the blue: an extension can't move the user about.
+        if (ext->userActed == 0 || QDateTime::currentMSecsSinceEpoch() - ext->userActed > OpenWithinMs)
+            return;
+        if (!QDir::isAbsolutePath(folder) || !QFileInfo(folder).isDir())
+            return;
+        ext->userActed = 0; // one answer to one choice
+        emit openRequested(ext->manifest.name, QDir::cleanPath(folder));
+        return;
+    }
     if (type == QLatin1String("listing")) { // a list of files it keeps
         const QString id = message.value(QLatin1String("id")).toString().left(1000);
         if (id.isEmpty())
@@ -933,6 +1019,11 @@ void Host::exited(Running *ext)
 
 void Host::forget(Running *ext)
 {
+    if (!ext->places.isEmpty()) {
+        ext->places.clear();
+        emit placesChanged();
+    }
+    ext->userActed = 0;
     const QStringList lists = ext->listings.keys();
     ext->listings.clear();
     for (const QString &id : lists)

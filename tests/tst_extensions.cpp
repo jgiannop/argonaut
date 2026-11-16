@@ -74,6 +74,7 @@ private slots:
     void previewsAreAskedAndChecked();
     void documentPreview();
     void systemDashboard();
+    void placesAndOpeningFolders();
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void gitChangesCommitAndBranches();
@@ -435,6 +436,58 @@ void TestExtensions::previewsAreAskedAndChecked()
 
 // The Document Preview extension that comes with Argonaut: Markdown as it
 // is, CSV and spreadsheets as a table. Spreadsheets go through the sandbox.
+// Sidebar rows from an extension, checked like everything else it says; a
+// click is told to it, and "open this folder" is obeyed only as the answer
+// to something the user chose, once.
+void TestExtensions::placesAndOpeningFolders()
+{
+    Host host;
+    QSignalSpy open(&host, &Host::openRequested);
+    QSignalSpy changed(&host, &Host::placesChanged);
+    host.setEnabled("fake", true);
+    host.watch(m_dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!host.places().isEmpty(), 10000);
+    QList<Extensions::Place> places = host.places();
+    QCOMPARE(int(places.size()), 3); // no id, no label and a second "cloud1" are left out
+    QCOMPARE(places.at(0).id, QStringLiteral("cloud1"));
+    QCOMPARE(places.at(0).label, QStringLiteral("Fake Cloud")); // one line
+    QCOMPARE(places.at(0).icon, QStringLiteral("cloud"));
+    QVERIFY(places.at(0).eject);
+    QVERIFY(places.at(0).folder.isEmpty());
+    QCOMPARE(places.at(1).icon, QStringLiteral("folder")); // an icon we don't have
+    QCOMPARE(places.at(1).folder, g_extensions + "/fake");
+    QVERIFY(places.at(2).folder.isEmpty()); // not a full path: no folder
+    const QString cloud = Host::placePath("fake", "cloud1");
+    QVERIFY(Host::isPlacePath(cloud));
+    QVERIFY(!Host::isPlacePath(m_dir));
+
+    // "Open this folder" out of the blue (it sent one when it started): no.
+    QSignalSpy said(&host, &Host::message);
+    QTest::qWait(300);
+    QCOMPARE(open.size(), 0);
+
+    // A click on the row: it is told, and its one answer is obeyed.
+    host.activatePlace(cloud, "open");
+    QTRY_COMPARE_WITH_TIMEOUT(open.size(), 1, 10000);
+    QCOMPARE(open.first().at(1).toString(), g_extensions + "/fake");
+    QTest::qWait(300);
+    QCOMPARE(open.size(), 1); // neither the path that isn't one, nor the second answer
+    host.activatePlace(cloud, "format"); // not something a row can be asked
+    host.activatePlace(Host::placePath("fake", "no such row"), "open");
+
+    // ⏏: told too; it takes the row away.
+    changed.clear();
+    host.activatePlace(cloud, "eject");
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QCOMPARE(said.last().at(1).toString(), QStringLiteral("ejected cloud1"));
+    QTRY_COMPARE_WITH_TIMEOUT(int(host.places().size()), 1, 10000);
+    QVERIFY(!changed.isEmpty());
+
+    // Switched off: its rows go.
+    host.setEnabled("fake", false);
+    QVERIFY(host.places().isEmpty());
+}
+
 // The System Dashboard extension: its command answers with a picture as a
 // named result; told the room there is, it draws for that and keeps
 // drawing; told the result is gone, it stops.
