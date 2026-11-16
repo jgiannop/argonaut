@@ -3,6 +3,7 @@
 #include "App.h"
 #include "Screen.h"
 
+#include <QHash>
 #include <QList>
 
 // The real terminal, through ncurses: shows a Tui::Screen and turns what is
@@ -29,10 +30,13 @@ public:
 
 private:
     int pairFor(Ink ink, Paper paper);
+    int rawPair(int fg, int bg); // for a cell with the shell's own colours
 
     int m_pairs[8][5] = {};
     int m_nextPair = 1;
     bool m_colors = false;
+    QHash<int, int> m_rawPairs;
+    QHash<int, Key> m_modified; // Ctrl+Up, Alt+Left…: ncurses' key code → the key
     QList<Mouse> m_mouse;
 };
 

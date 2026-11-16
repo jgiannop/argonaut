@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QSocketNotifier>
@@ -109,6 +110,41 @@ int run(int argc, char **argv)
         viewer.waitForFinished(-1);
         terminal->resume();
         input.setEnabled(true);
+        dirty = true;
+        draw();
+    });
+    // Ctrl+`: the user's shell in the pane's folder has the terminal until
+    // it is left. Where it is, is looked at now and then, so the pane can
+    // follow it there afterwards.
+    QObject::connect(&tui, &App::shellRequested, &app, [&](const QString &folder) {
+        QString shell = qEnvironmentVariable("SHELL");
+        if (shell.isEmpty() || !QFileInfo(shell).isExecutable())
+            shell = QStringLiteral("/bin/sh");
+        input.setEnabled(false);
+        terminal->suspend();
+        std::printf("Argonaut: a shell in %s. Type exit (or press Ctrl+D) to come back.\n", qPrintable(folder));
+        std::fflush(stdout);
+        QProcess process;
+        process.setWorkingDirectory(folder);
+        process.setProcessChannelMode(QProcess::ForwardedChannels);
+        process.setInputChannelMode(QProcess::ForwardedInputChannel);
+        process.start(shell, QStringList());
+        QString last = folder;
+        if (process.waitForStarted(5000)) {
+            const QString cwd = QStringLiteral("/proc/%1/cwd").arg(process.processId());
+            while (!process.waitForFinished(150)) {
+                const QString now = QFile::symLinkTarget(cwd); // Linux; elsewhere it stays `folder`
+                if (!now.isEmpty())
+                    last = now;
+            }
+        }
+        const bool started = process.error() != QProcess::FailedToStart;
+        terminal->resume();
+        input.setEnabled(true);
+        if (started)
+            tui.shellClosed(last);
+        else
+            tui.notify(QStringLiteral("The shell (%1) could not be started").arg(shell));
         dirty = true;
         draw();
     });

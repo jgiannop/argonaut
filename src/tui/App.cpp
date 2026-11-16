@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include "Shell.h"
+
 #include "DirectoryModel.h"
 #include "Extensions.h"
 #include "FileJob.h"
@@ -17,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
+#include <QSettings>
 
 namespace Tui {
 
@@ -24,6 +27,15 @@ namespace {
 
 const Style kBar{Ink::Normal, Paper::Bar, false};
 const Style kDim{Ink::Dim, Paper::Normal, false};
+
+// The colour of an extension's mark (Git: M, A, U).
+Ink markInk(const Extensions::Badge &badge)
+{
+    return badge.color == QLatin1String("success") ? Ink::Good
+           : badge.color == QLatin1String("error") ? Ink::Bad
+           : badge.color == QLatin1String("accent") ? Ink::Accent
+           : badge.color == QLatin1String("dim") ? Ink::Dim : Ink::Warning;
+}
 
 // "~/Documents" or "Trash": a folder as the pane's heading shows it.
 QString shown(const QString &path)
@@ -94,6 +106,7 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
 
     // One pane to start with; two when a second folder was asked for. The
     // second pane is there all along (hidden), so splitting is instant.
+    m_embeddedShell = Shell::available();
     m_split = !rightFolder.isEmpty();
     m_secondUsed = m_split;
     const QString folders[2] = {leftFolder, m_split ? rightFolder : leftFolder};
@@ -113,6 +126,7 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
                 up = QFileInfo(up).path();
             navigate(m_panes[i], up.isEmpty() ? QDir::homePath() : up, false);
         });
+        p.grid = QSettings().value(QStringLiteral("tui/grid/%1").arg(i), false).toBool();
         if (!navigate(p, folders[i], false))
             navigate(p, QDir::homePath(), false);
     }
@@ -373,6 +387,7 @@ void App::selectPath(const QString &path)
 // Rows came, went or were sorted: the cursor stays on its item.
 void App::rowsChanged(Pane &p)
 {
+    p.widthStale = true;
     const int count = rowCount(p);
     const QString wanted = !p.wantedCursor.isEmpty() ? p.wantedCursor : p.cursorPath;
     const QModelIndex index = wanted.isEmpty() ? QModelIndex() : p.model->indexForPath(wanted);
@@ -521,6 +536,31 @@ void App::goTo()
         if (!path.isEmpty())
             navigate(pane(), path);
     });
+}
+
+void App::shellClosed(const QString &folder)
+{
+    Pane &p = pane();
+    if (!folder.isEmpty() && QFileInfo(folder).isDir() && QDir::cleanPath(folder) != p.current
+        && !DirectoryModel::isVirtualPath(p.current) && !Trash::isFilesDir(p.current))
+        navigate(p, folder);
+    // Whatever was done in the shell shows.
+    for (Pane &each : m_panes)
+        each.model->refresh();
+    Extensions::Host::instance()->refreshAll();
+    emit changed();
+}
+
+// F9: this pane as a grid of names, or as a list with sizes and dates.
+// Remembered for each pane.
+void App::toggleGrid()
+{
+    Pane &p = pane();
+    p.grid = !p.grid;
+    p.top = 0; // counted in lines of the view; the next frame brings the cursor into sight
+    p.widthStale = true;
+    QSettings().setValue(QStringLiteral("tui/grid/%1").arg(m_active), p.grid);
+    emit changed();
 }
 
 // F4: one pane or two. The second pane opens on the folder you are in the
@@ -745,9 +785,82 @@ void App::key(const Key &key)
         emit changed();
         return;
     case Mode::Normal:
+        // F12, and Ctrl+` as in the window (a terminal sends that as NUL,
+        // the same as Ctrl+Space; some terminals keep it for themselves).
+        if (key.code == Key::F12 || key.isControl('`')) {
+            toggleShell();
+            return;
+        }
+        if (m_inShell && m_shell) {
+            if (key.code == Key::Up && key.ctrl && !key.alt && !key.shift) {
+                // As in the window: the files come to where the shell is.
+                const QString folder = m_shell->folder();
+                if (folder.isEmpty())
+                    say(QStringLiteral("The shell's folder can't be told here"));
+                else if (QDir::cleanPath(folder) == pane().current)
+                    pane().model->refresh();
+                else
+                    navigate(pane(), folder);
+                return;
+            }
+            m_shell->key(key); // everything else is typed into the shell
+            return;
+        }
         normalKey(key);
         return;
     }
+}
+
+// F12: the shell panel. The first time it starts the shell in the pane's
+// folder; after that it switches between typing there and the files. The
+// panel goes away when the shell ends (exit).
+void App::toggleShell()
+{
+    Pane &p = pane();
+    const bool real = !DirectoryModel::isVirtualPath(p.current) && !Trash::isFilesDir(p.current) && QFileInfo(p.current).isDir();
+    const QString folder = real ? p.current : QDir::homePath(); // a place isn't a folder to be in
+    if (!m_embeddedShell) {
+        emit shellRequested(folder);
+        return;
+    }
+    if (m_shell) {
+        m_inShell = !m_inShell;
+        if (!m_inShell) {
+            // Back at the files: what was done in the shell shows.
+            for (Pane &each : m_panes)
+                each.model->refresh();
+            Extensions::Host::instance()->refreshAll();
+        }
+        emit changed();
+        return;
+    }
+    m_shell = new Shell(this);
+    connect(m_shell, &Shell::changed, this, &App::changed);
+    connect(m_shell, &Shell::finished, this, &App::closeShell, Qt::QueuedConnection);
+    const int paneHeight = m_lastHeight - 3;
+    if (!m_shell->start(folder, qMax(2, qMin(paneHeight / 2, paneHeight - 4)) - 1, m_lastWidth)) {
+        delete m_shell;
+        m_shell = nullptr;
+        say(QStringLiteral("The shell could not be started"));
+        return;
+    }
+    m_inShell = true;
+    emit changed();
+}
+
+void App::closeShell()
+{
+    if (!m_shell)
+        return;
+    m_shell->deleteLater();
+    m_shell = nullptr;
+    m_inShell = false;
+    m_shellY = -1;
+    m_shellHeight = 0;
+    for (Pane &each : m_panes)
+        each.model->refresh();
+    Extensions::Host::instance()->refreshAll();
+    emit changed();
 }
 
 void App::mouse(const Mouse &mouse)
@@ -764,30 +877,56 @@ void App::mouse(const Mouse &mouse)
         }
         return;
     }
+    // The shell panel: a click goes there to type. (The shell's programs
+    // don't get the mouse.)
+    if (m_shell && mouse.y >= m_shellY && mouse.y < m_shellY + m_shellHeight) {
+        if (mouse.kind == Mouse::Press && !m_inShell) {
+            m_inShell = true;
+            emit changed();
+        }
+        return;
+    }
     for (int i = 0; i < 2; ++i) {
         Pane &p = m_panes[i];
         if (mouse.x < p.x || mouse.x >= p.x + p.width)
             continue;
+        if (m_inShell && mouse.kind != Mouse::WheelUp && mouse.kind != Mouse::WheelDown) {
+            // Out of the shell, back to the files.
+            m_inShell = false;
+            for (Pane &each : m_panes)
+                each.model->refresh();
+            Extensions::Host::instance()->refreshAll();
+        }
         if (mouse.kind == Mouse::WheelUp || mouse.kind == Mouse::WheelDown) {
             // The list moves under the pointer; the cursor comes along only
             // when it would leave the screen.
             const int count = rowCount(p);
-            p.top = qBound(0, p.top + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, count - p.rowsShown));
-            if (count > 0)
-                p.cursor = qBound(p.top, p.cursor, qMin(count - 1, p.top + p.rowsShown - 1));
+            const int per = perLine(p);
+            const int lines = (count + per - 1) / per;
+            p.top = qBound(0, p.top + (mouse.kind == Mouse::WheelUp ? -3 : 3), qMax(0, lines - p.rowsShown));
+            if (count > 0) {
+                const int line = qBound(p.top, p.cursor / per, qMin(lines - 1, p.top + p.rowsShown - 1));
+                p.cursor = qMin(count - 1, line * per + p.cursor % per);
+            }
             p.cursorPath = pathAt(p, p.cursor);
             emit changed();
             return;
         }
         const bool wasActive = m_active == i;
         m_active = i;
-        if (mouse.kind == Mouse::Press && mouse.y == p.rowsY - 2) {
+        if (mouse.kind == Mouse::Press && mouse.y == p.headY) {
             goUp(); // a click on the folder's name in the heading: up
             emit changed();
             return;
         }
-        const int row = p.top + (mouse.y - p.rowsY);
-        if (mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown || row >= rowCount(p)) {
+        int row = p.top + (mouse.y - p.rowsY);
+        bool beside = false; // right of the last column
+        if (p.grid) {
+            const int col = qMax(0, mouse.x - p.x - 1) / qMax(1, p.cellWidth);
+            beside = col >= p.cols;
+            row = row * p.cols + col;
+        }
+        if (beside || mouse.y < p.rowsY || mouse.y >= p.rowsY + p.rowsShown || row >= rowCount(p)) {
             emit changed(); // empty space: only the pane changes
             return;
         }
@@ -819,16 +958,25 @@ void App::normalKey(const Key &key)
     Pane &p = pane();
     switch (key.code) {
     case Key::Up:
-        moveCursor(p, p.cursor - 1);
+        if (p.cursor - perLine(p) >= 0)
+            moveCursor(p, p.cursor - perLine(p));
         return;
-    case Key::Down:
-        moveCursor(p, p.cursor + 1);
+    case Key::Down: {
+        // In a grid the last line may be short: from the line above it, down
+        // goes to the last item.
+        const int per = perLine(p);
+        const int last = rowCount(p) - 1;
+        if (p.cursor + per <= last)
+            moveCursor(p, p.cursor + per);
+        else if (p.cursor / per < last / per)
+            moveCursor(p, last);
         return;
+    }
     case Key::PageUp:
-        moveCursor(p, p.cursor - qMax(1, p.rowsShown - 1));
+        moveCursor(p, qMax(p.cursor % perLine(p), p.cursor - perLine(p) * qMax(1, p.rowsShown - 1)));
         return;
     case Key::PageDown:
-        moveCursor(p, p.cursor + qMax(1, p.rowsShown - 1));
+        moveCursor(p, p.cursor + perLine(p) * qMax(1, p.rowsShown - 1));
         return;
     case Key::Home:
         moveCursor(p, 0);
@@ -836,15 +984,25 @@ void App::normalKey(const Key &key)
     case Key::End:
         moveCursor(p, rowCount(p) - 1);
         return;
-    case Key::Enter:
     case Key::Right:
+        if (p.grid) { // a grid is walked in four directions; Enter opens
+            moveCursor(p, p.cursor + 1);
+            return;
+        }
+        openCursor();
+        return;
+    case Key::Enter:
         openCursor();
         return;
     case Key::Left:
-        if (key.alt && !p.back.isEmpty())
-            navigate(p, p.back.takeLast(), false);
-        else
+        if (key.alt) {
+            if (!p.back.isEmpty())
+                navigate(p, p.back.takeLast(), false);
+        } else if (p.grid) {
+            moveCursor(p, p.cursor - 1);
+        } else {
             goUp();
+        }
         return;
     case Key::Backspace:
         goUp();
@@ -903,6 +1061,9 @@ void App::normalKey(const Key &key)
         return;
     case Key::F8:
         remove(false);
+        return;
+    case Key::F9:
+        toggleGrid();
         return;
     case Key::F10:
         quit();
@@ -970,28 +1131,62 @@ void App::render(Screen &screen)
     const QString undo = m_ops->canUndo() ? QStringLiteral("Ctrl+Z %1").arg(m_ops->undoText()) : QString();
     screen.put(qMax(11, w - Screen::widthOf(undo) - 1), 0, undo, {Ink::Dim, Paper::Bar, false});
 
-    const int paneHeight = h - 3; // top bar above; message and key lines below
+    m_lastWidth = w;
+    m_lastHeight = h;
+    int paneHeight = h - 3; // top bar above; message and key lines below
+    // The shell panel takes the lower half.
+    const int shellHeight = m_shell ? qMax(2, qMin(paneHeight / 2, paneHeight - 4)) : 0;
+    paneHeight -= shellHeight;
     if (!m_split) {
         other().width = 0; // not on screen: the mouse can't reach it
         drawPane(screen, m_active, 0, w, 1, paneHeight);
-        drawBottom(screen);
-        return;
+    } else {
+        const int left = (w - 1) / 2;
+        drawPane(screen, 0, 0, left, 1, paneHeight);
+        for (int y = 1; y < 1 + paneHeight; ++y)
+            screen.put(left, y, QStringLiteral("│"), kDim);
+        drawPane(screen, 1, left + 1, w - left - 1, 1, paneHeight);
     }
-    const int left = (w - 1) / 2;
-    drawPane(screen, 0, 0, left, 1, paneHeight);
-    for (int y = 1; y < 1 + paneHeight; ++y)
-        screen.put(left, y, QStringLiteral("│"), kDim);
-    drawPane(screen, 1, left + 1, w - left - 1, 1, paneHeight);
+    if (m_shell)
+        drawShell(screen, 1 + paneHeight, shellHeight);
     drawBottom(screen);
+    if (m_shell && m_inShell && m_mode == Mode::Normal) {
+        int x = 0, y = 0;
+        if (m_shell->cursor(&x, &y) && y < shellHeight - 1)
+            screen.setCursor(x, m_shellY + 1 + y);
+    }
+}
+
+// The shell panel: a title line, then what the shell shows.
+void App::drawShell(Screen &screen, int y, int height)
+{
+    const int w = screen.width();
+    m_shellY = y;
+    m_shellHeight = height;
+    screen.fill(0, y, w, height, Style());
+    screen.fill(0, y, w, 1, kBar);
+    int x = 1 + screen.put(1, y, QStringLiteral("Terminal"), {m_inShell ? Ink::Accent : Ink::Dim, Paper::Bar, m_inShell});
+    const QString hint = m_inShell ? QStringLiteral("F12 back to the files · Ctrl+Up files come here · exit closes")
+                                   : QStringLiteral("F12 or a click to type here");
+    const int hintWidth = Screen::widthOf(hint);
+    const bool hintFits = w - x - 3 - hintWidth >= 10;
+    const QString folder = m_shell->folder();
+    if (!folder.isEmpty())
+        screen.put(x + 1, y, Screen::elided(shown(folder), w - x - 3 - (hintFits ? hintWidth + 2 : 0)), {Ink::Dim, Paper::Bar, false});
+    if (hintFits)
+        screen.put(w - 1 - hintWidth, y, hint, {Ink::Dim, Paper::Bar, false});
+    m_shell->resize(height - 1, w);
+    m_shell->draw(screen, 0, y + 1);
 }
 
 void App::drawPane(Screen &screen, int index, int x, int width, int top, int height)
 {
     Pane &p = m_panes[index];
-    const bool active = index == m_active;
+    const bool active = index == m_active && !m_inShell;
     p.x = x;
     p.width = width;
     p.rowsY = top + 2;
+    p.headY = top;
     // Heading: the folder, and what an extension says about it (the branch).
     const Style heading{active ? Ink::Accent : Ink::Dim, Paper::Normal, active};
     const Extensions::Info info = p.model->extensionsFolder().isEmpty()
@@ -1002,6 +1197,10 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
     if (infoWidth)
         screen.put(x + width - 1 - infoWidth, top, Screen::elided(info.text, infoWidth, false), kDim);
 
+    if (p.grid) {
+        drawGrid(screen, p, active, x, width, top, height);
+        return;
+    }
     // Columns: name, size, when. Narrow panes drop the date, then the size.
     const int dateWidth = width >= 56 ? 17 : 0;
     const int sizeWidth = width >= 34 ? 10 : 0;
@@ -1067,10 +1266,7 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
             const Extensions::Badge badge = mark.value<Extensions::Badge>();
             Style markStyle = style;
             markStyle.bold = true;
-            markStyle.ink = badge.color == QLatin1String("success") ? Ink::Good
-                            : badge.color == QLatin1String("error") ? Ink::Bad
-                            : badge.color == QLatin1String("accent") ? Ink::Accent
-                            : badge.color == QLatin1String("dim") ? Ink::Dim : Ink::Warning;
+            markStyle.ink = markInk(badge);
             screen.put(x + 2 + nameWidth + 1, y, badge.text.isEmpty() ? QStringLiteral("•") : badge.text, markStyle, 2);
         }
         Style detail = style;
@@ -1087,7 +1283,15 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
     if (items == 0)
         screen.put(x + 2, top + 2 + up, p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
 
-    // Footer: how many, and what is selected.
+    QString footer = footerText(p);
+    if (count > rows)
+        footer += QStringLiteral(" · %1–%2").arg(p.top + 1).arg(qMin(count, p.top + rows));
+    screen.put(x + 1, top + height - 1, Screen::elided(footer, width - 2, false), kDim);
+}
+
+QString App::footerText(const Pane &p) const
+{
+    const int items = p.model->rowCount();
     QString footer = items == 1 ? QStringLiteral("1 item") : QStringLiteral("%1 items").arg(items);
     if (!p.selected.isEmpty()) {
         qint64 bytes = 0;
@@ -1104,9 +1308,109 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         if (bytes > 0)
             footer += QStringLiteral(" (%1)").arg(formatSize(bytes));
     }
-    if (count > rows)
-        footer += QStringLiteral(" · %1–%2").arg(p.top + 1).arg(qMin(count, p.top + rows));
-    screen.put(x + 1, top + height - 1, Screen::elided(footer, width - 2, false), kDim);
+    return footer;
+}
+
+// The grid: names in columns, read line by line like the window's grid.
+// There is no room for sizes and dates, so the footer has them for the item
+// under the cursor.
+void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int top, int height)
+{
+    p.rowsY = top + 1; // no line of column names
+    const int up = upRows(p);
+    const int items = p.model->rowCount();
+    const int count = items + up;
+    if (p.widthStale) {
+        // The cell is as wide as the longest name wants, within limits. Not
+        // measured over a huge folder on every change.
+        int widest = up ? 3 : 0;
+        for (int row = 0; row < qMin(items, 5000); ++row)
+            widest = qMax(widest, Screen::widthOf(p.model->fileName(p.model->index(row, 0))) + 1);
+        p.widestName = widest;
+        p.widthStale = false;
+    }
+    const int inner = qMax(1, width - 2);
+    // One very long name doesn't get to make it a single column: a cell is
+    // at most 28 wide, and half the pane (long names are cut in the middle).
+    const int wanted = qMin(qMin(inner, qMax(12, inner / 2)), qBound(12, p.widestName + 5, 28));
+    p.cols = qMax(1, inner / wanted);
+    p.cellWidth = qMax(1, inner / p.cols); // what is left over is shared out
+    const int nameWidth = qMax(1, p.cellWidth - 5); // a mark for selected, the name, a space, an extension's mark, a gap
+
+    const int lines = qMax(1, height - 2); // heading, footer
+    p.rowsShown = lines;
+    p.cursor = count == 0 ? 0 : qBound(0, p.cursor, count - 1);
+    const int totalLines = (count + p.cols - 1) / p.cols;
+    const int cursorLine = p.cursor / p.cols;
+    if (cursorLine < p.top)
+        p.top = cursorLine;
+    if (cursorLine >= p.top + lines)
+        p.top = cursorLine - lines + 1;
+    p.top = qBound(0, p.top, qMax(0, totalLines - lines));
+
+    for (int line = 0; line < lines; ++line) {
+        const int y = p.rowsY + line;
+        for (int col = 0; col < p.cols; ++col) {
+            const int at = (p.top + line) * p.cols + col;
+            if (at >= count)
+                break;
+            const int cx = x + 1 + col * p.cellWidth;
+            const bool cursor = at == p.cursor;
+            const Paper paper = cursor ? (active ? Paper::Cursor : Paper::CursorIdle) : Paper::Normal;
+            if (up == 1 && at == 0) {
+                const Style style{Ink::Folder, paper, true};
+                screen.fill(cx, y, p.cellWidth - 1, 1, style);
+                screen.put(cx + 1, y, QStringLiteral("../"), style);
+                continue;
+            }
+            const QModelIndex index0 = p.model->index(at - up, 0);
+            const bool dir = p.model->isDir(index0);
+            const bool selected = p.selected.contains(p.model->filePath(index0));
+            const Style style{selected ? Ink::Selected : dir ? Ink::Folder : Ink::Normal, paper, dir || selected};
+            screen.fill(cx, y, p.cellWidth - 1, 1, style);
+            if (selected)
+                screen.put(cx, y, QStringLiteral("*"), style);
+            QString name = p.model->fileName(index0);
+            if (dir)
+                name += QLatin1Char('/');
+            else if (index0.data(DirectoryModel::SymLinkRole).toBool())
+                name += QLatin1Char('@');
+            screen.put(cx + 1, y, Screen::elided(name, nameWidth), style);
+            const QVariant mark = index0.data(DirectoryModel::BadgeRole);
+            if (mark.isValid() && p.cellWidth >= 8) {
+                const Extensions::Badge badge = mark.value<Extensions::Badge>();
+                Style markStyle = style;
+                markStyle.bold = true;
+                markStyle.ink = markInk(badge);
+                screen.put(cx + 1 + nameWidth + 1, y, badge.text.isEmpty() ? QStringLiteral("•") : badge.text, markStyle, 2);
+            }
+        }
+    }
+    if (items == 0)
+        screen.put(x + 2, p.rowsY + (up ? 1 : 0), p.model->isLoading() ? QStringLiteral("Loading…") : QStringLiteral("Nothing here"), kDim);
+
+    // Footer: the item under the cursor with its size and date, then the counts.
+    QString footer;
+    if (up == 1 && p.cursor == 0 && count > 0) {
+        footer = QStringLiteral("Up to %1").arg(shown(QFileInfo(p.current).path()));
+    } else if (items > 0) {
+        const int row = p.cursor - up;
+        const QModelIndex index0 = p.model->index(row, 0);
+        footer = p.model->fileName(index0);
+        for (int column : {DirectoryModel::SizeColumn, DirectoryModel::ModifiedColumn}) {
+            const QString detail = p.model->index(row, column).data().toString();
+            if (!detail.isEmpty())
+                footer += QStringLiteral(" · ") + detail;
+        }
+    }
+    QString counts = footerText(p);
+    if (totalLines > lines)
+        counts += QStringLiteral(" · lines %1–%2 of %3").arg(p.top + 1).arg(qMin(totalLines, p.top + lines)).arg(totalLines);
+    const int countsWidth = qMin(Screen::widthOf(counts), width - 2);
+    const int y = top + height - 1;
+    if (!footer.isEmpty() && width - 2 - countsWidth - 2 >= 8)
+        screen.put(x + 1, y, Screen::elided(footer, width - 2 - countsWidth - 2), kDim);
+    screen.put(x + width - 1 - countsWidth, y, Screen::elided(counts, countsWidth, false), kDim);
 }
 
 QString App::statusText() const
@@ -1185,21 +1489,49 @@ void App::drawBottom(Screen &screen)
         Key::Code code;
     } keys[] = {{"F1", "Help", Key::F1}, {"F2", "Rename", Key::F2}, {"F3", "View", Key::F3}, {"F4", "Split", Key::F4},
                 {"F5", "Copy", Key::F5}, {"F6", "Move", Key::F6}, {"F7", "New Folder", Key::F7}, {"F8", "Trash", Key::F8},
-                {"F10", "Quit", Key::F10}};
+                {"F9", "Grid", Key::F9}, {"F10", "Quit", Key::F10}, {"F12", "Terminal", Key::F12}};
+    bool tight = false; // short words, where the line is too narrow for the usual ones
+    auto labelOf = [this, &tight](Key::Code code, const char *what) {
+        if (code == Key::F4 && m_split)
+            return tight ? QStringLiteral("One") : QStringLiteral("One Pane");
+        if (tight && code == Key::F7)
+            return QStringLiteral("Folder");
+        if (tight && code == Key::F12 && !m_inShell)
+            return QStringLiteral("Term");
+        if (code == Key::F9 && pane().grid)
+            return QStringLiteral("List");
+        if (code == Key::F12 && m_inShell)
+            return QStringLiteral("Files");
+        return QString::fromLatin1(what);
+    };
+    // Two spaces between the words where they all fit, else one, else
+    // shorter words too.
+    int all = 1;
+    int count = 0;
+    for (const auto &entry : keys) {
+        if (m_split || (entry.code != Key::F5 && entry.code != Key::F6)) {
+            all += int(qstrlen(entry.key)) + 1 + int(labelOf(entry.code, entry.what).size()) + 2;
+            ++count;
+        }
+    }
+    const int gap = all - 2 < w ? 2 : 1;
+    tight = all - 2 - (count - 1) >= w;
     int x = 1;
     for (const auto &entry : keys) {
+        if (m_inShell && entry.code != Key::F12)
+            continue; // every other key is the shell's now
         // With one pane there is no other pane to copy to or go to.
         if (!m_split && (entry.code == Key::F5 || entry.code == Key::F6))
             continue;
         const QString key = QString::fromLatin1(entry.key);
-        const QString what = entry.code == Key::F4 && m_split ? QStringLiteral("One Pane") : QString::fromLatin1(entry.what);
+        const QString what = labelOf(entry.code, entry.what);
         if (x + key.size() + 1 + what.size() >= w)
             break;
         const int from = x;
         x += screen.put(x, keysY, key, {Ink::Accent, Paper::Bar, true});
         x += screen.put(x, keysY, QLatin1Char(' ') + what, kBar);
         m_keySpots.append({from, x, Key::of(entry.code)}); // clickable
-        x += 2;
+        x += gap;
     }
 }
 
@@ -1211,10 +1543,14 @@ void App::drawHelp(Screen &screen)
         "  Up, Down, PgUp, PgDn, Home, End   move",
         "  Enter, Right                      open the folder, or the file with its app",
         "  F3                                read a text file here in the terminal",
+        "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
+        "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it)",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",
         "  F4                                a second pane beside this one, or back to one",
         "  Tab                               the other pane",
+        "  F9                                this pane as a grid of names, or as a list",
+        "                                    (in a grid the arrows move four ways; Enter opens, Backspace goes up)",
         "  g  or  Ctrl+L                     go to a folder (\"trash\" for the Trash)",
         "  ~                                 home",
         "  .                                 show or hide hidden files",

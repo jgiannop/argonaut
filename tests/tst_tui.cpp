@@ -3,6 +3,7 @@
 // The interface draws into a grid of cells, so no terminal is needed.
 
 #include "App.h"
+#include "Shell.h"
 #include "FileOperations.h"
 #include "Screen.h"
 #include "TestSupport.h"
@@ -11,6 +12,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -45,6 +47,9 @@ private slots:
     void mouseClicksAndDoubleClicks();
     void opensFiles();
     void startsWithOnePane();
+    void gridView();
+    void shellInTheFolder();
+    void shellPanel();
 
 private:
     QString make(const QString &relative, const QByteArray &content = "x");
@@ -118,6 +123,7 @@ void TestTui::init()
     make(".secret");
     QDir(Trash::homeFilesDir()).removeRecursively();
     QDir(QFileInfo(Trash::homeFilesDir()).absolutePath() + "/info").removeRecursively();
+    QSettings().remove("tui"); // every test starts with lists
     app = std::make_unique<App>(m_left, m_right);
     settle();
 }
@@ -516,7 +522,8 @@ void TestTui::startsWithOnePane()
     QCOMPARE(app->folder(1), m_left);
     text = screen();
     QVERIFY(text.contains(QChar(0x2502)));
-    QVERIFY(text.contains("F4 One Pane"));
+    QVERIFY(text.contains("F4 One")); // "One Pane" where there is room
+    QVERIFY(screen(140, 24).contains("F4 One Pane"));
     keys({Key::of(Key::Tab)});
     QCOMPARE(app->activePane(), 1);
     app->selectPath(m_left + "/Documents");
@@ -538,6 +545,254 @@ void TestTui::startsWithOnePane()
     settle();
     QCOMPARE(app->folder(0), m_left);
     QCOMPARE(app->folder(1), m_left + "/Documents");
+}
+
+void TestTui::gridView()
+{
+    for (int i = 0; i < 9; ++i)
+        make(QStringLiteral("file%1.txt").arg(i));
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(!app->isGrid(0));
+    QVERIFY(screen().contains("F9 Grid"));
+    keys({Key::of(Key::F9)});
+    QVERIFY(app->isGrid(0));
+    const QString text = screen();
+    const QStringList lines = text.split('\n');
+    // Names side by side, folders first, no column names; the cursor's item
+    // has its size at the bottom.
+    QVERIFY2(lines.at(2).contains("../") && lines.at(2).contains("Documents/") && lines.at(2).contains("alpha.txt"),
+             qPrintable(lines.at(2)));
+    QVERIFY(!text.contains("Modified"));
+    QVERIFY(text.contains("F9 List") && text.contains("F10 Quit"));
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    QVERIFY2(lines.at(lines.size() - 3).contains("Documents") && lines.at(lines.size() - 3).contains("12 items"),
+             qPrintable(lines.at(lines.size() - 3)));
+
+    // Right and left walk along the line; down and up go a line.
+    keys({Key::of(Key::Right)});
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    QVERIFY(screen().contains("5 bytes"));
+    QCOMPARE(app->folder(0), m_left); // Right did not open anything
+    keys({Key::of(Key::Left)});
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    QCOMPARE(app->folder(0), m_left); // and Left did not go up
+    const QString before = app->cursorPath();
+    keys({Key::of(Key::Down)});
+    QVERIFY(app->cursorPath() != before);
+    keys({Key::of(Key::Up)});
+    QCOMPARE(app->cursorPath(), before);
+    keys({Key::of(Key::Up), Key::of(Key::Up)}); // the top line: stays in its column
+    QCOMPARE(app->cursorPath(), before);
+    keys({Key::of(Key::End)});
+    QCOMPARE(app->cursorPath(), m_left + "/file8.txt");
+    keys({Key::of(Key::Down)});
+    QCOMPARE(app->cursorPath(), m_left + "/file8.txt");
+
+    // A click lands on the item under it, a double click opens a folder,
+    // a click beside the last column or below the items on nothing.
+    Screen s(100, 24);
+    app->render(s);
+    const int x = int(s.line(2).indexOf("alpha.txt"));
+    QVERIFY(x > 0);
+    app->mouse({Tui::Mouse::Press, x + 2, 2});
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    app->mouse({Tui::Mouse::Press, x + 2, 15});
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    app->mouse({Tui::Mouse::RightPress, x + 2, 2});
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
+    keys({Key::of(Key::Escape)});
+    const int dx = int(s.line(2).indexOf("Documents/"));
+    app->mouse({Tui::Mouse::Press, dx + 1, 2});
+    app->mouse({Tui::Mouse::Press, dx + 1, 2});
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    QVERIFY(screen().contains("inside.txt"));
+    keys({Key::of(Key::Backspace)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    QCOMPARE(app->cursorPath(), m_left + "/Documents"); // where we came out of
+
+    // Commands act on the item under the cursor as in the list.
+    app->selectPath(m_left + "/file3.txt");
+    runJob([this] { keys({Key::of(Key::F8)}); });
+    QVERIFY(!exists(m_left + "/file3.txt"));
+    QVERIFY(exists(m_left + "/file2.txt") && exists(m_left + "/file4.txt"));
+    runJob([this] { keys({Key::control('z')}); });
+    QVERIFY(exists(m_left + "/file3.txt"));
+
+    // More lines than fit: the cursor stays in sight, the wheel scrolls.
+    for (int i = 0; i < 300; ++i)
+        make(QStringLiteral("more%1.txt").arg(i, 3, 10, QChar('0')));
+    keys({Key::control('r')});
+    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("312 items"), 10000);
+    keys({Key::of(Key::End)});
+    QVERIFY(screen().contains("more299.txt"));
+    QVERIFY(!screen().contains("alpha.txt"));
+    keys({Key::of(Key::PageUp), Key::of(Key::PageDown)});
+    QCOMPARE(app->cursorPath(), m_left + "/more299.txt");
+    keys({Key::of(Key::Home)});
+    QVERIFY(screen().contains("../"));
+    app->mouse({Tui::Mouse::WheelDown, 5, 5});
+    QVERIFY(!screen().contains("../"));
+    QVERIFY(!app->cursorPath().isEmpty());
+
+    // The view is remembered, for each pane.
+    app = std::make_unique<App>(m_left, m_right);
+    settle();
+    QVERIFY(app->isGrid(0));
+    QVERIFY(!app->isGrid(1));
+    const QString both = screen();
+    QVERIFY(both.contains("Size")); // the right pane is still a list
+    keys({Key::of(Key::F9)});
+    QVERIFY(!app->isGrid(0));
+    QVERIFY(screen().contains("F9 Grid"));
+}
+
+void TestTui::shellInTheFolder()
+{
+    // Where there is no shell panel (no libvterm), F12 or Ctrl+` asks for a
+    // shell in the pane's folder to take the terminal; the interface itself
+    // starts nothing.
+    app->setEmbeddedShell(false);
+    QSignalSpy shell(app.get(), &App::shellRequested);
+    keys({Key::control('`')});
+    QCOMPARE(shell.size(), 1);
+    QCOMPARE(shell.first().first().toString(), m_left);
+    // Not while a name is being typed.
+    keys({Key::of(Key::F7), Key::control('`'), Key::of(Key::Escape)});
+    QCOMPARE(shell.size(), 1);
+
+    // Back from the shell: what it made is there, and the pane is where the
+    // shell ended up. The other pane stays.
+    make("made-in-shell.txt");
+    app->shellClosed(m_left);
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("made-in-shell.txt"), 10000);
+    app->shellClosed(m_left + "/Documents");
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    QCOMPARE(app->folder(1), m_right);
+    keys({Key::of(Key::Left)}); // Alt+Left would go back; plain Left goes up
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    // A folder that is gone, or none: it stays.
+    app->shellClosed(m_left + "/no-such-folder");
+    app->shellClosed(QString());
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    // In a place, the shell starts at home.
+    QDir().mkpath(Trash::homeFilesDir());
+    keys({Key::character('g'), Key::control('u')});
+    type("trash");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), Trash::homeFilesDir());
+    keys({Key::control('`')});
+    QCOMPARE(shell.size(), 2);
+    QCOMPARE(shell.last().first().toString(), QDir::homePath());
+    const QString trash = app->folder(0);
+    app->shellClosed(m_left); // and the Trash stays open
+    settle();
+    QCOMPARE(app->folder(0), trash);
+}
+
+void TestTui::shellPanel()
+{
+    if (!Tui::Shell::available())
+        QSKIP("built without libvterm: no shell panel");
+    qputenv("SHELL", "/bin/sh");
+    qputenv("PS1", "ready> ");
+    QSignalSpy outside(app.get(), &App::shellRequested);
+    const QString before = screen();
+    QVERIFY(before.contains("F12 Term")); // "Terminal" where there is room
+    QVERIFY(!before.contains("ready>"));
+
+    // F12: a shell under the panes, in the pane's folder, and typing goes to it.
+    keys({Key::of(Key::F12)});
+    QVERIFY(app->isShellOpen());
+    QVERIFY(app->isInShell());
+    QCOMPARE(outside.size(), 0); // the terminal isn't handed over
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("ready>"), 10000);
+    QStringList lines = screen().split('\n');
+    int title = -1;
+    for (int y = 0; y < lines.size(); ++y) {
+        if (lines.at(y).contains("Terminal") && lines.at(y).contains("left"))
+            title = y;
+    }
+    QVERIFY2(title >= 10 && title <= 12, qPrintable(screen())); // the lower half of 24 lines
+    QVERIFY(lines.at(1).contains("left") && lines.at(4).contains("Documents/")); // the files are still above
+    QVERIFY(lines.last().contains("F12 Files") && !lines.last().contains("F8 Trash"));
+    Screen s(100, 24);
+    app->render(s);
+    QVERIFY(s.cursorY() > title); // the text cursor is the shell's
+
+    // What is typed is the shell's: "q" doesn't quit, F8 and Delete trash nothing.
+    QSignalSpy quit(app.get(), &App::quitRequested);
+    keys({Key::of(Key::F8), Key::of(Key::Delete), Key::character('q'), Key::control('u')}); // typed, then wiped
+    type("echo sum-$((40+2)) > made.txt; cat made.txt");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("sum-42"), 10000);
+    QCOMPARE(quit.size(), 0);
+    QVERIFY(exists(m_left + "/alpha.txt") && exists(m_left + "/Documents"));
+    QTRY_VERIFY_WITH_TIMEOUT(exists(m_left + "/made.txt"), 10000); // it ran in the pane's folder
+
+    // Colours are the shell's own.
+    type("printf '\\033[31mred-text\\033[0m\\n'");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("red-text"), 10000);
+    app->render(s);
+    bool red = false;
+    for (int y = 0; y < s.height(); ++y) {
+        const int x = int(s.line(y).indexOf("red-text"));
+        if (x >= 0 && s.at(x, y).style.raw && s.at(x, y).style.fg == 1)
+            red = true;
+    }
+    QVERIFY(red);
+
+    // Ctrl+Up: the files come to where the shell is.
+    type("cd Documents");
+    keys({Key::of(Key::Enter)});
+    Key ctrlUp = Key::of(Key::Up);
+    ctrlUp.ctrl = true;
+    QTRY_VERIFY_WITH_TIMEOUT((keys({ctrlUp}), app->folder(0) == m_left + "/Documents"), 10000);
+    settle();
+    QVERIFY(app->isInShell());
+
+    // F12 again: back to the files, the panel stays. Keys are the files' again.
+    keys({Key::of(Key::F12)});
+    QVERIFY(app->isShellOpen());
+    QVERIFY(!app->isInShell());
+    QVERIFY(screen().contains("F8 Trash") && screen().contains("ready>"));
+    keys({Key::of(Key::Backspace)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    QVERIFY(screen().contains("made.txt"));
+    // A click on the panel goes into it, a click on a pane comes back.
+    app->mouse({Tui::Mouse::Press, 10, title + 2});
+    QVERIFY(app->isInShell());
+    app->mouse({Tui::Mouse::Press, 10, 4});
+    QVERIFY(!app->isInShell());
+    QCOMPARE(app->folder(0), m_left);
+
+    keys({Key::of(Key::F12)});
+    QVERIFY(app->isInShell());
+
+    // exit: the panel is gone and the files have the whole height again.
+    type("exit");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(!app->isShellOpen(), 10000);
+    QVERIFY(!app->isInShell());
+    QVERIFY(!screen().contains("ready>"));
+    QVERIFY(screen(140, 24).contains("F12 Terminal"));
+
+    // Quitting with the shell open ends it.
+    keys({Key::of(Key::F12)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("ready>"), 10000);
+    app.reset();
+    app = std::make_unique<App>(m_left, m_right);
+    settle();
+    QVERIFY(!app->isShellOpen());
 }
 
 void TestTui::quitWaitsForTheWork()
@@ -654,7 +909,7 @@ void TestTui::mouseClicksAndDoubleClicks()
     // The key line: a click on "F7 New Folder" is F7.
     const QString text = screen();
     const QString last = text.split('\n').last();
-    const int at = int(last.indexOf("New Folder"));
+    const int at = int(last.indexOf("F7 ")) + 3; // "New Folder", or "Folder" where the line is narrow
     QVERIFY(at > 0);
     app->mouse({Mouse::Press, at + 2, 23});
     QVERIFY(app->isAsking());

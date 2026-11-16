@@ -3,6 +3,7 @@
 // ncurses defines macros (timeout, border, clear…) that collide with Qt, so
 // it is included after everything else, and only here.
 #include <clocale>
+#include <cstdio>
 #include <cwchar>
 
 #define NCURSES_WIDECHAR 1
@@ -64,6 +65,30 @@ Terminal::Terminal()
     ::keypad(stdscr, TRUE);
     ::nodelay(stdscr, TRUE);
     ::set_escdelay(25); // Esc on its own is felt at once
+    // Arrows, Home and End with Shift, Alt or Ctrl, as xterm-like terminals
+    // send them ("ESC [ 1 ; 5 A" is Ctrl+Up). ncurses knows most of them
+    // under codes of its own; the rest are given one here.
+    {
+        static const struct { char letter; Key::Code code; } arrows[] = {{'A', Key::Up},   {'B', Key::Down}, {'C', Key::Right},
+                                                                         {'D', Key::Left}, {'H', Key::Home}, {'F', Key::End}};
+        int next = KEY_MAX + 1000;
+        for (int modifier = 2; modifier <= 7; ++modifier) {
+            for (const auto &arrow : arrows) {
+                char sequence[8];
+                std::snprintf(sequence, sizeof sequence, "\033[1;%d%c", modifier, arrow.letter);
+                int code = ::key_defined(sequence);
+                if (code <= 0) {
+                    code = next++;
+                    ::define_key(sequence, code);
+                }
+                Key key = Key::of(arrow.code);
+                key.shift = (modifier - 1) & 1;
+                key.alt = (modifier - 1) & 2;
+                key.ctrl = (modifier - 1) & 4;
+                m_modified.insert(code, key);
+            }
+        }
+    }
     ::curs_set(0);
     // The mouse: presses and the wheel. Clicks are reported at once (no
     // waiting to see whether a second one follows: the interface tells a
@@ -117,6 +142,33 @@ int Terminal::pairFor(Ink ink, Paper paper)
     return pair;
 }
 
+int Terminal::rawPair(int fg, int bg)
+{
+    if (!m_colors)
+        return 0;
+    if (fg >= COLORS)
+        fg = -1;
+    if (bg >= COLORS)
+        bg = -1;
+    if (fg < 0 && bg < 0)
+        return 0;
+    const int id = (fg + 1) * 300 + (bg + 1);
+    auto found = m_rawPairs.constFind(id);
+    if (found != m_rawPairs.constEnd())
+        return *found;
+    int pair = 0;
+    if (m_nextPair < COLOR_PAIRS) {
+        pair = m_nextPair++;
+#if defined(NCURSES_EXT_COLORS) && NCURSES_EXT_COLORS
+        ::init_extended_pair(pair, fg, bg);
+#else
+        ::init_pair(short(pair), short(fg), short(bg));
+#endif
+    }
+    m_rawPairs.insert(id, pair);
+    return pair;
+}
+
 void Terminal::show(const Screen &screen)
 {
     ::erase();
@@ -130,9 +182,23 @@ void Terminal::show(const Screen &screen)
             attr_t attributes = cell.style.bold ? A_BOLD : A_NORMAL;
             if (!m_colors && (cell.style.paper == Paper::Cursor || cell.style.paper == Paper::Bar))
                 attributes |= A_REVERSE;
+            int pair;
+            if (cell.style.raw) {
+                pair = rawPair(cell.style.fg, cell.style.bg);
+                if (cell.style.underline)
+                    attributes |= A_UNDERLINE;
+                if (cell.style.reverse)
+                    attributes |= A_REVERSE;
+            } else {
+                pair = pairFor(cell.style.ink, cell.style.paper);
+            }
             const wchar_t text[2] = {wchar_t(cell.ch), L'\0'};
             cchar_t out;
-            ::setcchar(&out, text, attributes, short(pairFor(cell.style.ink, cell.style.paper)), nullptr);
+#if defined(NCURSES_EXT_COLORS) && NCURSES_EXT_COLORS
+            ::setcchar(&out, text, attributes, short(qMin(pair, 32767)), &pair); // more pairs than a short holds
+#else
+            ::setcchar(&out, text, attributes, short(pair), nullptr);
+#endif
             // The bottom-right cell can't be written without scrolling: skip it.
             if (y == LINES - 1 && x == COLS - 1)
                 continue;
@@ -228,6 +294,8 @@ QList<Key> Terminal::readKeys(bool *resized)
             default:
                 if (ch >= KEY_F(1) && ch <= KEY_F(12))
                     key.code = Key::Code(Key::F1 + int(ch - KEY_F(1)));
+                else if (m_modified.contains(int(ch)))
+                    key = m_modified.value(int(ch));
                 else
                     continue; // a key we have no use for
             }
