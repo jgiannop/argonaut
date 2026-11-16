@@ -65,6 +65,8 @@ struct Command
     QString askText;            // what the field starts with
     bool askMultiline = false;  // several lines
     bool onFolder = false;      // for the open folder (a right-click on empty space), not for items
+    QString menu;               // "file", "edit", "view" or "go": in that menu of the menu bar (and so in the
+                                // command palette) instead of the right-click menu; it is about no item
     enum Kind { Any, Files, Folders } kind = Any;
     bool multiple = true;       // false: exactly one item
     QStringList types;          // each item's type must match one ("image/*", "text/plain"); empty: any
@@ -81,6 +83,26 @@ struct PreviewReply
     bool monospace = false; // Text: in a fixed-width font
     QString image;         // Image: a picture file the extension wrote
     QString note;          // one line under the preview ("3 sheets")
+    // A result ("show") can have a name, so the extension can replace it
+    // while it is shown (a dashboard that updates) and is told when it is
+    // no longer shown.
+    QString extension;     // show: the extension's id
+    QString resultId;      // show: its "id"; empty: a result shown once
+    bool update = false;   // show: only replaces that result while it is shown; never opens the pane
+};
+
+// How the window looks where a named result is shown, so a picture an
+// extension draws can match: colours as "#rrggbb", none of them translucent.
+struct ResultLook
+{
+    bool dark = false;
+    QString window;  // the background the result is shown on
+    QString surface; // a panel on it (the sidebar's colour)
+    QString text;
+    QString dim;     // secondary text
+    QString accent;
+    QString border;
+    QString font;    // the family the window's text is in
 };
 
 // A list of files an extension keeps (Git: the changed files), shown in the
@@ -162,11 +184,20 @@ public:
     // `folder` may be empty (Recent, Starred): commands that aren't about a
     // folder still apply.
     QList<Command> commands(const QString &folder, const QList<Item> &selection) const;
+    // The commands that asked for a place in the menu bar: `menu` is "file",
+    // "edit", "view" or "go". They aren't in the right-click menu.
+    QList<Command> menuCommands(const QString &menu) const;
     // Tells the extension to do it. Not for a command that asks first until
     // the user said yes. `input` is the text a command that `asks` was given.
     void invoke(const Command &command, const QString &folder, const QStringList &selection,
                 const QString &input = QString());
     QString nameOf(const QString &id) const;
+    // A named result of `extension` is on screen now (with room for
+    // `pixels`, in a window that looks like `look`), or no longer is. The
+    // extension is told: {"type":"result","id":…,"shown":…,"width":…,
+    // "height":…,"dark":…,"colors":{…},"font":…}.
+    void resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels = QSize(),
+                     const ResultLook &look = ResultLook());
 
     // Previews: true if a running extension said it previews this type.
     // requestPreview() asks it and returns the request's number (0: nobody

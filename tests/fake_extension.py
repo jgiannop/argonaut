@@ -21,6 +21,10 @@ for line in sys.stdin:
              "ask": {"label": "Say what:", "text": "default"}},
             {"id": "showme", "label": "Show Me", "target": "folder", "group": "Fake"},
             {"id": "listme", "label": "List Me", "target": "folder", "group": "Fake"},
+            {"id": "live", "label": "Live", "target": "folder", "group": "Fake"},
+            {"id": "late", "label": "Late", "target": "folder", "group": "Fake"},
+            {"id": "inmenu", "label": "In The & Menu", "menu": "view"},
+            {"id": "nomenu", "label": "In No Menu", "menu": "tools"},
             {"id": "", "label": "No id"},
             {"id": "nolabel"}]})
     if m.get("type") == "hello":
@@ -50,8 +54,21 @@ for line in sys.stdin:
         else:
             reply.update(kind="text", text="FAKE PREVIEW of " + name + " as " + m.get("mime", "") , monospace=True)
         say(reply)
+    if m.get("type") == "result":
+        # A named result is on screen (the answer: a new version made for
+        # the room there is) or no longer is. Written down for the tests.
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "results"), "a") as f:
+            f.write("%s %s\n" % (m.get("id"), "shown" if m.get("shown") else "hidden"))
+        if m.get("shown"):
+            say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
+                 "text": "live 2 for %dx%d %s" % (m.get("width", 0), m.get("height", 0), "dark" if m.get("dark") else "light")
+                 + " " + ",".join(sorted(m.get("colors", {}))) + " font=" + ("yes" if m.get("font") else "no")})
     if m.get("type") == "invoke":
         sel = m.get("selection", [])
+        if m.get("command") == "live":
+            say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1"})
+        if m.get("command") == "late":
+            say({"type": "show", "id": "live1", "update": True, "title": "Live", "kind": "text", "text": "live 3, too late"})
         if m.get("command") == "listme":
             say({"type": "listing", "id": "my list/1", "title": "Fake\nlist", "folder": folder, "previews": True,
                  "files": [folder + "/a.txt", folder + "/missing.txt", "relative.txt", folder + "/sub/../b.txt"]})

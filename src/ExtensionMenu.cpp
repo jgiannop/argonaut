@@ -73,6 +73,31 @@ int add(QMenu *menu, QWidget *window, const QString &folder, const QList<Extensi
     return int(commands.size());
 }
 
+void addToMenuBar(QMenu *menu, QWidget *window, const QString &which, const QString &folder)
+{
+    static const char *const mark = "argonautExtensionCommand";
+    const QList<QAction *> old = menu->actions();
+    for (QAction *action : old) {
+        if (action->property(mark).toBool()) {
+            menu->removeAction(action);
+            action->deleteLater();
+        }
+    }
+    const QList<Extensions::Command> commands = Extensions::Host::instance()->menuCommands(which);
+    if (commands.isEmpty())
+        return;
+    menu->addSeparator()->setProperty(mark, true);
+    for (const Extensions::Command &command : commands) {
+        QAction *action = menu->addAction(QString(command.label).replace(QLatin1Char('&'), QStringLiteral("&&")));
+        action->setProperty(mark, true);
+        if (command.checked) {
+            action->setCheckable(true);
+            action->setChecked(true);
+        }
+        QObject::connect(action, &QAction::triggered, window, [window, command, folder] { run(window, command, folder, {}); });
+    }
+}
+
 void flatten(QMenu *menu)
 {
     const QList<QAction *> actions = menu->actions();

@@ -50,6 +50,9 @@ if(TARGET argonaut-git-extension)
     target_compile_definitions(tst_extensions PRIVATE GIT_EXTENSION_FOLDER="${CMAKE_BINARY_DIR}/extensions"
         FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
     add_dependencies(tst_extensions argonaut-git-extension argonaut-desktop-extension argonaut-preview-extension)
+    if(TARGET argonaut-dashboard-extension)
+        add_dependencies(tst_extensions argonaut-dashboard-extension)
+    endif()
 endif()
 
 # Places, bookmarks, other programs.

@@ -19,6 +19,11 @@ namespace ExtensionMenu {
 // and text fields are shown over `window`.
 int add(QMenu *menu, QWidget *window, const QString &folder, const QList<Extensions::Item> &selection);
 
+// The commands extensions want in the menu bar's `which` menu ("view"), put
+// at the end of `menu` after a separator. What an earlier call added is
+// taken out first, so it can be called every time the menu opens.
+void addToMenuBar(QMenu *menu, QWidget *window, const QString &which, const QString &folder);
+
 // A menu that holds nothing but one submenu shows that submenu's entries
 // itself (the branch button's menu: "Git ▸ …" would be one hover too many).
 void flatten(QMenu *menu);

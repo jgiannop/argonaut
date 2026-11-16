@@ -572,9 +572,14 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 
     add("extensions", tr("Extensions"), tr(R"(
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
-<b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. Three come
+<b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Send by Email</b>, <b>Set as Background</b> and <b>Document Preview</b>.</p>
+<b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b> and <b>System Dashboard</b>.</p>
+<p><b>System Dashboard</b>: choose <b>View → System Dashboard</b>, or find it in the command palette
+([[Ctrl+Shift+P]]). The preview
+pane shows how busy the computer is: the processor, the memory and the disk the folder is on as gauges, what
+the system is, and the network's download and upload. It updates every two seconds until you select a file
+or close the pane.</p>
 <p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
 Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
 (.xlsx, .ods: the first sheet as a table).</p>

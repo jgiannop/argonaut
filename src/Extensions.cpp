@@ -455,6 +455,14 @@ QList<Command> Host::readCommands(const Running *ext, const QJsonValue &value, i
             c.askMultiline = ask.value(QLatin1String("multiline")).toBool();
         }
         c.onFolder = o.value(QLatin1String("target")).toString() == QLatin1String("folder");
+        if (o.contains(QLatin1String("menu"))) {
+            // A place in the menu bar. One we don't have: the command is
+            // left out, not put somewhere its extension didn't ask for.
+            c.menu = o.value(QLatin1String("menu")).toString();
+            static const QStringList known{QStringLiteral("file"), QStringLiteral("edit"), QStringLiteral("view"), QStringLiteral("go")};
+            if (!known.contains(c.menu))
+                continue;
+        }
         const QString kind = o.value(QLatin1String("kind")).toString();
         c.kind = kind == QLatin1String("files") ? Command::Files
                  : kind == QLatin1String("folders") ? Command::Folders : Command::Any;
@@ -484,6 +492,8 @@ QList<Command> Host::commands(const QString &folder, const QList<Item> &selectio
     QList<Command> out;
     const QString prefix = folder.endsWith(QLatin1Char('/')) ? folder : folder + QLatin1Char('/');
     auto fits = [&](const Command &c) {
+        if (!c.menu.isEmpty())
+            return false; // in the menu bar, not here
         if (c.onFolder)
             return selection.isEmpty() && !folder.isEmpty();
         if (selection.isEmpty() || (!c.multiple && selection.size() != 1))
@@ -512,6 +522,20 @@ QList<Command> Host::commands(const QString &folder, const QList<Item> &selectio
             continue;
         for (const Command &c : data->commands) {
             if (fits(c))
+                out.append(c);
+        }
+    }
+    return out;
+}
+
+QList<Command> Host::menuCommands(const QString &menu) const
+{
+    QList<Command> out;
+    for (const Running *ext : m_running) {
+        if (!ext->process)
+            continue;
+        for (const Command &c : ext->commands) {
+            if (c.menu == menu)
                 out.append(c);
         }
     }
@@ -708,6 +732,35 @@ void Host::stop(Running *ext)
     process->deleteLater();
 }
 
+void Host::resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels, const ResultLook &look)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension)
+            continue;
+        QJsonObject message{{QStringLiteral("type"), QStringLiteral("result")},
+                            {QStringLiteral("id"), id},
+                            {QStringLiteral("shown"), shown}};
+        if (shown) {
+            message.insert(QStringLiteral("width"), pixels.width());
+            message.insert(QStringLiteral("height"), pixels.height());
+            message.insert(QStringLiteral("dark"), look.dark);
+            QJsonObject colors;
+            const QPair<QString, QString> named[] = {{QStringLiteral("window"), look.window},   {QStringLiteral("surface"), look.surface},
+                                                     {QStringLiteral("text"), look.text},       {QStringLiteral("dim"), look.dim},
+                                                     {QStringLiteral("accent"), look.accent},   {QStringLiteral("border"), look.border}};
+            for (const auto &color : named) {
+                if (!color.second.isEmpty())
+                    colors.insert(color.first, color.second);
+            }
+            if (!colors.isEmpty())
+                message.insert(QStringLiteral("colors"), colors);
+            if (!look.font.isEmpty())
+                message.insert(QStringLiteral("font"), look.font);
+        }
+        send(ext, message);
+    }
+}
+
 void Host::send(Running *ext, const QJsonObject &message)
 {
     if (!ext->process)
@@ -801,7 +854,10 @@ void Host::handle(Running *ext, const QByteArray &line)
                 emit showListingRequested(listingPath(ext->manifest.id, id));
             return;
         }
-        const PreviewReply content = readContent(message);
+        PreviewReply content = readContent(message);
+        content.extension = ext->manifest.id;
+        content.resultId = message.value(QLatin1String("id")).toString().left(64);
+        content.update = !content.resultId.isEmpty() && message.value(QLatin1String("update")).toBool();
         if (content.kind != PreviewReply::None)
             emit showRequested(ext->manifest.name,
                                tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars)

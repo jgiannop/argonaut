@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QImage>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -72,6 +73,7 @@ private slots:
     void invokeTellsTheExtension();
     void previewsAreAskedAndChecked();
     void documentPreview();
+    void systemDashboard();
     void gitThroughTheModel();
     void gitStageAndUnstage();
     void gitChangesCommitAndBranches();
@@ -323,9 +325,15 @@ void TestExtensions::commandsFitTheSelection()
     QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
     QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
     QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
-    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme"})); // the folder's empty space
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme", "live", "late"})); // the folder's empty space
     QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
     QVERIFY(ids(QString(), {}).isEmpty());
+    // A command for the menu bar is in its menu and nowhere else; one for a
+    // menu there isn't is nowhere.
+    QCOMPARE(int(host.menuCommands("view").size()), 1);
+    QCOMPARE(host.menuCommands("view").first().id, QStringLiteral("inmenu"));
+    QVERIFY(host.menuCommands("file").isEmpty());
+    QVERIFY(host.menuCommands("tools").isEmpty());
     // A command limited to items can't reach outside its folder.
     const Extensions::Item outside{QFileInfo(m_dir).path() + "/outside.txt", "text/plain", false};
     QVERIFY(!ids(m_dir, {outside}).contains("only-a"));
@@ -427,6 +435,76 @@ void TestExtensions::previewsAreAskedAndChecked()
 
 // The Document Preview extension that comes with Argonaut: Markdown as it
 // is, CSV and spreadsheets as a table. Spreadsheets go through the sandbox.
+// The System Dashboard extension: its command answers with a picture as a
+// named result; told the room there is, it draws for that and keeps
+// drawing; told the result is gone, it stops.
+void TestExtensions::systemDashboard()
+{
+    Host host;
+    bool there = false;
+    for (const Extensions::Manifest &m : host.extensions())
+        there = there || m.id == "system-dashboard";
+    if (!there)
+        QSKIP("the System Dashboard extension isn't built here (Linux only)");
+    host.setEnabled("system-dashboard", true);
+    host.watch(m_dir);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("view")) {
+            if (c.extension == "system-dashboard")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QCOMPARE(command.label, QStringLiteral("System Dashboard"));
+    for (const Extensions::Command &c : host.commands(m_dir, {})) // in the View menu, not in the right-click menu
+        QVERIFY(c.extension != "system-dashboard");
+
+    QSignalSpy shown(&host, &Host::showRequested);
+    host.invoke(command, m_dir, {});
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 1, 10000);
+    auto content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Image);
+    QCOMPARE(content.extension, QStringLiteral("system-dashboard"));
+    QCOMPARE(content.resultId, QStringLiteral("dashboard"));
+    QVERIFY(!content.update);
+    QVERIFY(!QImage(content.image).isNull());
+
+    // On screen, 500 pixels wide, in a light window: drawn again for that.
+    Extensions::ResultLook look; // a light theme of our own: its colours are the picture's
+    look.window = "#fdf6e3";
+    look.surface = "#eee8d5";
+    look.text = "#073642";
+    look.dim = "#657b83";
+    look.accent = "#d33682";
+    look.border = "#d6cfba";
+    host.resultShown("system-dashboard", "dashboard", true, QSize(500, 900), look);
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 2, 10000);
+    content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QVERIFY(content.update);
+    QImage image(content.image);
+    QCOMPARE(image.width(), 500);
+    QVERIFY(image.height() <= 900);
+    QCOMPARE(image.pixelColor(2, 2), QColor("#fdf6e3")); // the theme's background
+    bool card = false, accent = false;
+    for (int y = 0; y < image.height(); y += 2) {
+        for (int x = 0; x < image.width(); x += 2) {
+            card = card || image.pixelColor(x, y) == QColor("#eee8d5");
+            accent = accent || image.pixelColor(x, y) == QColor("#d33682");
+        }
+    }
+    QVERIFY(card);   // its panels
+    QVERIFY(accent); // its gauges
+    // And again by itself, while it is shown.
+    QTRY_VERIFY_WITH_TIMEOUT(shown.size() >= 3, 10000);
+    // No longer shown: it stops.
+    host.resultShown("system-dashboard", "dashboard", false);
+    QTest::qWait(300);
+    const int count = int(shown.size());
+    QTest::qWait(2600);
+    QCOMPARE(int(shown.size()), count);
+}
+
 void TestExtensions::documentPreview()
 {
     Host host;

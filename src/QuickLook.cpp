@@ -72,6 +72,10 @@ protected:
 QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     : QWidget(parent), m_thumbnailer(thumbnailer)
 {
+    m_resultTimer = new QTimer(this);
+    m_resultTimer->setSingleShot(true);
+    m_resultTimer->setInterval(200);
+    connect(m_resultTimer, &QTimer::timeout, this, &QuickLook::reportResult);
     setObjectName("quickLook");
     setAttribute(Qt::WA_StyledBackground);
     setFocusPolicy(Qt::NoFocus); // the file view keeps the keyboard
@@ -179,6 +183,7 @@ QSize QuickLook::pictureBox() const
 
 void QuickLook::showItem(const Item &item)
 {
+    closeResult(); // a file takes the pane back
     m_item = item;
     m_title->setText(item.name);
     m_details->setText(item.details);
@@ -299,13 +304,84 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
     return true;
 }
 
-void QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
+bool QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
 {
+    const bool same = !content.resultId.isEmpty() && isVisible() && content.resultId == m_resultId
+                      && content.extension == m_resultExtension;
+    if (same) {
+        // The result on screen, made again: replaced where it is.
+        m_title->setText(title);
+        applyExtension(content);
+        return true;
+    }
+    if (content.update)
+        return false; // for a result that isn't shown (any more)
     clear(); // no file: nothing to open, nothing still loading
     m_title->setText(title);
     m_details->setText(details);
-    if (!applyExtension(content))
+    if (!applyExtension(content)) {
         showInfo(tr("Nothing to show"));
+        return true;
+    }
+    if (!content.resultId.isEmpty()) {
+        m_resultExtension = content.extension;
+        m_resultId = content.resultId;
+        reportResult();
+    }
+    return true;
+}
+
+void QuickLook::reportResult()
+{
+    if (m_resultId.isEmpty())
+        return;
+    // Device pixels a picture can use here (PictureView keeps a margin).
+    const QSize room = (QSizeF(m_pages->size() - QSize(16, 16)) * devicePixelRatioF()).toSize().expandedTo(QSize(64, 64));
+    // The theme, so a picture drawn by the extension belongs in the window.
+    // Translucent tokens are laid over the background: a picture has no "under".
+    const Theme theme = currentTheme();
+    auto solid = [&theme](const QColor &color) {
+        const qreal a = color.alphaF();
+        return QColor::fromRgbF(color.redF() * a + theme.window.redF() * (1 - a), color.greenF() * a + theme.window.greenF() * (1 - a),
+                                color.blueF() * a + theme.window.blueF() * (1 - a))
+            .name();
+    };
+    Extensions::ResultLook look;
+    look.dark = theme.dark;
+    look.window = solid(theme.window);
+    look.surface = solid(theme.sidebar);
+    look.text = solid(theme.fg);
+    look.dim = solid(theme.dimFg);
+    look.accent = solid(theme.accent);
+    look.border = solid(theme.border);
+    look.font = font().family();
+    Extensions::Host::instance()->resultShown(m_resultExtension, m_resultId, true, room, look);
+}
+
+void QuickLook::closeResult()
+{
+    if (m_resultId.isEmpty())
+        return;
+    m_resultTimer->stop();
+    Extensions::Host::instance()->resultShown(m_resultExtension, m_resultId, false);
+    m_resultExtension.clear();
+    m_resultId.clear();
+}
+
+void QuickLook::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    // Another theme: the extension draws its result again in the new colours.
+    if (m_resultTimer && !m_resultId.isEmpty()
+        && (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange))
+        m_resultTimer->start();
+}
+
+void QuickLook::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if (!m_resultId.isEmpty())
+        m_resultTimer->start(); // the extension draws for the new size
 }
 
 QString QuickLook::shownText() const
@@ -317,6 +393,7 @@ QString QuickLook::shownText() const
 
 void QuickLook::clear()
 {
+    closeResult();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();
     m_extensionRequest = 0;
@@ -414,6 +491,7 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 
 void QuickLook::hideEvent(QHideEvent *event)
 {
+    closeResult();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();
     m_extensionRequest = 0;

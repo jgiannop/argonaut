@@ -1,0 +1,9 @@
+{
+    "id": "system-dashboard",
+    "name": "System Dashboard",
+    "description": "View → System Dashboard (or the command palette): processor, memory and disk use as gauges, what the system is, and the network's download and upload, in the preview pane. It updates every two seconds while it is shown.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "exec": ["@ARGONAUT_DASHBOARD_EXTENSION_EXE@"]
+}

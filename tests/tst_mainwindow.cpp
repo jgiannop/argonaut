@@ -105,6 +105,7 @@ private slots:
     void extensionMenusAskAndShow();
     void diffIsColoured();
     void extensionListIsAPlace();
+    void extensionResultStaysLive();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1263,6 +1264,101 @@ void TestMainWindow::terminalBringsTheFilesAlong()
 #else
     QSKIP("no embedded terminal in this build");
 #endif
+}
+
+// A result with a name (a dashboard): its extension is told it is on screen
+// and how much room there is, may replace it while it is, and is told when
+// it no longer is. A late update never takes the pane from a file or opens it.
+void TestMainWindow::extensionResultStaysLive()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    const QString a = make("a.txt");
+    open(m_dir);
+    const QString log = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake/results";
+    QFile::remove(log);
+    auto logged = [&log] {
+        QFile file(log);
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    auto command = [&](const QString &id) {
+        for (const Extensions::Command &c : host->commands(m_dir, {})) {
+            if (c.id == id) {
+                host->invoke(c, m_dir, {});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(command("live"), 10000);
+
+    // A command an extension put in the View menu: there (and so in the
+    // command palette), not in the right-click menu; choosing it tells the
+    // extension, with the open folder.
+    {
+        QMenu *view = w->m_extensionMenus.value("view");
+        QVERIFY(view);
+        auto inView = [&]() -> QAction * {
+            for (QAction *action : view->actions()) {
+                if (action->text() == "In The && Menu")
+                    return action;
+            }
+            return nullptr;
+        };
+        QVERIFY(!inView());
+        emit view->aboutToShow();
+        QVERIFY(inView());
+        emit view->aboutToShow(); // again: once, not twice
+        int times = 0;
+        for (QAction *action : view->actions())
+            times += action->text() == "In The && Menu";
+        QCOMPARE(times, 1);
+        QMenu context;
+        w->addExtensionCommands(&context, {});
+        for (QAction *action : context.actions())
+            QVERIFY(action->text() != "In The && Menu");
+        QSignalSpy told(host, &Extensions::Host::message);
+        inView()->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!told.isEmpty() && told.last().at(1).toString().startsWith("invoked inmenu on 0:"), 10000);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(w->quickLookVisible(), 10000);
+    // Shown; the extension heard so and sent a version made for the room.
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().startsWith("live 2 for "), 10000);
+    QCOMPARE(w->m_quickLook->resultId(), QStringLiteral("live1"));
+    QCOMPARE(logged(), QStringLiteral("live1 shown\n"));
+    QVERIFY(!w->m_quickLook->shownText().contains(" 0x"));
+    // With the theme's colours and font, to draw in.
+    QVERIFY2(w->m_quickLook->shownText().contains("accent,border,dim,surface,text,window font=yes"),
+             qPrintable(w->m_quickLook->shownText()));
+
+    // A file takes the pane: the extension is told, and its next version is dropped.
+    QTRY_VERIFY(w->m_pane->model->indexForPath(a).isValid());
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTRY_COMPARE(w->m_quickLook->path(), a);
+    QVERIFY(w->m_quickLook->resultId().isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(logged(), QStringLiteral("live1 shown\nlive1 hidden\n"), 10000);
+    QSignalSpy said(host, &Extensions::Host::message);
+    QVERIFY(command("late"));
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000); // it has been through
+    QTest::qWait(100);
+    QCOMPARE(w->m_quickLook->path(), a);
+    QVERIFY(!w->m_quickLook->shownText().contains("too late"));
+
+    // Shown again, then the pane closes: told again, and an update doesn't open it.
+    QVERIFY(command("live"));
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().startsWith("live 2 for "), 10000);
+    w->hideQuickLook();
+    QVERIFY(!w->quickLookVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("live1 shown\nlive1 hidden\n"), 10000);
+    said.clear();
+    QVERIFY(command("late"));
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 10000);
+    QTest::qWait(100);
+    QVERIFY(!w->quickLookVisible());
+    host->setEnabled("fake", false);
 }
 
 // Extensions' commands in the menu: submenus, a tick, the text a command

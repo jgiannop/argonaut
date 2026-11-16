@@ -289,6 +289,8 @@ private:
     // Right-click extras: extensions' commands, Scripts ▸.
     void addExtensionCommands(QMenu *menu, const QStringList &selection);
     void showExtensionInfoMenu(const QPoint &globalPos);
+    void refreshExtensionMenus(); // the commands extensions put in File, Edit, View and Go
+    QHash<QString, QMenu *> m_extensionMenus; // "view" → the View menu
     void showExtensionResult(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
     QMenu *scriptsMenu(const QStringList &selection);
     void organizeWithClaude();

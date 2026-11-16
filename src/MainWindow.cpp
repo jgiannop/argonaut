@@ -158,7 +158,8 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(Extensions::Host::instance(), &Extensions::Host::showRequested, this,
             [this](const QString &extension, const QString &title, const Extensions::PreviewReply &content) {
-                if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
+                // A new version of a result on screen goes to the window showing it.
+                if (content.update || !QApplication::activeWindow() || QApplication::activeWindow() == this)
                     showExtensionResult(extension, title, content);
             });
     connect(m_ops, &FileOperations::conflictRaised, this, &MainWindow::askConflict);
@@ -1133,6 +1134,7 @@ void MainWindow::showCommandPalette()
     if (!m_palette)
         m_palette = new CommandPalette(this);
     updateEditActions();
+    refreshExtensionMenus(); // extensions' menu commands are found like the rest
     m_starAct->setText(selectionIsStarred() ? tr("Unstar") : tr("Star"));
 
     QList<CommandPalette::Command> commands;
@@ -1808,6 +1810,14 @@ void MainWindow::addExtensionCommands(QMenu *menu, const QStringList &selection)
     ExtensionMenu::add(menu, this, m_pane->model->extensionsFolder(), items);
 }
 
+void MainWindow::refreshExtensionMenus()
+{
+    if (m_chooser)
+        return; // another program's Open/Save window has no such commands
+    for (auto it = m_extensionMenus.constBegin(); it != m_extensionMenus.constEnd(); ++it)
+        ExtensionMenu::addToMenuBar(it.value(), this, it.key(), m_pane->model->extensionsFolder());
+}
+
 // A click on the extension's text in the path bar (Git: the branch): the
 // commands extensions have for this folder, right there.
 void MainWindow::showExtensionInfoMenu(const QPoint &globalPos)
@@ -1828,6 +1838,12 @@ void MainWindow::showExtensionResult(const QString &extension, const QString &ti
 {
     if (m_analyzing || m_chooser)
         return;
+    if (content.update) {
+        // Only replaces what is shown: it never opens the pane or takes it from a file.
+        if (m_quickLook && quickLookVisible())
+            m_quickLook->showResult(title.isEmpty() ? extension : title, extension, content);
+        return;
+    }
     if (!quickLookVisible())
         toggleQuickLook();
     if (m_quickLook)
@@ -3389,6 +3405,12 @@ QWidget *MainWindow::buildMenuBar()
     go->addSeparator();
     go->addAction(m_locationAct);
     go->addAction(m_searchAct);
+
+    // Extensions can put commands at the end of these (and so in the
+    // command palette). They are looked up when a menu opens.
+    m_extensionMenus = {{QStringLiteral("file"), file}, {QStringLiteral("edit"), edit}, {QStringLiteral("view"), view}, {QStringLiteral("go"), go}};
+    for (QMenu *menu : std::as_const(m_extensionMenus))
+        connect(menu, &QMenu::aboutToShow, this, &MainWindow::refreshExtensionMenus);
 
     QMenu *help = addMenu(tr("&Help"));
     help->addAction(m_guideAct);

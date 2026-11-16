@@ -18,7 +18,9 @@ Version 1 of the protocol lets an extension:
 - supply the **preview** (the pane Space opens) for kinds of files Argonaut
   can't show itself, as text, formatted text or a picture.
 
-Four extensions come with Argonaut and are good to read: Document Preview
+Five extensions come with Argonaut and are good to read: System Dashboard
+([`extensions/dashboard`](../extensions/dashboard): a picture it draws itself,
+shown as a result that updates while it is on screen), Document Preview
 ([`extensions/preview`](../extensions/preview): Markdown, CSV and
 spreadsheets in the preview pane, with the parsing done in a sandbox), Git
 ([`extensions/git`](../extensions/git): marks, the path bar text and commands
@@ -121,6 +123,8 @@ Ignore message types and keys you don't know; newer versions may add some.
 - `unwatch`: no view shows it any more. Forget it.
 - `preview`: the user is previewing a file of a kind you announced (see
   [Previews](#previews)).
+- `result`: a result you named is on screen now, or no longer is (see
+  [Results that update](#results-that-update)).
 - `invoke`: the user chose one of your commands (and said yes to its
   question, if it has one). `selection` holds the full paths of the selected
   items; it is empty for a command on the folder itself. `folder` is the open
@@ -181,6 +185,7 @@ Unstage exist only inside a repository, and only for changed items.
 | `id` | Required. Comes back in `invoke`. |
 | `label` | Required. Up to 60 characters. |
 | `target` | `"selection"` (default): shown when items are right-clicked. `"folder"`: shown on the folder's empty space. |
+| `menu` | `"view"` (or `"file"`, `"edit"`, `"go"`): the command goes at the end of that menu of the menu bar, and so into the command palette (Ctrl+Shift+P), **instead of** the right-click menu. For a command that isn't about any item or folder (a dashboard). Only in a `commands` message. `folder` in its `invoke` is the open folder, `selection` is empty. A name Argonaut doesn't know: the command isn't shown. |
 | `kind` | `"files"`, `"folders"` or `"any"` (default): what every selected item must be. |
 | `multiple` | `false`: only when exactly one item is selected. Default `true`. |
 | `types` | Every selected item's type must match one of these: `"image/*"`, or a type such as `"text/plain"` (types derived from it match too). The type is what the file really is, by its content, not only its name. |
@@ -216,6 +221,48 @@ For a result that needs room, ask for it to be shown in the preview pane:
 `kind`, `text` and `note` are as in a [preview](#previews) answer (`text`,
 `markdown`, `html`, `diff`, `image`). The pane opens if it is closed, and the
 next file the user selects takes it back.
+
+#### Results that update
+
+A result that changes while the user looks at it (a dashboard, the progress
+of your own work) gets a name:
+
+```json
+{"type": "show", "id": "dashboard", "title": "System Dashboard",
+ "kind": "image", "image": "/run/user/1000/my-dashboard.png"}
+```
+
+Argonaut then tells you when it is on screen, how many pixels there are for
+it and whether the window is dark, again when that room changes, and once
+more when it is gone (a file was selected, the pane was closed):
+
+```json
+{"type": "result", "id": "dashboard", "shown": true, "width": 420, "height": 800, "dark": true,
+ "colors": {"window": "#242424", "surface": "#303030", "text": "#ffffff", "dim": "#a0a0a0",
+            "accent": "#3584e4", "border": "#3a3a3a"},
+ "font": "Ubuntu"}
+{"type": "result", "id": "dashboard", "shown": false}
+```
+
+`colors` and `font` are the window's theme where your result is shown:
+the background it sits on (`window`), a panel on that background
+(`surface`), text and secondary text, the accent colour and a border
+colour, all as `#rrggbb`. Draw your picture with them and it belongs in the
+window in every theme; you are told again when the user picks another theme.
+
+While it is shown, send a new version as often as you need, with
+`"update": true`:
+
+```json
+{"type": "show", "id": "dashboard", "update": true, "title": "System Dashboard",
+ "kind": "image", "image": "/run/user/1000/my-dashboard.png"}
+```
+
+An update only replaces your result where it is shown. It never opens the
+pane and never takes it from a file, so a late one does no harm; but stop
+when you are told `"shown": false`, and don't update more often than the
+user can read (the dashboard does it every two seconds). A picture drawn at
+exactly `width` pixels is shown as it is, not scaled.
 
 ### Lists of files
 

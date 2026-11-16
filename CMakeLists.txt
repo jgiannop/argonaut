@@ -300,6 +300,22 @@ if(UNIX)
     install(TARGETS argonaut-preview-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/document-preview)
+
+    # System Dashboard: gauges for processor, memory, disk and network in the
+    # preview pane (reads /proc, so Linux only).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        qt_add_executable(argonaut-dashboard-extension extensions/dashboard/main.cpp)
+        target_link_libraries(argonaut-dashboard-extension PRIVATE argonaut_core)
+        set(ARGONAUT_DASHBOARD_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-dashboard-extension")
+        configure_file(extensions/dashboard/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/system-dashboard/extension.json @ONLY)
+        set(ARGONAUT_DASHBOARD_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-dashboard-extension")
+        configure_file(extensions/dashboard/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/system-dashboard/extension.json @ONLY)
+        install(TARGETS argonaut-dashboard-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-dashboard/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-dashboard)
+    endif()
 endif()
 
 # ------------------------------------------------------------- install ---

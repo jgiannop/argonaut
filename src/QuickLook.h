@@ -43,7 +43,12 @@ public:
     void clear(); // nothing is selected
     // Something that isn't a file's preview: a result an extension wants shown
     // (a diff). It stays until a file is selected or the pane closes.
-    void showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content);
+    // A result with a name (`content.resultId`) can be replaced while it is
+    // shown, and its extension is told when it is shown (and how much room
+    // there is) and when it no longer is. An `update` for a result that
+    // isn't the one shown does nothing. True: it is shown now.
+    bool showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content);
+    QString resultId() const { return m_resultId; } // the named result shown, if any (tests)
     QString path() const { return m_item.path; }
     Preview::Kind kind() const { return m_kind; } // what's shown (tests)
     bool fromExtension() const { return m_fromExtension; } // an extension made what's shown
@@ -55,6 +60,8 @@ signals:
 
 protected:
     void hideEvent(QHideEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     void apply(quint64 generation, const Preview::Result &result);
@@ -79,6 +86,11 @@ private:
     int m_extensionRequest = 0;       // waiting for this answer (0: not waiting)
     QTimer *m_extensionTimer = nullptr; // not for long: then the built-in preview
     bool m_fromExtension = false;
+    void closeResult();              // the named result is no longer shown: its extension is told
+    void reportResult();             // it is shown, with this much room
+    QString m_resultExtension;       // the named result on screen (an extension's id and its result's)
+    QString m_resultId;
+    QTimer *m_resultTimer = nullptr; // a resize is told once it has settled
     QTreeWidget *m_archive = nullptr;
     QWidget *m_infoPage = nullptr;
     QLabel *m_infoIcon = nullptr;
