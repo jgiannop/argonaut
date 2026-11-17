@@ -1,0 +1,42 @@
+name: Windows
+
+# The Windows port, on its own branch: does it build there, and what does
+# the program look like when it does (a zip to try on a Windows machine).
+on:
+  push:
+    branches: [windows-port]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: The compiler's environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake --preset windows
+
+      # Everything is built even after an error, so one run shows all there is to fix.
+      - name: Build
+        run: cmake --build build/windows --target argonaut -- -k 0
+
+      - name: Put the program and its Qt libraries together
+        run: |
+          mkdir dist
+          copy build\windows\argonaut.exe dist\
+          windeployqt --release --no-translations dist\argonaut.exe
+
+      - name: Keep it to try
+        uses: actions/upload-artifact@v4
+        with:
+          name: argonaut-windows
+          path: dist
