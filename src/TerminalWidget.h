@@ -1,5 +1,6 @@
 #pragma once
 
+#include "QuietCommand.h"
 #include "Theme.h"
 
 #include <QKeySequence>
@@ -15,6 +16,8 @@ class QSocketNotifier;
 
 // An embedded terminal: the user's shell on a pseudo-terminal, emulated by
 // libvterm and drawn with QPainter. Unix only (forkpty).
+class QTimer;
+
 class TerminalWidget : public QWidget
 {
     Q_OBJECT
@@ -102,6 +105,11 @@ private:
     QSocketNotifier *m_readNotifier = nullptr;
     QSocketNotifier *m_writeNotifier = nullptr;
     QByteArray m_pending; // output the pty couldn't take yet
+    // The "cd" typed for the user isn't shown: see QuietCommand.h.
+    QuietCommand m_quiet;
+    QString m_quietTarget; // the folder it goes to
+    QTimer *m_quietTimer = nullptr;
+    void endQuiet();
 
     int m_rows = 24;
     int m_cols = 80;

@@ -25,9 +25,9 @@
 #include <termios.h>
 #include <unistd.h>
 
-extern "C" {
-#include <vterm.h>
-}
+#include "QuietCommand.h"
+
+#include <QTimer>
 
 namespace Tui {
 
@@ -37,12 +37,14 @@ struct Shell::Private
     VTermScreen *screen = nullptr;
     bool cursorVisible = true;
     bool wholePanel = false; // a program has the alternate screen (an editor, a pager)
+    QuietCommand quiet;      // a "cd" typed for the user, which isn't shown
     QList<QList<VTermScreenCell>> history; // the lines that scrolled off the top, oldest first
 
     // A line leaves the top: kept. While the panel looks back, what it shows stays where it is.
     static int pushLine(int cols, const VTermScreenCell *cells, void *user)
     {
         auto *self = static_cast<Shell *>(user);
+        self->d->quiet.linePushed();
         self->d->history.append(QList<VTermScreenCell>(cells, cells + cols));
         if (self->d->history.size() > MaxHistory)
             self->d->history.removeFirst();
@@ -236,6 +238,7 @@ void Shell::readPty()
         const ssize_t n = ::read(m_fd, buffer, sizeof buffer);
         if (n > 0) {
             vterm_input_write(d->vt, buffer, size_t(n));
+            d->quiet.output();
             any = true;
             continue;
         }
@@ -244,7 +247,9 @@ void Shell::readPty()
         ended = true; // the shell closed its side
         break;
     }
-    if (any)
+    if (ended)
+        endQuiet();
+    if (any && !d->quiet.active) // while a command typed for the user is being taken, the picture waits
         emit changed();
     if (ended) {
         m_readNotifier->setEnabled(false);
@@ -294,8 +299,35 @@ bool Shell::changeDirectory(const QString &folder)
     // keeps the command out of bash's history (HISTCONTROL=ignorespace).
     const QByteArray line = "\x05\x15 cd -- '" + quoted + "'\r";
     scrollToNewest();
+    // The typed line isn't to be seen (QuietCommand.h): nothing new is
+    // drawn until the shell has taken it, then the line is taken out.
+    m_quietTarget = QFileInfo(folder).canonicalFilePath();
+    d->quiet.begin(d->vt);
+    if (!m_quietTimer) {
+        m_quietTimer = new QTimer(this);
+        m_quietTimer->setInterval(15);
+        connect(m_quietTimer, &QTimer::timeout, this, [this] {
+            const bool done = m_pid > 0 && m_fd >= 0 && ::tcgetpgrp(m_fd) == m_pid && this->folder() == m_quietTarget;
+            if (d->quiet.settled(done))
+                endQuiet();
+        });
+    }
+    m_quietTimer->start();
     send(line.constData(), size_t(line.size()));
     return true;
+}
+
+void Shell::endQuiet()
+{
+    if (m_quietTimer)
+        m_quietTimer->stop();
+    if (!d->quiet.active)
+        return;
+    const bool done = m_pid > 0 && m_fd >= 0 && ::tcgetpgrp(m_fd) == m_pid && folder() == m_quietTarget;
+    if (d->vt)
+        d->quiet.finish(d->vt, done);
+    d->quiet.active = false;
+    emit changed();
 }
 
 int Shell::historySize() const
@@ -443,6 +475,7 @@ void Shell::readPty() {}
 void Shell::flush() {}
 void Shell::send(const char *, size_t) {}
 void Shell::key(const Key &) {}
+void Shell::endQuiet() {}
 bool Shell::changeDirectory(const QString &) { return false; }
 int Shell::historySize() const { return 0; }
 void Shell::scrollBack(int) {}

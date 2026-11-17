@@ -7,6 +7,7 @@
 #include <QString>
 
 class QSocketNotifier;
+class QTimer;
 
 namespace Tui {
 
@@ -75,6 +76,9 @@ private:
     int m_rows = 0;
     int m_columns = 0;
     int m_back = 0; // lines the panel looks back
+    QString m_quietTarget; // the folder a "cd" typed for the user goes to (it isn't shown: QuietCommand.h)
+    QTimer *m_quietTimer = nullptr;
+    void endQuiet();
     QByteArray m_pending; // typed, not yet taken by the shell
     QSocketNotifier *m_readNotifier = nullptr;
     QSocketNotifier *m_writeNotifier = nullptr;

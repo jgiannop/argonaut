@@ -2315,65 +2315,125 @@ void TestTui::shellPanelLooksBack()
 }
 
 // F12 from the files while the shell panel is open: a shell that is in
-// another folder comes to the pane's (the opposite of Ctrl+Up in it).
+// another folder comes to the pane's (the opposite of Ctrl+Up in it). The
+// "cd" typed for that isn't left on screen: only the prompt is new.
 void TestTui::shellComesToTheFiles()
 {
     if (!Tui::Shell::available())
         QSKIP("built without libvterm: no shell panel");
     qputenv("SHELL", "/bin/sh");
-    qputenv("PS1", "ready> ");
+    qputenv("PS1", "ready-$PWD> ");
+    const QString deep = m_left + "/a-folder-with-quite-a-long-name-to-type/and-another-one-inside-it/and-a-third-level-below";
+    QDir().mkpath(deep);
     keys({Key::of(Key::F12)});
-    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("ready>"), 10000);
-    auto shellIsIn = [&](const QString &folder) {
-        // Its folder is on the panel's title line.
-        for (const QString &line : screen(140, 24).split('\n')) {
-            if (line.contains("Terminal") && line.contains("~/"))
-                return line.contains(folder + " ") || line.contains(folder + "  ") || line.trimmed().endsWith(folder)
-                       || line.contains(QRegularExpression(QRegularExpression::escape(folder) + "(\\s|$)"));
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("ready-" + m_left + ">"), 10000);
+    type("echo kept-$((1+1))");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("kept-2"), 10000);
+    // The shell's part of the screen, when it has gone quiet.
+    auto panel = [&] {
+        QString last, now = screen(140, 24);
+        for (int i = 0; i < 40 && now != last; ++i) {
+            last = now;
+            QTest::qWait(120);
+            now = screen(140, 24);
         }
-        return false;
+        now = now.mid(now.indexOf("Terminal"));
+        QStringList rows = now.mid(now.indexOf('\n')).split('\n'); // without the panel's title line…
+        rows.removeLast();                                          // …and the message and key lines under it
+        rows.removeLast();
+        return rows.join('\n') + '\n'; // what the shell shows
     };
     QVERIFY(app->isInShell());
     keys({Key::of(Key::F12)}); // back to the files: nothing is typed into the shell
     QVERIFY(!app->isInShell());
-    QTest::qWait(200);
-    QVERIFY(!screen().contains("cd --"));
+    const QString before = panel();
+    QCOMPARE(before.count("ready-"), 2);
 
     // The files go into Documents; the shell stays in the folder above.
     app->selectPath(m_left + "/Documents");
     keys({Key::of(Key::Enter)});
     settle();
     QCOMPARE(app->folder(0), m_left + "/Documents");
-    QVERIFY(shellIsIn("left"));
     // F12: to the terminal, which comes along.
     keys({Key::of(Key::F12)});
     QVERIFY(app->isInShell());
-    QTRY_VERIFY_WITH_TIMEOUT(shellIsIn("left/Documents"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("ready-" + m_left + "/Documents>"), 10000);
+    QString shown = panel();
+    // The typed line is gone: the old prompt's row is the new prompt's, and what was there before is untouched.
+    QVERIFY2(!shown.contains("cd --") && !shown.contains("cd "), qPrintable(shown));
+    QVERIFY2(shown.contains("kept-2") && shown.contains("echo kept-"), qPrintable(shown));
+    QCOMPARE(shown.count("ready-"), 2);
+    QVERIFY2(shown.contains("ready-" + m_left + "/Documents>") && !shown.contains("ready-" + m_left + "> \n"), qPrintable(shown));
+    // The text cursor is right after the new prompt, and the shell still takes what is typed there.
+    {
+        Screen s(140, 24);
+        app->render(s);
+        QVERIFY(s.cursorY() > 0);
+        QVERIFY2(s.line(s.cursorY()).contains("ready-" + m_left + "/Documents>"), qPrintable(s.line(s.cursorY())));
+        QCOMPARE(s.cursorX(), int(s.line(s.cursorY()).indexOf("Documents>")) + 11);
+    }
     type("pwd");
     keys({Key::of(Key::Enter)});
-    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains(m_left + "/Documents\n") || screen(140, 24).contains("left/Documents"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(panel().contains("\n" + m_left + "/Documents") || panel().contains(" " + m_left + "/Documents\n"), 10000);
     QCOMPARE(app->folder(0), m_left + "/Documents");
-    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("cd --"), 10000); // what was typed for it is there to see
-    QTest::qWait(300);
     // Already there: F12 out and in again types nothing.
     keys({Key::of(Key::F12)});
-    const int typedBefore = int(screen(140, 24).count("cd --"));
+    const QString same = panel();
     keys({Key::of(Key::F12)});
-    QTest::qWait(300);
-    QCOMPARE(int(screen(140, 24).count("cd --")), typedBefore);
+    QCOMPARE(panel(), same);
+
+    // A folder whose name is so long that the typed line runs on into a
+    // second row: both rows go, and nothing else.
+    keys({Key::of(Key::F12)});
+    keys({Key::control('l'), Key::control('u')});
+    type(deep);
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), deep);
+    const QString beforeLong = panel();
+    keys({Key::of(Key::F12)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("and-a-third-level-below>"), 10000);
+    shown = panel();
+    QVERIFY2(!shown.contains("cd --") && !shown.contains("-- '"), qPrintable(shown));
+    QVERIFY2(shown.contains("kept-2") && shown.contains("pwd"), qPrintable(shown));
+    // What was above is still there, in the same order (a row of it may have gone up into what the panel keeps).
+    QVERIFY2(shown.indexOf("kept-2") < shown.indexOf("Documents> pwd") && shown.indexOf("Documents> pwd") < shown.indexOf("and-a-third-level-below>"),
+             qPrintable(shown));
+    QCOMPARE(shown.count("ready-"), beforeLong.count("ready-") - 1);
+
+    // A folder that can't be entered: the shell's complaint stays to be read.
+    const QString closed = m_left + "/closed";
+    QDir().mkpath(closed);
+    keys({Key::of(Key::F12)});
+    keys({Key::control('l'), Key::control('u')});
+    type(closed);
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), closed);
+    QVERIFY(QFile::setPermissions(closed, QFile::Permissions()));
+    keys({Key::of(Key::F12)});
+    QTest::qWait(2200); // it gives up waiting
+    shown = panel();
+    QFile::setPermissions(closed, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    if (::geteuid() != 0)
+        QVERIFY2(shown.contains("cd --") && shown.contains("closed"), qPrintable(shown));
+
     // While a program runs in the shell nothing is typed into it: it stays, and says so.
     type("cat");
     keys({Key::of(Key::Enter)});
     QTest::qWait(300);
     keys({Key::of(Key::F12)}); // to the files
-    keys({Key::of(Key::Backspace)});
+    keys({Key::control('l'), Key::control('u')});
+    type(m_left);
+    keys({Key::of(Key::Enter)});
     settle();
     QCOMPARE(app->folder(0), m_left);
+    const QString running = panel();
     QTRY_VERIFY_WITH_TIMEOUT((keys({Key::of(Key::F12)}), app->message().contains("A program is running in the terminal")), 10000);
-    QVERIFY(shellIsIn("left/Documents"));
-    QVERIFY(!screen(140, 24).contains("cd -- '" + m_left + "'")); // nothing was typed into the program
     if (!app->isInShell())
         keys({Key::of(Key::F12)});
+    QCOMPARE(panel().count("cd --"), running.count("cd --")); // nothing was typed into the program
     keys({Key::control('d')}); // ends cat
 }
 

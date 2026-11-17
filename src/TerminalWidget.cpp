@@ -16,6 +16,7 @@
 #include <QProcessEnvironment>
 #include <QScrollBar>
 #include <QSocketNotifier>
+#include <QTimer>
 
 #include <cerrno>
 #include <csignal>
@@ -231,8 +232,38 @@ bool TerminalWidget::changeDirectory(const QString &directory)
         return true;
     // Ctrl+E Ctrl+U clears whatever is typed at the prompt; the leading
     // space keeps the command out of bash's history (HISTCONTROL=ignorespace).
+    // The typed line isn't to be seen (QuietCommand.h): the picture waits
+    // until the shell has taken it, then the line is taken out.
+    m_quietTarget = QFileInfo(directory).canonicalFilePath();
+    m_quiet.begin(m_vt);
+    setUpdatesEnabled(false);
+    if (!m_quietTimer) {
+        m_quietTimer = new QTimer(this);
+        m_quietTimer->setInterval(15);
+        connect(m_quietTimer, &QTimer::timeout, this, [this] {
+            const bool done = isShellIdle() && shellDirectory() == m_quietTarget;
+            if (m_quiet.settled(done))
+                endQuiet();
+        });
+    }
+    m_quietTimer->start();
     writePty("\x05\x15 cd -- " + shellQuote(directory) + "\r");
     return true;
+}
+
+void TerminalWidget::endQuiet()
+{
+    if (m_quietTimer)
+        m_quietTimer->stop();
+    if (!m_quiet.active)
+        return;
+    if (m_vt)
+        m_quiet.finish(m_vt, m_pid > 0 && isShellIdle() && shellDirectory() == m_quietTarget);
+    m_quiet.active = false;
+    if (m_screen)
+        vterm_screen_flush_damage(m_screen);
+    setUpdatesEnabled(true);
+    update();
 }
 
 void TerminalWidget::readPty()
@@ -242,10 +273,12 @@ void TerminalWidget::readPty()
         const ssize_t n = ::read(m_ptyFd, buffer, sizeof buffer);
         if (n > 0) {
             vterm_input_write(m_vt, buffer, size_t(n));
+            m_quiet.output();
             continue;
         }
         if (n < 0 && (errno == EAGAIN || errno == EINTR))
             break;
+        endQuiet();
         childExited(); // EOF or EIO: the shell is gone
         return;
     }
@@ -346,6 +379,7 @@ int TerminalWidget::onBell(void *)
 int TerminalWidget::onPushLine(int cols, const VTermScreenCell *cells, void *user)
 {
     auto *self = static_cast<TerminalWidget *>(user);
+    self->m_quiet.linePushed();
     self->m_scrollback.append(Cells(cells, cells + cols));
     if (self->m_scrollback.size() > MaxScrollback) {
         self->m_scrollback.removeFirst();

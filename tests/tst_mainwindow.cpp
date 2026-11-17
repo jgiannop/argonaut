@@ -1438,6 +1438,10 @@ void TestMainWindow::terminalComesToTheFiles()
     QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), other, 10000);
     QCOMPARE(w->m_pane->current, other);
     QVERIFY(!w->m_terminalPanel->isHidden());
+    // The "cd" typed for it isn't left in the terminal, and the picture is shown again.
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->updatesEnabled(), 5000);
+    QVERIFY2(!terminal->screenText().contains("cd --"), qPrintable(terminal->screenText()));
+    QVERIFY2(!terminal->screenText().trimmed().isEmpty(), qPrintable(terminal->screenText()));
     // The header's button does the same.
     QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
     open(m_dir);

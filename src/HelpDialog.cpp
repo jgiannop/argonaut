@@ -655,7 +655,8 @@ move about in the files.</p>
 <li><b>To bring the terminal to the files:</b> press [[Ctrl+`]] again (or the terminal button in the header) while
 it is open. If its shell is in another folder than the one you are looking at, it goes there (a <code>cd</code>)
 and stays open. If it is already there, the key closes the panel, as does the ✕ on it. This happens only while
-the shell is waiting for a command, so nothing is ever typed into a running program.</li>
+the shell is waiting for a command, so nothing is ever typed into a running program. The <code>cd</code> itself
+isn't left in the terminal: you only see the prompt change.</li>
 <li>Right-click a folder → <b>Open in Terminal</b> opens it there.</li>
 <li>The other way round is [[Ctrl+Up]] in the terminal: after a <code>cd</code> there, it brings the files
 to the folder the shell is in (and reads the folder again if they are already there).</li>
