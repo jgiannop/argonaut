@@ -1,10 +1,11 @@
 name: Windows
 
-# The Windows port, on its own branch: does it build there, and what does
-# the program look like when it does (a zip to try on a Windows machine).
+# The Windows version: does it build there, and what comes of it (a zip and
+# an installer to try on a Windows machine). On dev too, so that work done
+# for Linux can't break it unnoticed.
 on:
   push:
-    branches: [windows-port]
+    branches: [dev, windows-port]
 
 jobs:
   build:
