@@ -98,4 +98,6 @@ jobs:
           python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"
           python .github/scripts/errors_as_notes.py tests-build.log "build: tests, compiling"
           python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "FAIL!|Loc: |QFATAL|ASSERT|Passed|Failed|Timeout|Not Run|Exception|Totals|tests passed|No tests|0xc0|cannot|not found"
+          ctest --test-dir build/windows-tests --timeout 120 -V -R "^(contenttype|places|defaultfm|bookmarks)$" 2>&1 | Tee-Object -FilePath tests-few.log
+          python .github/scripts/errors_as_notes.py tests-few.log "build: tests, a few in full" "."
           exit 0
