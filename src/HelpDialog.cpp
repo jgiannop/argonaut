@@ -574,7 +574,9 @@ the button. A program's arguments are never sent. It is one request; what it cos
 Under the list of running processes it sends each process's name, ID, the ID of the process that started it, whose
 it is, its memory and the program that was started (the 400 biggest), and never its arguments. Under the System
 Journal it sends the messages themselves (the 150 most important kinds, with who wrote them, how often and when),
-which can name users, computers, addresses and files.</p>
+which can name users, computers, addresses and files. <b>Ask Claude: What Is This About?</b> sends what it reads of
+the one file or folder you chose: the beginning of a text, a document's text, a small copy of a picture, or the names
+inside a folder or an archive.</p>
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(
@@ -613,8 +615,8 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b> and
-<b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>,
+<b>What Is This About</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
 Extensions window says which extensions use Claude and what each has cost so far.</p>
@@ -667,6 +669,24 @@ service doing", "tell me only about the bus service") and Claude answers that. <
 the ✕ on the report closes it. Ask again, with another question, and the new answer replaces it. It needs your Claude API key (Preferences → Claude) and is billed to your Anthropic account; the cost of
 each report is said under it. It is Claude's reading of names and paths, not a security scan, and nothing is ever
 started, stopped or changed.</p>
+<p><b>What Is This About</b>: right-click a file or a folder and choose <b>Ask Claude: What Is This About?</b>
+Claude reads it and answers in a few lines in the preview pane: one sentence saying what it is, then the points
+that matter (for a bill who it is from, the date and the amount; for code what it does; for a picture what it
+shows). The answer stays in the pane while you go on; [[Space]] on a file brings that file's preview back. What is
+read depends on the kind of file, and the line under the answer says what was sent:</p>
+<ul>
+<li><b>Text, code, data:</b> the beginning (the first 24 kB). <b>Web pages:</b> their words, without styles and
+scripts.</li>
+<li><b>PDFs:</b> the text of the first pages, read in a sandbox. A small PDF without text (a scan) is sent as it
+is, for Claude to read.</li>
+<li><b>Office documents</b> (docx, odt, pptx, odp, xlsx, ods): their text, read in a sandbox.</li>
+<li><b>Pictures:</b> a small copy (1024 pixels at most).</li>
+<li><b>Archives and folders:</b> the names of what is inside, with sizes. Nothing is unpacked.</li>
+<li><b>Music and video:</b> their details (length, title, format), not the sound or the pictures.</li>
+</ul>
+<p>A program is never read or sent, nor a file that only looks like a document. What can't be read gets a line
+saying why, and Claude isn't asked. It needs your Claude API key (Preferences → Claude), costs a little each time
+(said under the answer), and every answer is kept with the other reports (Go → Claude Reports).</p>
 <p><b>System Journal</b>: choose <b>View → System Journal</b>, or find it in the command palette. The preview pane
 lists the errors and warnings that the system and its programs have written to the journal since the computer
 started: errors first, in red, then the warnings, newest first. A journal repeats itself, so the same message from

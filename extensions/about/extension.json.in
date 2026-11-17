@@ -1,0 +1,12 @@
+{
+    "id": "what-is-this-about",
+    "name": "What Is This About",
+    "description": "Adds \"Ask Claude: What Is This About?\" to the right-click menu of a file or folder: Claude reads it and says in a few lines what it is and what is in it. Text and code (the beginning), PDFs and office documents (their text, read in a sandbox), pictures (a small copy), archives and folders (the names inside), music and video (their details). What is read is sent to Anthropic, only when you choose the command; a program is never read or sent.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "about", "label": "Ask Claude: What Is This About?", "multiple": false}],
+    "exec": ["@ARGONAUT_ABOUT_EXTENSION_EXE@"]
+}

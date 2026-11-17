@@ -334,6 +334,19 @@ if(UNIX)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/document-preview)
 
+    # What Is This About: Claude says in a few lines what a file is about.
+    qt_add_executable(argonaut-about-extension extensions/about/main.cpp)
+    target_link_libraries(argonaut-about-extension PRIVATE argonaut_core)
+    set(ARGONAUT_ABOUT_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-about-extension")
+    configure_file(extensions/about/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/what-is-this-about/extension.json @ONLY)
+    set(ARGONAUT_ABOUT_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-about-extension")
+    configure_file(extensions/about/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/what-is-this-about/extension.json @ONLY)
+    install(TARGETS argonaut-about-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/what-is-this-about/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/what-is-this-about)
+
     # Connect to Server: servers as folders through GVfs (Linux).
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         qt_add_executable(argonaut-connect-extension extensions/connect/main.cpp)
