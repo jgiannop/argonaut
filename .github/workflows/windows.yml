@@ -43,7 +43,17 @@ jobs:
         run: |
           mkdir dist
           copy build\windows\argonaut.exe dist\
-          windeployqt --release --no-translations dist\argonaut.exe
+          windeployqt --release --no-translations --no-compiler-runtime dist\argonaut.exe
+
+      # Microsoft's C++ runtime (VCRUNTIME140.dll and the others), beside the
+      # program: a fresh Windows doesn't have it, and the program won't start.
+      - name: Add the C++ runtime
+        shell: pwsh
+        run: |
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" dist\
+          Get-ChildItem dist\*.dll | Where-Object { $_.Name -match "vcruntime|msvcp" } | ForEach-Object { $_.Name }
+          if (-not (Test-Path dist\vcruntime140.dll)) { Write-Output "::error title=build: runtime::vcruntime140.dll was not copied"; exit 1 }
 
       - name: Keep it to try
         uses: actions/upload-artifact@v4
