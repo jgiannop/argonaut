@@ -645,7 +645,11 @@ seconds until you select a file or close the pane. It only shows: nothing is sta
 is that of all its programs together, as systemd counts it. Beside each name is an <b>ⓘ</b>: rest the mouse on it,
 or click it, and a tooltip says what the service is (its description, in systemd's own words), its full unit name
 and whether it is the system's or your session's. That is where to look when the pane is too narrow to show the
-description after the name.</p>
+description after the name. <b>A service's memory is that of all the programs in its group</b>, and for some
+services most of it belongs to programs the service only started: the session's <i>dbus</i> is the usual one (it
+starts the calendar, the online accounts and other helpers when they are asked for). Where a service's memory is
+more than one program's, its ⓘ lists them, biggest first, so a large number can be traced to the program behind
+it.</p>
 <p><b>Services that failed</b> (they didn't start, or stopped when they shouldn't have) are the first rows of the
 list, in red, with <i>failed</i> where the memory would be; the heading says how many there are, or <i>none
 failed</i>. The ⓘ of such a row also says how it failed, in systemd's words, and the command that shows why
