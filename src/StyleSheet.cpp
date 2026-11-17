@@ -183,10 +183,10 @@ QPlainTextEdit#qlText, QTextBrowser#qlText { background: @pathBg; color: @fg; bo
 QTreeWidget#qlArchive { background: @window; color: @fg; border: none; }
 QTreeWidget#qlArchive QHeaderView::section { background: @window; color: @dim; border: none;
     padding: 4px 8px; font-weight: bold; }
-QPushButton#prefButton { background: @pathBg; color: @fg; border: none; border-radius: 6px;
+QPushButton#prefButton, QPushButton#themesFolderButton, QPushButton#saveThemeButton { background: @pathBg; color: @fg; border: none; border-radius: 6px;
     padding: 7px 16px; }
-QPushButton#prefButton:hover { background: @hover; }
-QPushButton#prefButton:disabled { color: @dim; }
+QPushButton#prefButton:hover, QPushButton#themesFolderButton:hover, QPushButton#saveThemeButton:hover { background: @hover; }
+QPushButton#prefButton:disabled, QPushButton#themesFolderButton:disabled, QPushButton#saveThemeButton:disabled { color: @dim; }
 QToolButton#themeCard { background: transparent; color: @fg; border: 2px solid transparent;
     border-radius: 12px; padding: 8px 8px 6px 8px; }
 QToolButton#themeCard:hover { background: @hover; }

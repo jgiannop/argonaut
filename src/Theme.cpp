@@ -1,5 +1,7 @@
 #include "Theme.h"
 
+#include <QGuiApplication>
+#include <QStyleHints>
 #include <QApplication>
 #include <QIconEngine>
 #include <QPainter>
@@ -226,11 +228,29 @@ ThemeMode savedThemeMode()
     return ThemeMode::System;
 }
 
+// On Windows the frame of a window (a dialog's title bar) is the system's,
+// light or dark by what the system is told the program is: said here, or a
+// dark theme's dialogs get a white title bar. (Qt 6.8 has the call; before
+// it the frame follows the system's own setting.)
+static void tellSystemTheScheme(bool follow, bool dark)
+{
+#if defined(Q_OS_WIN) && QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    if (follow)
+        QGuiApplication::styleHints()->unsetColorScheme();
+    else
+        QGuiApplication::styleHints()->setColorScheme(dark ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
+#else
+    Q_UNUSED(follow);
+    Q_UNUSED(dark);
+#endif
+}
+
 void applyThemeMode(ThemeMode mode)
 {
     const QPalette &system = systemPalette();
     s_fileKey.clear();
     s_mode = mode;
+    tellSystemTheScheme(mode == ThemeMode::System, mode == ThemeMode::System ? false : Theme::forMode(mode).dark);
     if (mode == ThemeMode::System) {
         // Leave the palette untouched at startup so Qt keeps following the
         // platform; only restore it if we replaced it earlier.
@@ -528,6 +548,7 @@ void applyThemeKey(const QString &key)
     ThemeWatcher::start(); // its file is watched now
     if (same)
         return;
+    tellSystemTheScheme(false, read.theme.dark);
     const QPalette palette = paletteFor(read.theme);
     if (QApplication::palette() != palette) {
         QApplication::setPalette(palette); // every window dresses again

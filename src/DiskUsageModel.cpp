@@ -150,11 +150,13 @@ struct Scanner
             const QFileInfo fi = it.fileInfo();
             ++node->items;
             itemsSeen.fetchAndAddRelaxed(1);
-            if (fi.isDir() && !fi.isSymLink()) {
+            // Not into a link, nor into a junction (Windows' "Application
+            // Data", "My Documents"…: another name for a folder counted where it is).
+            if (fi.isDir() && !fi.isSymLink() && !fi.isJunction()) {
                 subs.push_back({fi.fileName(), fi.lastModified().toMSecsSinceEpoch(), 0});
                 continue;
             }
-            const qint64 used = fi.isSymLink() ? 0 : fi.size();
+            const qint64 used = fi.isSymLink() || fi.isJunction() ? 0 : fi.size();
             node->bytes += used;
             bytesSeen.fetchAndAddRelaxed(used);
             if (used >= DiskUsageModel::MinFileBytes) {

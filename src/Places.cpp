@@ -97,8 +97,16 @@ QList<Entry> list()
         if (root.startsWith(QLatin1String("/System/Volumes")))
             continue;
 #endif
+#if defined(Q_OS_WIN)
+        // On Windows a drive goes by its letter, as everywhere there: "Local Disk (C:)".
+        const QString type = QString::fromLatin1(vol.fileSystemType()).toUpper();
+        const bool disc = type == QLatin1String("CDFS") || type == QLatin1String("UDF");
+        Entry drive{Group::Drives, disc ? Icon::Removable : Icon::Drive,
+                    QStringLiteral("%1 (%2)").arg(vol.name().isEmpty() ? tr("Local Disk") : vol.name(), root.left(2)), root, {}, false, {}};
+#else
         const bool system = root == QDir::rootPath();
         Entry drive{Group::Drives, system ? Icon::Drive : Icon::Removable, system ? tr("Computer") : vol.displayName(), root, {}, false, {}};
+#endif
 #if defined(Q_OS_LINUX)
         // Drives mounted by the desktop (udisks) can be ejected.
         if (root.startsWith(QLatin1String("/media/")) || root.startsWith(QLatin1String("/run/media/"))) {
