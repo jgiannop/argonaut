@@ -349,6 +349,9 @@ and nothing is fetched from the internet), and CSV files and
 spreadsheets as a table (the <a href="topic:extensions">Document Preview extension</a>; with it switched off an
 HTML file is shown as its source text). The preview is a pane at the right of the files;
 drag its edge to make it wider. It follows the file you select, so the arrow keys go through a folder.
+What an extension shows there (the System Dashboard, the running services, a diff) <b>stays while you go on working
+with the files</b>: selecting files and changing folder don't take it away. Press [[Space]] on a file to see that
+file's preview again; [[Esc]] or the pane's ✕ closes it.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
 <p>A PDF is shown whole: every page, one under another. Scroll with the wheel or the scrollbar; the line under
 the pages says which page you are on. [[Ctrl]] and the wheel make the pages bigger. Pages are drawn as you reach

@@ -85,12 +85,8 @@ void App::syncPreview()
 {
     const Pane &p = pane();
     const QString path = cursorPath();
-    if (m_resultShown) {
-        // An extension's result has the pane until the cursor goes elsewhere.
-        if (path == m_resultCursor)
-            return;
-        closeResult();
-    }
+    if (m_resultShown)
+        return; // an extension's result has the pane while the cursor moves: F3 closes it (and again shows files)
     if (path == m_previewPath)
         return;
     m_previewCells.clear();
@@ -307,12 +303,11 @@ void App::showResult(const QString &title, const Extensions::PreviewReply &conte
         m_preview = true;
         m_previewTop = 0;
         m_resultShown = true;
-        m_resultCursor = cursorPath();
         m_previewPath = QStringLiteral("\x01result"); // not a file's: the next file loads afresh
     }
     m_previewLoading = false;
     m_previewTitle = title;
-    m_previewInfo = content.note;
+    m_previewInfo = content.note.isEmpty() ? QStringLiteral("F3 closes it") : content.note + QStringLiteral(" · F3 closes it");
     m_previewWarning = false;
     m_previewLines.clear();
     m_previewCells.clear();

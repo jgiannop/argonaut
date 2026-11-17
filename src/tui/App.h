@@ -382,7 +382,6 @@ private:
     QImage m_previewImage;       // a picture, at a few pixels to the cell
     QList<QList<Cell>> m_previewCells; // text with colours of its own (an extension's "ansi"), a list a line
     QString m_resultExtension, m_resultId; // an extension's named result is what is shown
-    QString m_resultCursor;      // the item the cursor was on when it came: it stays while that is so
     bool m_resultShown = false;  // a result (named or not) has the pane
     bool m_resultSearchable = false; // its extension said it can be searched: "/" in the preview asks for the text
     QString m_resultSearch, m_resultSearchHint; // what was last searched for, and what the question says

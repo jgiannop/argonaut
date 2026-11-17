@@ -3107,6 +3107,8 @@ void App::drawHelp(Screen &screen)
         "  Enter, Right                      open the folder, or the file with its app",
         "  F3                                the preview at the right: what is in the file under the cursor",
         "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
+        "                                    what an extension shows there, such as the dashboard or the services,",
+        "                                    stays while you move among the files, until F3 closes it;",
         "                                    in a list of services or processes, / searches it; where the preview",
         "                                    offers something more, such as Analyze with Claude under the services,",
         "                                    a lit line at its bottom says so: Enter there, or a click on it)",

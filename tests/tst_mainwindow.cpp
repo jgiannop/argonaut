@@ -129,6 +129,7 @@ private slots:
     void pictureFromAnExtensionHasTooltips();
     void htmlPageInThePreview();
     void answerUnderAResult();
+    void resultKeepsThePane();
     void extensionResultCanBeSearched();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
@@ -2058,8 +2059,81 @@ void TestMainWindow::answerUnderAResult()
     QVERIFY(pane->isUnderShown());
     w->m_pane->view->setCurrentIndex(QModelIndex());
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::qWait(150);
+    QVERIFY(pane->isUnderShown() && pane->resultId() == "list1"); // selecting a file leaves both where they are
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space); // asking for the file's preview takes the pane
     QTRY_VERIFY(pane->resultId().isEmpty());
     QVERIFY(!pane->isUnderShown() && pane->underText().isEmpty());
+    w->hideQuickLook();
+}
+
+// What an extension shows (a dashboard, a list) keeps the preview pane while
+// the user works with the files: selecting them and changing folder leave it
+// alone. Space on a file asks for that file's preview and takes the pane;
+// Space with nothing selected, Esc and the pane's ✕ close it.
+void TestMainWindow::resultKeepsThePane()
+{
+    const QString a = make("a.txt", "the file's words");
+    make("sub/inside.txt");
+    open(m_dir);
+    Extensions::PreviewReply content;
+    content.kind = Extensions::PreviewReply::Text;
+    content.text = "the dashboard";
+    content.extension = "fake";
+    content.resultId = "dash";
+    w->showExtensionResult("Fake", "Dashboard", content);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *pane = w->m_quickLook;
+    QVERIFY(pane->hasResult());
+    // Selecting a file, then another, then none.
+    for (const QString &path : {a, m_dir + "/sub"}) {
+        w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(path)));
+        QTest::qWait(60);
+        QVERIFY(pane->hasResult());
+        QCOMPARE(pane->shownText(), QStringLiteral("the dashboard"));
+    }
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    QCOMPARE(pane->shownText(), QStringLiteral("the dashboard"));
+    // Into another folder and back.
+    open(m_dir + "/sub");
+    QVERIFY(w->quickLookVisible() && pane->hasResult());
+    QCOMPARE(pane->shownText(), QStringLiteral("the dashboard"));
+    open(m_dir);
+    QCOMPARE(pane->resultId(), QStringLiteral("dash"));
+    // It is still kept up to date meanwhile.
+    Extensions::PreviewReply again = content;
+    again.update = true;
+    again.text = "the dashboard, later";
+    w->showExtensionResult("Fake", "Dashboard", again);
+    QCOMPARE(pane->shownText(), QStringLiteral("the dashboard, later"));
+    // Space on a file: that file's preview, and the pane follows the selection again.
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QVERIFY(pane->hasResult());
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(w->quickLookVisible());
+    QVERIFY(!pane->hasResult());
+    QTRY_COMPARE(pane->path(), a);
+    QTRY_COMPARE_WITH_TIMEOUT(pane->shownText(), QStringLiteral("the file's words"), 10000);
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(m_dir + "/sub")));
+    QTRY_COMPARE(pane->path(), m_dir + "/sub");
+    // Space once more closes the pane, as it always did for a file's preview.
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(!w->quickLookVisible());
+
+    // With nothing selected, Space over a result closes the pane; so does Esc.
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    w->showExtensionResult("Fake", "Dashboard", content);
+    QVERIFY(w->quickLookVisible() && pane->hasResult());
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QVERIFY(!w->quickLookVisible());
+    QVERIFY(!pane->hasResult());
+    w->showExtensionResult("Fake", "Dashboard", content);
+    QVERIFY(pane->hasResult());
+    QTest::keyClick(w->m_pane->view, Qt::Key_Escape);
+    QVERIFY(!w->quickLookVisible() && !pane->hasResult());
+    // The line under its title says how to get a file's preview.
+    w->showExtensionResult("Fake", "Dashboard", content);
+    QVERIFY2(pane->detailsText().contains("Fake") && pane->detailsText().contains("Space previews the selected file"), qPrintable(pane->detailsText()));
     w->hideQuickLook();
 }
 
@@ -2134,9 +2208,10 @@ void TestMainWindow::extensionResultCanBeSearched()
         QTest::keyClick(pane->actionInput(), Qt::Key_Escape); // the keys go back to the files
         QVERIFY(keysBack.size() >= 1);
     }
-    // Going to a file takes the pane: the field goes with the result.
+    // Asking for a file's preview (Space on it) takes the pane: the field goes with the result.
     w->m_pane->view->setCurrentIndex(QModelIndex());
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
     QTRY_VERIFY(w->m_quickLook->resultId().isEmpty());
     QVERIFY(!w->m_quickLook->hasAction()); // and so does the button
     QVERIFY(w->m_quickLook->actionInput()->text().isEmpty());
@@ -2432,10 +2507,15 @@ void TestMainWindow::extensionResultStaysLive()
     QVERIFY2(w->m_quickLook->shownText().contains("accent,border,dim,surface,text,window font=yes"),
              qPrintable(w->m_quickLook->shownText()));
 
-    // A file takes the pane: the extension is told, and its next version is dropped.
+    // Selecting a file doesn't take the pane from it: it goes on being kept up to date.
     QTRY_VERIFY(w->m_pane->model->indexForPath(a).isValid());
     w->m_pane->view->setCurrentIndex(QModelIndex());
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::qWait(150);
+    QCOMPARE(w->m_quickLook->resultId(), QStringLiteral("live1"));
+    QCOMPARE(logged(), QStringLiteral("live1 shown\n"));
+    // Space on the file does: the extension is told, and its next version is dropped.
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
     QTRY_COMPARE(w->m_quickLook->path(), a);
     QVERIFY(w->m_quickLook->resultId().isEmpty());
     QTRY_COMPARE_WITH_TIMEOUT(logged(), QStringLiteral("live1 shown\nlive1 hidden\n"), 10000);
@@ -2525,9 +2605,15 @@ void TestMainWindow::extensionMenusAskAndShow()
     QTRY_VERIFY_WITH_TIMEOUT(w->m_quickLook->shownText().contains("+new line"), 10000);
     QVERIFY(w->m_quickLook->shownText().contains("-old <b>line</b>")); // shown, not obeyed
     QVERIFY(w->m_quickLook->path().isEmpty());
-    // The next file selected takes the pane back.
+    QVERIFY(w->m_quickLook->hasResult());
+    // It stays while files are selected: it is being read. Space on a file takes the pane back.
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::qWait(150);
+    QVERIFY(w->m_quickLook->hasResult() && w->m_quickLook->path().isEmpty());
+    QVERIFY(w->m_quickLook->shownText().contains("+new line"));
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
     QTRY_COMPARE(w->m_quickLook->path(), a);
+    QVERIFY(!w->m_quickLook->hasResult() && w->quickLookVisible());
 
     // A menu that is only one submenu shows what is inside it (the branch button).
     QMenu wrapped;

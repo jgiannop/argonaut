@@ -1680,11 +1680,19 @@ void TestTui::extensionResultInThePreview()
     QVERIFY(screen(120, 30).contains("row 59"));
     keys({Key::of(Key::Escape)});
 
-    // The cursor on another item: the file's preview takes the pane back, and the extension is told.
-    keys({Key::of(Key::Down)});
-    QTRY_VERIFY_WITH_TIMEOUT((screen(120, 30), app->resultId().isEmpty()), 10000);
+    // The cursor on other items: the result stays (it is being read), and says how it is closed.
+    keys({Key::of(Key::Down), Key::of(Key::Down), Key::of(Key::Up)});
+    QTest::qWait(200);
+    QVERIFY2((screen(120, 30), app->resultId() == "t1") && screen(120, 30).contains("row 5") && screen(120, 30).contains("F3 closes it"),
+             qPrintable(screen(120, 30)));
+    QVERIFY(!logged().endsWith("t1 hidden\n"));
+    // F3 closes it, and the extension is told; F3 again is the preview of the file under the cursor.
+    keys({Key::of(Key::F3)});
+    QVERIFY(!app->isPreviewShown() && app->resultId().isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("t1 hidden\n"), 10000);
-    QTRY_VERIFY_WITH_TIMEOUT(!screen(120, 30).contains("updated cols="), 10000);
+    keys({Key::of(Key::F3)});
+    QVERIFY(app->isPreviewShown());
+    QTRY_VERIFY_WITH_TIMEOUT(!screen(120, 30).contains("row 5") && !screen(120, 30).contains("F3 closes it") && !app->isPreviewLoading(), 10000);
 
     // Shown again, then F3 closes the preview: told again.
     keys({Key::control('p')});

@@ -57,6 +57,11 @@ public:
     // doesn't replace them. False: another plan has the pane.
     bool showPlan(const Extensions::Plan &plan);
     bool hasPlan() const;
+    // What an extension shows (a dashboard, a list of services, a diff) has
+    // the pane: it stays while files are selected and folders change, until
+    // the user asks for a file's preview (Space) or closes the pane.
+    bool hasResult() const { return m_showsResult; }
+    QString detailsText() const; // the line under the title (tests)
     // An extension is waiting for something that takes a while (Claude's
     // answer): the pane says so, with how long it has been, until
     // endWorking (or a plan, or the pane closing). Selecting a file
@@ -137,6 +142,7 @@ private:
     QElapsedTimer m_workingSince;
     QTimer *m_workingTimer = nullptr;      // moves the dots and counts the seconds
     QPushButton *m_stopWaiting = nullptr;
+    bool m_showsResult = false;            // an extension's result is what is shown
     // The lower part of the pane, under a named result that stays on
     // screen: what its extension has to say about it (Claude's report on
     // the list above), or that Claude is being asked. A divider between the

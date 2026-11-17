@@ -2077,8 +2077,8 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     m_pane->current = clean;
 
     m_thumbnailer->cancelPending(); // the old folder's queued thumbnails
-    if (m_quickLook && !inBackground())
-        m_quickLook->clear(); // stays open; the next selected file fills it
+    if (m_quickLook && !inBackground() && !m_quickLook->hasResult())
+        m_quickLook->clear(); // stays open; the next selected file fills it (a result an extension shows stays as it is)
     m_pane->model->setPath(clean);
     // Recent: newest first. The folder sort comes back when leaving it.
     const bool recent = DirectoryModel::placeOf(clean) == DirectoryModel::Place::Recent;
@@ -2711,7 +2711,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (event->type() == QEvent::KeyPress) {
             auto *key = static_cast<QKeyEvent *>(event);
             if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier) {
-                toggleQuickLook();
+                // Over a result an extension shows, Space asks for the selected
+                // file's preview (the result stayed while files were selected);
+                // otherwise it opens and closes the pane, as ever.
+                if (quickLookVisible() && m_quickLook->hasResult() && m_pane->view->currentIndex().isValid())
+                    updateQuickLook(true);
+                else
+                    toggleQuickLook();
                 return true;
             }
             if (key->key() == Qt::Key_Escape && quickLookVisible()) {
@@ -4245,10 +4251,12 @@ void MainWindow::toggleQuickLook()
     m_pane->view->setFocus(); // keys keep going to the file view
 }
 
-void MainWindow::updateQuickLook()
+void MainWindow::updateQuickLook(bool asked)
 {
     if (!m_quickLook)
         return;
+    if (m_quickLook->hasResult() && !asked)
+        return; // a dashboard or a list is being watched: selecting files doesn't take it away
     const QModelIndex view = m_pane->view->currentIndex();
     if (!view.isValid()) {
         m_quickLook->clear();

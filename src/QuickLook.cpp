@@ -737,7 +737,9 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
     clear(); // no file: nothing to open, nothing still loading
     m_open->hide(); // …so no button that would open it
     m_title->setText(title);
-    m_details->setText(details);
+    // Whose it is, and how to get a file's preview back: it stays until then.
+    m_details->setText(details.isEmpty() ? tr("Space previews the selected file") : tr("%1 · Space previews the selected file").arg(details));
+    m_showsResult = true;
     if (!applyExtension(content)) {
         showInfo(tr("Nothing to show"));
         return true;
@@ -819,6 +821,11 @@ void QuickLook::setActionShown(const Extensions::PreviewReply &content)
     m_actionRow->show();
 }
 
+QString QuickLook::detailsText() const
+{
+    return m_details->text();
+}
+
 bool QuickLook::hasAction() const
 {
     return !m_actionId.isEmpty() && !m_actionRow->isHidden();
@@ -864,6 +871,7 @@ bool QuickLook::eventFilter(QObject *watched, QEvent *event)
 
 void QuickLook::closeResult()
 {
+    m_showsResult = false;
     setSearchShown(false);
     setActionShown({});
     closeUnder(); // what was said about it goes with it

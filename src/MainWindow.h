@@ -179,7 +179,9 @@ private:
     // Quick Look: Space shows the current item; it follows the current item
     // while open.
     void toggleQuickLook();
-    void updateQuickLook();
+    // The preview is of the selected item. A result an extension shows keeps
+    // the pane while the selection changes; `asked` (Space) takes it back.
+    void updateQuickLook(bool asked = false);
     bool quickLookVisible() const;
     QString effectiveMimeAt(const QModelIndex &sourceIndex) const;
     // Zoom the visible view (grid and list have their own size): +1, -1, or 0 = default.
