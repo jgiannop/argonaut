@@ -41,6 +41,8 @@ bool isProgram(const QMimeType &type)
         "application/x-executable",
         "application/x-pie-executable",
         "application/x-sharedlib",
+        "application/x-elf",         // what a Linux program is called where the system has no type list of its own (Windows: Qt's)
+        "application/x-mach-binary", // a macOS program
         "application/x-msdownload",
         "application/x-ms-dos-executable",
         "application/x-dosexec",
