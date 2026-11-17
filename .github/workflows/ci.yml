@@ -24,8 +24,17 @@ jobs:
       - name: Build
         run: cmake --build build/debug
 
+      # A failing test's own words go on the run as notes: they can be read
+      # there without signing in (the log can't).
       - name: Test
-        run: ctest --preset debug
+        run: |
+          set +e
+          ctest --preset debug --output-on-failure 2>&1 | tee tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 .github/scripts/errors_as_notes.py tests.log "tests (debug)" 'FAIL!|Loc: |\*\*\*|QFATAL|Timeout|timed out|AddressSanitizer|runtime error|SUMMARY|tests passed|#[0-9]+ 0x'
+          fi
+          exit $status
 
   # The package builds and installs on every system a release is made for
   # (release.yml has the same list): a newer compiler or Qt that the code
@@ -96,5 +105,14 @@ jobs:
       - name: Build
         run: cmake --build build/sanitize
 
+      # A failing test's own words go on the run as notes: they can be read
+      # there without signing in (the log can't).
       - name: Test
-        run: ctest --preset sanitize
+        run: |
+          set +e
+          ctest --preset sanitize --output-on-failure 2>&1 | tee tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 .github/scripts/errors_as_notes.py tests.log "tests (sanitize)" 'FAIL!|Loc: |\*\*\*|QFATAL|Timeout|timed out|AddressSanitizer|runtime error|SUMMARY|tests passed|#[0-9]+ 0x'
+          fi
+          exit $status
