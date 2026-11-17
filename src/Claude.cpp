@@ -1,4 +1,5 @@
 #include "Claude.h"
+#include "ClaudeReports.h"
 
 #include "KeyStore.h"
 
@@ -226,7 +227,18 @@ void Client::send(QJsonObject request, std::function<void(const Response &, cons
     // If a safety filter declines, the API retries on another model itself.
     if (modelInfo(request.value(QStringLiteral("model")).toString()).fallbacks && !request.contains(QStringLiteral("fallbacks")))
         request.insert(QStringLiteral("fallbacks"), QStringLiteral("default"));
-    sendAttempt(request, 0, std::move(done));
+    // Every answer is kept as a page the user can read later, with what was
+    // sent (ClaudeReports): here, so that nothing that asks Claude can forget to.
+    const QString askedBy = m_askedBy;
+    sendAttempt(request, 0, [request, askedBy, done = std::move(done)](const Response &response, const Error &error) {
+        if (!error.message.isEmpty() || response.message.isEmpty()) {
+            done(response, error);
+            return;
+        }
+        Response kept = response;
+        kept.reportFile = ClaudeReports::save(askedBy, request, response);
+        done(kept, error);
+    });
 }
 
 void Client::sendAttempt(QJsonObject request, int attempt, std::function<void(const Response &, const Error &)> done)

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "ClaudeReports.h"
 #include "Places.h"
 #include "Volumes.h"
 
@@ -245,6 +246,14 @@ void MainWindow::setupActions()
     m_homeAct = new QAction(tr("Home"), this);
     m_homeAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Home));
     connect(m_homeAct, &QAction::triggered, this, [this] { navigateTo(QDir::homePath()); });
+    // Every answer Claude gives is kept as a page (ClaudeReports): the folder they are in.
+    m_claudeReportsAct = new QAction(tr("Claude Reports"), this);
+    connect(m_claudeReportsAct, &QAction::triggered, this, [this] {
+        if (QFileInfo(ClaudeReports::folder()).isDir())
+            navigateTo(ClaudeReports::folder());
+        else
+            showMessage(tr("No reports yet: every answer Claude gives is kept there"));
+    });
 
     m_locationAct = new QAction(tr("Enter Location…"), this);
     m_locationAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
@@ -3343,6 +3352,7 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_forwardAct);
     go->addAction(m_upAct);
     go->addAction(m_homeAct);
+    go->addAction(m_claudeReportsAct);
     go->addSeparator();
     go->addAction(m_bookmarkAct);
     go->addSeparator();

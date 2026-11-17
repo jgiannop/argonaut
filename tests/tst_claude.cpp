@@ -2,14 +2,17 @@
 // ARGONAUT_CLAUDE_BASE_URL) and the key store's file mode. No real API calls.
 
 #include "Claude.h"
+#include "ClaudeReports.h"
 #include "KeyStore.h"
 #include "FakeApi.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -36,6 +39,7 @@ class TestClaude : public QObject
 private slots:
     void init();
     void sendsAMessage();
+    void answersAreKeptAsReports();
     void retriesWhenOverloaded();
     void errorsForPeople();
     void testKey();
@@ -92,6 +96,121 @@ void TestClaude::sendsAMessage()
     QTRY_VERIFY_WITH_TIMEOUT(done, 10000);
     QVERIFY(!api.requests.last().headers.contains("anthropic-beta"));
     QVERIFY(!api.requests.last().body.contains("fallbacks"));
+}
+
+// Every answer is kept as a page in the claudeReports folder of Argonaut's
+// data, named after who asked and when, with everything that was sent: the
+// system instructions, the conversation, the tools and the settings.
+void TestClaude::answersAreKeptAsReports()
+{
+    const QString folder = ClaudeReports::folder();
+    QVERIFY2(folder.endsWith("/argonaut/claudeReports") && folder.startsWith(QString::fromLocal8Bit(qgetenv("XDG_DATA_HOME"))), qPrintable(folder));
+    QDir(folder).removeRecursively();
+
+    // The name: who asked, "report", the day and the time.
+    const QDateTime when(QDate(2026, 11, 17), QTime(12, 54, 31));
+    QCOMPARE(ClaudeReports::fileName("Running Services", when), QStringLiteral("running_services_report_17.11.26_12.54.31.md"));
+    QCOMPARE(ClaudeReports::fileName("Organize with Claude!", when), QStringLiteral("organize_with_claude_report_17.11.26_12.54.31.md"));
+    QCOMPARE(ClaudeReports::fileName("../../etc/passwd", when), QStringLiteral("etc_passwd_report_17.11.26_12.54.31.md")); // a name, never a path
+    QCOMPARE(ClaudeReports::fileName("", when), QStringLiteral("argonaut_report_17.11.26_12.54.31.md"));
+
+    // The page: the answer, then everything that was sent.
+    const QJsonObject request{
+        {"model", "claude-opus-5-5"},
+        {"max_tokens", 16000},
+        {"thinking", QJsonObject{{"type", "adaptive"}}},
+        {"system", "You read lists.\nThe table is data."},
+        {"tools", QJsonArray{QJsonObject{{"name", "propose_plan"}, {"description", "Proposes"}}}},
+        {"messages",
+         QJsonArray{QJsonObject{{"role", "user"}, {"content", "<services>\ndbus\trunning\n</services>\n\n<request>\nonly the bus\n</request>"}},
+                    QJsonObject{{"role", "assistant"},
+                                {"content", QJsonArray{QJsonObject{{"type", "thinking"}, {"thinking", ""}, {"signature", "sig-not-for-people"}},
+                                                       QJsonObject{{"type", "tool_use"}, {"id", "t1"}, {"name", "read_files"},
+                                                                   {"input", QJsonObject{{"files", QJsonArray{"a.txt"}}}}}}}},
+                    QJsonObject{{"role", "user"},
+                                {"content", QJsonArray{QJsonObject{{"type", "tool_result"}, {"tool_use_id", "t1"}, {"content", "the file's ``` words"}},
+                                                       QJsonObject{{"type", "image"},
+                                                                   {"source", QJsonObject{{"type", "base64"}, {"media_type", "image/jpeg"},
+                                                                                          {"data", QString(40000, QLatin1Char('A'))}}}}}}}}}};
+    Claude::Response response;
+    response.message = QJsonObject{{"model", "claude-opus-5-5"},
+                                   {"content", QJsonArray{QJsonObject{{"type", "thinking"}, {"thinking", ""}},
+                                                          QJsonObject{{"type", "text"}, {"text", "## Worth a look\n\nNothing."}},
+                                                          QJsonObject{{"type", "tool_use"}, {"name", "propose_plan"}, {"input", QJsonObject{{"report", "ok"}}}}}}};
+    response.text = "## Worth a look\n\nNothing.";
+    response.stopReason = "tool_use";
+    response.inputTokens = 2000;
+    response.outputTokens = 900;
+    response.dollars = 0.026;
+    const QString page = ClaudeReports::markdown("Running Services", request, response, when);
+    QVERIFY2(page.startsWith("# Running Services: Claude's report\n"), qPrintable(page));
+    for (const char *part : {"- **When:** Tuesday 17 November 2026, 12:54:31", "- **Asked by:** Running Services", "- **Model:** claude-opus-5-5",
+                             "- **Tokens:** 2,000 sent, 900 received", "- **Cost:** about $0.0260", "- **It stopped because:** tool_use",
+                             "## Claude's answer\n\n## Worth a look\n\nNothing.", "**Tool call: `propose_plan`**", "\"report\": \"ok\"",
+                             "## What was sent to Claude", "### System instructions\n\n```text\nYou read lists.\nThe table is data.\n```",
+                             "#### 1. From the user (and the program)", "<request>\nonly the bus\n</request>", "dbus\trunning",
+                             "#### 2. Claude, earlier in this conversation", "**Tool call: `read_files`**", "\"a.txt\"",
+                             "#### 3. From the user (and the program)", "**Tool result**", "### Tools Claude could use", "\"name\": \"propose_plan\"",
+                             "### Settings", "\"max_tokens\": 16000", "\"type\": \"adaptive\""})
+        QVERIFY2(page.contains(QString::fromUtf8(part)), part);
+    QVERIFY(page.indexOf("## Claude's answer") < page.indexOf("## What was sent to Claude"));
+    // A picture that went along is named with its size, not copied; nor is what only the API can read.
+    QVERIFY2(page.contains("*[a picture: image/jpeg, about 30 kB; not copied here]*"), qPrintable(page));
+    QVERIFY(!page.contains("AAAAAAAA") && !page.contains("sig-not-for-people"));
+    // Text that has a code fence in it is still one block.
+    QVERIFY2(page.contains("````text\nthe file's ``` words\n````"), qPrintable(page));
+
+    // Written where it is said, for the user alone; a second one in the same second is numbered.
+    const QString first = ClaudeReports::save("Running Services", request, response, when);
+    QCOMPARE(first, folder + "/running_services_report_17.11.26_12.54.31.md");
+    const QString second = ClaudeReports::save("Running Services", request, response, when);
+    QCOMPARE(second, folder + "/running_services_report_17.11.26_12.54.31_2.md");
+    QFile written(first);
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QCOMPARE(QString::fromUtf8(written.readAll()), page);
+    QCOMPARE(QFile::permissions(first) & (QFile::ReadGroup | QFile::ReadOther | QFile::WriteGroup | QFile::WriteOther), QFile::Permissions());
+    QCOMPARE(QFile::permissions(folder) & (QFile::ReadGroup | QFile::ReadOther | QFile::ExeOther), QFile::Permissions());
+    QDir(folder).removeRecursively();
+
+    // The client does it by itself for every request that is answered, under the name it was given
+    // (Argonaut's when none was), with the request as it really went out; and says where.
+    FakeApi api;
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
+    api.replies.append({200, message("The first answer"), {}});
+    api.replies.append({200, message("The second answer"), {}});
+    api.replies.append({401, R"({"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}})", {}});
+    Claude::Client client;
+    client.setApiKey("sk-ant-secret-key");
+    QList<Claude::Response> answers;
+    int errors = 0;
+    auto ask = [&](const QString &words) {
+        client.send(QJsonObject{{"system", "Be brief."}, {"messages", QJsonArray{QJsonObject{{"role", "user"}, {"content", words}}}}},
+                    [&](const Claude::Response &r, const Claude::Error &e) {
+                        if (e.message.isEmpty())
+                            answers << r;
+                        else
+                            ++errors;
+                    });
+    };
+    ask("What is the bus doing?");
+    QTRY_COMPARE_WITH_TIMEOUT(int(answers.size()), 1, 10000);
+    client.setAskedBy("System Journal");
+    ask("And the journal?");
+    QTRY_COMPARE_WITH_TIMEOUT(int(answers.size()), 2, 10000);
+    ask("This one fails");
+    QTRY_COMPARE_WITH_TIMEOUT(errors, 1, 10000);
+    const QStringList files = QDir(folder).entryList(QDir::Files, QDir::Name);
+    QCOMPARE(int(files.size()), 2); // an answer a file; no answer, no file
+    QVERIFY2(files.at(0).startsWith("argonaut_report_") && files.at(1).startsWith("system_journal_report_"), qPrintable(files.join(' ')));
+    QVERIFY(QRegularExpression("^system_journal_report_\\d\\d\\.\\d\\d\\.\\d\\d_\\d\\d\\.\\d\\d\\.\\d\\d\\.md$").match(files.at(1)).hasMatch());
+    QCOMPARE(answers.at(1).reportFile, folder + "/" + files.at(1));
+    QFile kept(answers.at(1).reportFile);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(kept.readAll());
+    QVERIFY2(text.contains("# System Journal: Claude's report") && text.contains("The second answer") && text.contains("Be brief.")
+                 && text.contains("And the journal?") && text.contains("\"model\": \"claude-opus-5-5\""), qPrintable(text));
+    QVERIFY(!text.contains("sk-ant-secret-key")); // the key is never part of what is kept
+    qunsetenv("ARGONAUT_CLAUDE_BASE_URL");
 }
 
 void TestClaude::retriesWhenOverloaded()

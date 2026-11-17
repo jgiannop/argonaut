@@ -1,7 +1,7 @@
 {
     "id": "running-services",
     "name": "Running Services",
-    "description": "View → Running Services (or the command palette): the services that are running now, the one using the most memory first, in the preview pane. The system's and your own session's (systemd). It updates every three seconds while it is shown, and only shows: nothing is started or stopped. Under the list, Analyze with Claude asks Claude what the services are and whether any looks out of place (their names, descriptions, memory and program paths are sent to Anthropic, only when you press the button).",
+    "description": "View → Running Services (or the command palette): the services that are running now, the one using the most memory first, in the preview pane; any that failed come first, in red. The system's and your own session's (systemd). It updates every three seconds while it is shown, and only shows: nothing is started or stopped. Under the list, Analyze with Claude asks Claude what the services are and whether any looks out of place (their names, descriptions, memory and program paths are sent to Anthropic, only when you press the button).",
     "version": "@PROJECT_VERSION@",
     "author": "Argonaut",
     "protocol": 1,

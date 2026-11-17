@@ -65,6 +65,7 @@ struct Response
     qint64 inputTokens = 0;
     qint64 outputTokens = 0;
     double dollars = 0;
+    QString reportFile;  // where the answer and what was sent were kept (ClaudeReports); empty: not written
 };
 
 class Client : public QObject
@@ -77,6 +78,10 @@ public:
     // The key to use (KeyStore by default); tests set one directly.
     void setApiKey(const QString &key) { m_key = key; }
     QString apiKey() const;
+    // For whom the next requests are ("Running Services"): the name the
+    // report of each answer is filed under (ClaudeReports). Argonaut itself
+    // when not said.
+    void setAskedBy(const QString &name) { m_askedBy = name; }
     // https://api.anthropic.com, or ARGONAUT_CLAUDE_BASE_URL (tests).
     static QString baseUrl();
 
@@ -97,6 +102,7 @@ private:
     QNetworkReply *post(const QString &path, const QJsonObject &body, bool beta);
     void sendAttempt(QJsonObject request, int attempt,
                      std::function<void(const Response &response, const Error &error)> done);
+    QString m_askedBy;
 
     QNetworkAccessManager *m_net;
     QString m_key;

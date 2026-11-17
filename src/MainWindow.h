@@ -332,6 +332,7 @@ private:
     QAction *m_zoomResetAct = nullptr;    // Ctrl+0
     int m_wheelZoom = 0;                  // Ctrl+wheel delta not used yet (touchpads)
     QAction *m_homeAct = nullptr;
+    QAction *m_claudeReportsAct = nullptr; // Go → Claude Reports: the folder every answer of Claude's is kept in
     QAction *m_locationAct = nullptr;
     QAction *m_gridAct = nullptr;
     QAction *m_listAct = nullptr;

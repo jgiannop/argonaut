@@ -21,6 +21,7 @@ private slots:
     void textNeverWiderThanThePane();
     void pictureIsAsLongAsTheList();
     void signBesideARowThatHasMoreToSay();
+    void aRowSomethingIsWrongWithIsRed();
     void roomIsReadFromTheMessage();
     void pictureFileIsThisProgramsOwn();
 
@@ -32,9 +33,9 @@ private:
     }
     static QList<ListRow> rows()
     {
-        return {{"database", {}, "The Database", "200", "3.0 GB", 1.0, false, {}},
-                {"Music Player", "user", "plays music", "17", "1.5 GB", 0.5, true, {}},
-                {"tiny", {}, "A small one", "2001", "1.0 MB", 0.01, false, {}}};
+        return {{"database", {}, "The Database", "200", "3.0 GB", 1.0, false, {}, false},
+                {"Music Player", "user", "plays music", "17", "1.5 GB", 0.5, true, {}, false},
+                {"tiny", {}, "A small one", "2001", "1.0 MB", 0.01, false, {}, false}};
     }
 };
 
@@ -50,7 +51,7 @@ void TestResultDrawing::namesAreData()
     QCOMPARE(plainText(QString(QChar(0x9b)) + "31m"), QStringLiteral("?31m")); // the one-character form of ESC [
     QCOMPARE(plainText(QString()), QString());
 
-    QList<ListRow> list{{"a\x1b[1m", "m\nk", "ab\tout", "t\x07g", "1 B", 1.0, false, {}}};
+    QList<ListRow> list{{"a\x1b[1m", "m\nk", "ab\tout", "t\x07g", "1 B", 1.0, false, {}, false}};
     const QString text = drawListAnsi(ListHead(), list, 60);
     // The only escape sequences in it are the drawing's own colour codes.
     QVERIFY(!plain(text).contains(QChar(0x1b)));
@@ -152,7 +153,7 @@ void TestResultDrawing::textNeverWiderThanThePane()
     head.line = "Together they use\n4.5 GB of 16.0 GB memory";
     head.listTitle = "BY MEMORY";
     QList<ListRow> list = rows();
-    list.append({"a-name-that-is-much-longer-than-any-pane-is-wide-enough-to-hold", "somebody", {}, {}, "999.9 MB", 0.3, false, {}});
+    list.append({"a-name-that-is-much-longer-than-any-pane-is-wide-enough-to-hold", "somebody", {}, {}, "999.9 MB", 0.3, false, {}, false});
     for (int columns : {10, 24, 30, 44, 80, 200, 5000}) {
         const QString text = plain(drawListAnsi(head, list, columns));
         const int most = qBound(24, columns, 200); // what it is drawn for
@@ -184,7 +185,7 @@ void TestResultDrawing::pictureIsAsLongAsTheList()
     QCOMPARE(few.pixelColor(1, 1), QColor("#fdf6e3"));
     QList<ListRow> many;
     for (int i = 0; i < 60; ++i)
-        many.append({QStringLiteral("row %1").arg(i), {}, {}, QString::number(i), "1 MB", 0.5, false, {}});
+        many.append({QStringLiteral("row %1").arg(i), {}, {}, QString::number(i), "1 MB", 0.5, false, {}, false});
     const QImage long60 = drawList(head, many, 500, look);
     QVERIFY2(long60.height() > few.height() * 5, qPrintable(QStringLiteral("%1 against %2").arg(long60.height()).arg(few.height())));
     // Never narrower than can be read, never absurdly wide.
@@ -282,6 +283,41 @@ void TestResultDrawing::signBesideARowThatHasMoreToSay()
     QCOMPARE(json.at(0).toObject().value("text").toString(), QStringLiteral("The first\nrow"));
     QCOMPARE(json.at(0).toObject().value("x").toInt(), tips.at(0).area.x());
     QCOMPARE(json.at(0).toObject().value("height").toInt(), tips.at(0).area.height());
+}
+
+// A row that something is wrong with (a service that failed): its name and
+// what is at its right are red, in the picture and in the terminal's text.
+void TestResultDrawing::aRowSomethingIsWrongWithIsRed()
+{
+    const Look look = lookFor(false, {});
+    ListHead head;
+    head.title = "LIST";
+    QList<ListRow> list = rows();
+    const QImage plain = drawList(head, list, 500, look);
+    list[1].bad = true;
+    list[1].size = "failed";
+    const QImage marked = drawList(head, list, 500, look);
+    QCOMPARE(marked.size(), plain.size());
+    auto reds = [](const QImage &image) {
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor c = image.pixelColor(x, y);
+                if (c.red() > 180 && c.green() < 90 && c.blue() < 90)
+                    ++count;
+            }
+        }
+        return count;
+    };
+    QCOMPARE(reds(plain), 0);
+    QVERIFY2(reds(marked) > 40, qPrintable(QString::number(reds(marked))));
+    // As text: red before its name and before what is at the right, and not for the other rows.
+    const QString text = drawListAnsi(head, list, 60);
+    const QString red = sgr(kFull);
+    QCOMPARE(int(text.count(red)), 2);
+    QVERIFY(text.contains(red + "Music Player"));
+    QVERIFY2(text.contains(QRegularExpression(QRegularExpression::escape(red) + " *failed")), qPrintable(text));
+    QVERIFY(!drawListAnsi(head, rows(), 60).contains(red));
 }
 
 int main(int argc, char **argv)

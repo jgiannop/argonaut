@@ -618,9 +618,12 @@ and the whole response comes back, with its text put together and what it cost:
 
 ```json
 {"type": "claude", "id": "q1", "response": {"content": […], "stop_reason": "end_turn", "usage": {…}},
- "text": "Harbour at dusk", "stop_reason": "end_turn", "dollars": 0.0031}
+ "text": "Harbour at dusk", "stop_reason": "end_turn", "dollars": 0.0031,
+ "report_file": "/home/you/.local/share/argonaut/claudeReports/my_extension_report_17.11.26_12.54.31.md"}
 {"type": "claude", "id": "q1", "error": {"message": "There is no Claude API key yet: Preferences → Claude", "status": 0}}
 ```
+
+**Argonaut keeps every answer.** Each answered request is written as a Markdown page in the user's `claudeReports` folder (`~/.local/share/argonaut/claudeReports`), named after your extension and the time: the answer, then everything you sent (the system instructions, the conversation, the tools, the settings; pictures and documents are named with their size, not copied). You don't do anything for this and can't switch it off: it is the user's record of what was asked in their name. `report_file` says where it is, should you want to tell them.
 
 Tools work as in the API: send `tools`, find the `tool_use` blocks in
 `response.content`, and send the conversation back with your `tool_result`

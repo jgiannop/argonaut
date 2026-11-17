@@ -204,6 +204,7 @@ struct ListRow
     double share = 0; // its bar, 0…1
     bool faint = false; // drawn lighter (not the system's, not yours)
     QString tip;     // more about it, shown when the mouse is on the ⓘ beside its name (none: no sign)
+    bool bad = false; // something is wrong with it (a service that failed): its name and what is at the right in red
 };
 
 struct ListHead
@@ -217,6 +218,10 @@ struct ListHead
     QString listTitle; // "BY MEMORY"
     QString empty;     // said when there are no rows
     QString more;      // said under the rows when some were left out
+    // A list of things to read, not to measure (the journal's messages):
+    // no bars, and a row's `about` has the second line to itself.
+    bool bars = true;
+    QString moreWord = QStringLiteral("each using less"); // how those left out are spoken of ("older")
 };
 
 // A name from outside (a process's, a service's) is data: a control
@@ -266,7 +271,7 @@ inline void narrowList(ListHead *head, QList<ListRow> *rows, const QString &sear
         head->empty = QStringLiteral("Nothing has “%1” in it").arg(plainText(wanted));
     }
     if (rows->size() > most) {
-        head->more = QStringLiteral("and %1 more, each using less").arg(rows->size() - most);
+        head->more = QStringLiteral("and %1 more, %2").arg(rows->size() - most).arg(head->moreWord);
         rows->erase(rows->begin() + most, rows->end());
     }
 }
@@ -300,7 +305,7 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
     width = qBound(240, width, 4000);
     g_font = look.font;
     const double u = qBound(10.0, width / 34.0, 20.0); // the size of ordinary text
-    const double rowHeight = u * 2.7;
+    const double rowHeight = head.bars ? u * 2.7 : u * 3.3;
     const double headHeight = u * 9.6;
     const double listTop = headHeight + 2 * u;
     const int count = int(rows.size());
@@ -336,7 +341,8 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
     p.setPen(look.dim);
     p.setFont(fontOf(u));
     text(u * 3.9, u * 1.8, Qt::AlignRight, head.beside);
-    bar(u * 7.0, u * 0.8, head.share, levelColor(look, head.share));
+    if (head.bars)
+        bar(u * 7.0, u * 0.8, head.share, levelColor(look, head.share));
     p.setPen(look.dim);
     p.setFont(fontOf(u * 0.9));
     text(u * 8.3, u * 1.6, Qt::AlignLeft, QString(head.line).replace(QLatin1Char('\n'), QLatin1Char(' ')));
@@ -362,14 +368,16 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
     const double rightColumns = sizeColumn + (tagColumn > 0 ? tagColumn + u * 1.2 : 0);
     for (const ListRow &row : rows) {
         p.setFont(fontOf(u));
-        p.setPen(look.dim);
+        const QColor wrong = levelColor(look, 1.0); // the red of a full gauge
+        p.setPen(row.bad ? wrong : look.dim);
         p.drawText(QRectF(left, y, room, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, row.size);
+        p.setPen(look.dim);
         if (tagColumn > 0)
             p.drawText(QRectF(left, y, room - sizeColumn - u * 1.2, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, row.tag);
         // The name, then what it is in the room that is left.
         const double nameRoom = room - rightColumns - u;
         const QString name = p.fontMetrics().elidedText(row.name, Qt::ElideMiddle, qMax(10, int(nameRoom)));
-        p.setPen(look.text);
+        p.setPen(row.bad ? wrong : look.text);
         p.drawText(QRectF(left, y, nameRoom, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter, name);
         double used = p.fontMetrics().horizontalAdvance(name) + u * 0.8;
         if (!row.tip.isEmpty() && nameRoom - used > u * 1.4) {
@@ -386,14 +394,22 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
                 tips->append({ring.adjusted(-u * 0.35, -u * 0.35, u * 0.35, u * 0.35).toAlignedRect(), row.tip});
             used += d + u * 0.8;
         }
-        const QString about = row.mark.isEmpty() ? row.about : row.about.isEmpty() ? row.mark : row.mark + QStringLiteral(" · ") + row.about;
+        // Beside the name: its mark and what it is. In a list to read, only
+        // the mark: what it says has the line under it.
+        const QString about = !head.bars ? row.mark : row.mark.isEmpty() ? row.about : row.about.isEmpty() ? row.mark : row.mark + QStringLiteral(" · ") + row.about;
         if (!about.isEmpty() && nameRoom - used > u * 5) {
             p.setPen(look.dim);
             p.setFont(fontOf(u * 0.9));
             p.drawText(QRectF(left + used, y, nameRoom - used, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter,
                        p.fontMetrics().elidedText(about, Qt::ElideRight, int(nameRoom - used)));
         }
-        bar(y + u * 1.75, u * 0.45, row.share, row.faint ? mix(look.accent, look.card, 0.45) : look.accent);
+        if (head.bars) {
+            bar(y + u * 1.75, u * 0.45, row.share, row.faint ? mix(look.accent, look.card, 0.45) : look.accent);
+        } else {
+            p.setPen(row.faint ? look.dim : mix(look.text, look.dim, 0.35));
+            p.setFont(fontOf(u * 0.92));
+            p.drawText(QRectF(left, y + u * 1.5, room, u * 1.5), Qt::AlignLeft | Qt::AlignVCenter, p.fontMetrics().elidedText(row.about, Qt::ElideRight, int(room)));
+        }
         y += rowHeight;
     }
     if (!head.more.isEmpty()) {
@@ -414,7 +430,8 @@ inline QString drawListAnsi(const ListHead &head, const QList<ListRow> &given, i
     QStringList out;
     out << kBold + head.title.left(columns) + kReset;
     out << kBold + head.big + kReset + kDim + (QStringLiteral(" · ") + head.beside).left(qMax(0, columns - int(head.big.size()))) + kReset;
-    out << blocks(columns, head.share, levelIndex(head.share));
+    if (head.bars)
+        out << blocks(columns, head.share, levelIndex(head.share));
     // The line under the bar, on as many lines as it needs.
     QString rest = head.line;
     if (rest.size() <= columns)
@@ -436,16 +453,23 @@ inline QString drawListAnsi(const ListHead &head, const QList<ListRow> &given, i
     if (rows.isEmpty())
         out << kDim + head.empty.left(columns) + kReset;
     // name, a bar (where there is room for one), the size
-    const int sizeWidth = 9;
-    const int barWidth = columns >= 40 ? qBound(6, columns / 5, 24) : 0;
+    int sizeWidth = 9; // as wide as the widest of them, within reason ("×12 · 15 Nov 17:38")
+    for (const ListRow &row : rows)
+        sizeWidth = qMax(sizeWidth, qMin(int(row.size.size()), 20));
+    sizeWidth = qMin(sizeWidth, qMax(9, columns / 3));
+    const int barWidth = head.bars && columns >= 40 ? qBound(6, columns / 5, 24) : 0;
     const int nameWidth = columns - sizeWidth - 1 - (barWidth ? barWidth + 1 : 0);
     for (const ListRow &row : rows) {
         const QString mark = row.mark.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(row.mark).left(qMax(0, nameWidth - 2));
         const QString name = padded(row.name, qMax(1, qMin(int(row.name.size()), nameWidth - int(mark.size()))));
-        QString line = kReset + name + kDim + mark + kReset + QString(qMax(0, nameWidth - int(name.size()) - int(mark.size())), QLatin1Char(' ')) + QLatin1Char(' ');
+        const QString wrong = sgr(kFull); // red, for what something is wrong with
+        QString line = (row.bad ? wrong : kReset) + name + kDim + mark + kReset + QString(qMax(0, nameWidth - int(name.size()) - int(mark.size())), QLatin1Char(' '))
+                       + QLatin1Char(' ');
         if (barWidth)
             line += blocks(barWidth, row.share, kAccent) + QLatin1Char(' ');
-        out << line + padded(row.size, sizeWidth, true);
+        out << line + (row.bad ? wrong + padded(row.size, sizeWidth, true) + kReset : padded(row.size, sizeWidth, true));
+        if (!head.bars && !row.about.isEmpty()) // a list to read: what it says, on a line of its own
+            out << kDim + QStringLiteral("  ") + row.about.left(qMax(0, columns - 2)) + kReset;
     }
     if (!head.more.isEmpty())
         out << kDim + head.more.left(columns) + kReset;

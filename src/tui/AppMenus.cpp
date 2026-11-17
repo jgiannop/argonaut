@@ -2,6 +2,7 @@
 // line, the menu a right click opens, and the list of commands the palette
 // is made from. A part of App in a file of its own: App.cpp is long enough.
 
+#include "ClaudeReports.h"
 #include "App.h"
 
 #include "Frames.h"
@@ -145,6 +146,13 @@ QList<App::Menu> App::menus()
     go.items.append(item(QStringLiteral("Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace)), true, QStringLiteral("Go Up")));
     go.items.append(item(QStringLiteral("Home"), QStringLiteral("~"), press(Key::character('~')), true, QStringLiteral("Go Home")));
     go.items.append(item(QStringLiteral("Go to Folder…"), QStringLiteral("Ctrl+L"), press(Key::control('l'))));
+    // Every answer Claude gives is kept as a page (ClaudeReports): the folder they are in.
+    go.items.append(item(QStringLiteral("Claude Reports"), QString(), [this] {
+        if (QFileInfo(ClaudeReports::folder()).isDir())
+            navigate(pane(), ClaudeReports::folder());
+        else
+            say(QStringLiteral("No reports yet: every answer Claude gives is kept there"));
+    }, true, QStringLiteral("Go to Claude Reports")));
     go.items.append(line());
     // The places, each by its name.
     if (m_places.isEmpty())

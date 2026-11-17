@@ -1,7 +1,7 @@
 {
     "id": "system-dashboard",
     "name": "System Dashboard",
-    "description": "View → System Dashboard (or the command palette): processor, memory and disk use as gauges, what the system is, and the network's download and upload, in the preview pane. It updates every two seconds while it is shown.",
+    "description": "View → System Dashboard (or the command palette): processor, memory and disk use as gauges, the system's health (load, swap, temperature, what the drives say of themselves), the space on every disk, what the system is, and the network's download and upload, in the preview pane. It updates every two seconds while it is shown.",
     "version": "@PROJECT_VERSION@",
     "author": "Argonaut",
     "protocol": 1,

@@ -1,0 +1,12 @@
+{
+    "id": "system-journal",
+    "name": "System Journal",
+    "description": "View → System Journal (or the command palette): the errors and warnings the system and its programs have written to the journal since it started, newest first, the same message said once with how often it came. Errors are red. It only reads (journalctl), every ten seconds while it is shown. Under the list, Analyze with Claude asks Claude which of them matter and what they mean (the messages are sent to Anthropic as they are, only when you press the button: they can name users, computers, addresses and files).",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "journal", "label": "System Journal", "menu": "view"}],
+    "exec": ["@ARGONAUT_JOURNAL_EXTENSION_EXE@"]
+}

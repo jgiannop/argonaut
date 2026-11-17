@@ -30,6 +30,8 @@ struct Analysis
     QString reportId; // the report's ("services-report")
     QString title;    // "Running Services"
     QString things;   // "services", in a sentence
+    // Said under every report: what it is, and what it is not.
+    QString caution = QStringLiteral("Claude's reading of the list, not a security scan: it sees names and paths, not what the programs do");
 
     // How many there are to ask about now (0: none yet).
     std::function<int()> count;
@@ -119,10 +121,14 @@ struct Analysis
             }
             if (message.value(QLatin1String("stop_reason")).toString() == QLatin1String("max_tokens"))
                 report += QStringLiteral("\n\n*The report was cut short: it reached the length limit.*");
-            QStringList notes{QStringLiteral("Claude's reading of the list, not a security scan: it sees names and paths, not what the programs do")};
+            QStringList notes{caution};
             const double dollars = message.value(QLatin1String("dollars")).toDouble();
             if (dollars > 0)
                 notes << QStringLiteral("this cost about $%1").arg(QString::number(dollars, 'f', 3));
+            // Argonaut keeps every report, with what was sent: where it is.
+            const QString kept = message.value(QLatin1String("report_file")).toString();
+            if (!kept.isEmpty())
+                notes << QStringLiteral("kept as %1 in claudeReports").arg(kept.section(QLatin1Char('/'), -1));
             // Under the list, which stays on screen (where it no longer is, or in the
             // terminal, the report is a result of its own, with the way back).
             send({{QStringLiteral("type"), QStringLiteral("show")},

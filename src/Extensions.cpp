@@ -878,6 +878,7 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
     ext->lastActive = now;
     ext->claudeWaiting << id;
     emit claudeWaiting(extension, ext->manifest.name, int(ext->claudeWaiting.size()));
+    m_claude->setAskedBy(ext->manifest.name); // the answer is kept as a report under its name
     m_claude->send(request, [this, running, id, extension](const Claude::Response &response, const Claude::Error &error) {
         if (response.dollars > 0) { // paid, whether or not the extension is still there to hear the answer
             QSettings settings;
@@ -898,6 +899,8 @@ void Host::askClaude(Running *ext, const QJsonObject &message)
         } else {
             answer.insert(QStringLiteral("response"), response.message);
             answer.insert(QStringLiteral("text"), response.text);
+            if (!response.reportFile.isEmpty()) // where the answer, and what was sent, can be read again
+                answer.insert(QStringLiteral("report_file"), response.reportFile);
             answer.insert(QStringLiteral("stop_reason"), response.stopReason);
             answer.insert(QStringLiteral("dollars"), response.dollars);
         }

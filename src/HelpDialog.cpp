@@ -557,11 +557,21 @@ off there if you don't want it. It never has your key: it tells Argonaut what to
 <p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
 of some files (some text, the first pages of a PDF, a small preview of an image). <b>Preferences → Claude</b> sets the
 default (names only, ask, or read when needed) and the model, and shows what you've spent.</p>
+<p><b>Every answer is kept.</b> Whatever asks Claude for you (Organize, the reports on services, processes and the
+journal, any extension), each answer is written as a page in the folder <code>claudeReports</code> of Argonaut's data
+(<code>~/.local/share/argonaut/claudeReports</code>): <b>Go → Claude Reports</b> opens it. A page is named after what
+asked and when, for example <code>running_services_report_17.11.26_12.54.31.md</code> (day, month, year, then the
+time), and holds Claude's answer and under it everything that was sent: the instructions the program gave Claude, the
+whole list or conversation, what you typed with it, and the settings. Pictures and files that went along are named
+with their size, not copied; your API key is never in it. The pages are Markdown, so Space shows them formatted.
+Only you can read them. Argonaut never deletes them: remove the ones you don't want.</p>
 <p><b>Analyze with Claude</b> under the list of <a href="topic:extensions">running services</a> sends each service's
 name, description, memory, whose it is, and the path of its program and of its unit file, with what you typed beside
 the button. A program's arguments are never sent. It is one request; what it cost is said under the report.
 Under the list of running processes it sends each process's name, ID, the ID of the process that started it, whose
-it is, its memory and the program that was started (the 400 biggest), and never its arguments.</p>
+it is, its memory and the program that was started (the 400 biggest), and never its arguments. Under the System
+Journal it sends the messages themselves (the 150 most important kinds, with who wrote them, how often and when),
+which can name users, computers, addresses and files.</p>
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(
@@ -600,7 +610,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b> and
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b> and
 <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
@@ -614,7 +624,15 @@ always says which extension is asking; what you type there, a password included,
 ([[Ctrl+Shift+P]]). The preview
 pane shows how busy the computer is: the processor, the memory and the disk the folder is on as gauges, what
 the system is, and the network's download and upload. It updates every two seconds until you select a file
-or close the pane.</p>
+or close the pane, and scrolls where it is longer than the pane.</p>
+<p>Under the gauges is its <b>Health</b> card: the <i>load</i> (the average over the last 1, 5 and 15 minutes,
+against the number of processor cores), how much <i>swap</i> is in use, the <i>temperature</i> where the computer
+has sensors, and a line for each <i>drive</i> with what it says of itself (SMART): OK, how many bad sectors a hard
+disk has found, how worn an NVMe drive is, its temperature, or that it is failing. A value worth a look is orange,
+a bad one red: a load above the number of cores, swap more than half used, 85 °C and more, bad sectors, a failing
+drive. The drives' data comes from the desktop's disk service, without asking for a password; a computer without it
+(a server) shows no drive lines. Then <b>Disks</b>: every disk that is mounted, with how full it is (orange from
+75%, red from 90%).</p>
 <p><b>Space Overview</b>: choose <b>View → Space Overview</b>, or find it in the command palette. The preview
 pane shows how big the open folder is, how full its disk is, and the biggest folders and files directly inside
 it, each with a bar for its share. It is a quick look and only shows: it measures when you choose it (choose it
@@ -628,6 +646,11 @@ is that of all its programs together, as systemd counts it. Beside each name is 
 or click it, and a tooltip says what the service is (its description, in systemd's own words), its full unit name
 and whether it is the system's or your session's. That is where to look when the pane is too narrow to show the
 description after the name.</p>
+<p><b>Services that failed</b> (they didn't start, or stopped when they shouldn't have) are the first rows of the
+list, in red, with <i>failed</i> where the memory would be; the heading says how many there are, or <i>none
+failed</i>. The ⓘ of such a row also says how it failed, in systemd's words, and the command that shows why
+(<code>systemctl status …</code>). Search for "failed" to see only those. Claude is told about them too, and its
+report starts with them.</p>
 <p>Under the list is <b>Analyze with Claude</b>, with a field at its left. Press the button and Claude reads the
 list as it is now and writes a report: the overall picture, anything worth a closer look and why (a program running
 from an unusual folder, a name that imitates a well-known service, far more memory than such a service needs) with a
@@ -637,6 +660,21 @@ service doing", "tell me only about the bus service") and Claude answers that. <
 the ✕ on the report closes it. Ask again, with another question, and the new answer replaces it. It needs your Claude API key (Preferences → Claude) and is billed to your Anthropic account; the cost of
 each report is said under it. It is Claude's reading of names and paths, not a security scan, and nothing is ever
 started, stopped or changed.</p>
+<p><b>System Journal</b>: choose <b>View → System Journal</b>, or find it in the command palette. The preview pane
+lists the errors and warnings that the system and its programs have written to the journal since the computer
+started: errors first, in red, then the warnings, newest first. A journal repeats itself, so the same message from
+the same program is one row, with how often it came (×12) and when last. Each row has who wrote it (<i>kernel</i> is
+the system itself), its level, and the message under it; the <b>ⓘ</b> shows the whole message and the service it
+belongs to. A few kernel messages are shown as errors whatever they are filed as, because they matter: running out of
+memory, a disk's or a file system's errors. Search by who wrote it, by words of the message, or by level ("error").
+It updates every ten seconds and only reads. If your user may not read the system's journal (it isn't in the
+<i>adm</i> or <i>systemd-journal</i> group), only your own session's messages are listed, and the heading says so.</p>
+<p>Under the list is <b>Analyze with Claude</b>, as under the services and the processes: most of a journal is
+harmless noise, and Claude says what, if anything, deserves attention (hardware and data first), what it means in
+plain words, a command that only looks closer, and what is safe to ignore. Type a question in the field first
+("why did chrome close?") and it answers that. The list stays; the report is in the part of the pane under it.
+<b>The messages are sent to Anthropic as they are</b>, for the 150 most important kinds of message: they can name
+users, computers, network addresses and files, so look at the list before you press the button.</p>
 <p><b>Running Processes</b>: choose <b>View → Running Processes</b>, or find it in the command palette. The preview
 pane lists every process that is running now, the one using the most memory first, with how it was
 started, its process ID in a column of its own and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
@@ -743,8 +781,8 @@ its key.</li>
 extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
 drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
-the biggest things inside it, and <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory
-first ([[Tab]] to the preview, then [[/]] searches the list by name).</li>
+the biggest things inside it, <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory
+first, and <b>System Journal</b> lists the errors and warnings since the system started ([[Tab]] to the preview, then [[/]] searches a list).</li>
 <li><b>Connect to Server and Organize with Claude</b> work there too. What an extension asks (a login, your
 wishes) is a box over the files: [[Tab]] or the arrows go round its fields and buttons, [[Space]] changes a tick
 or a choice, [[Enter]] goes on and [[Esc]] cancels; a password is shown as dots. What it proposes (Claude's plan)
