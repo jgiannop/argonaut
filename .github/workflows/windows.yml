@@ -27,7 +27,15 @@ jobs:
 
       # Everything is built even after an error, so one run shows all there is to fix.
       - name: Build
-        run: cmake --build build/windows --target argonaut -- -k 0
+        shell: pwsh
+        run: |
+          cmake --build build/windows --target argonaut -- -k 0 2>&1 | Tee-Object -FilePath build.log
+          exit $LASTEXITCODE
+
+      # The log can't be read without signing in; notes on the run can.
+      - name: The errors, as notes
+        if: failure()
+        run: python .github/scripts/errors_as_notes.py build.log
 
       - name: Put the program and its Qt libraries together
         run: |
