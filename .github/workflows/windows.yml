@@ -115,6 +115,13 @@ jobs:
           python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"
           python .github/scripts/errors_as_notes.py tests-build.log "build: tests, compiling"
           python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "FAIL!|Loc: |QFATAL|ASSERT|Passed|Failed|Timeout|Not Run|Exception|Totals|tests passed|No tests|0xc0|cannot|not found"
-          ctest --test-dir build/windows-tests --timeout 120 -V -R "^(contenttype|places|defaultfm|bookmarks)$" 2>&1 | Tee-Object -FilePath tests-few.log
-          python .github/scripts/errors_as_notes.py tests-few.log "build: tests, a few in full" "."
+          # One of those that stop at once, run by hand: what it prints and how it ends.
+          $env:ARGONAUT_TRASH_HOME_ONLY = "1"; $env:ARGONAUT_KEYSTORE = "file"; $env:QT_DEBUG_PLUGINS = "1"
+          foreach ($platform in "offscreen", "windows") {
+            $env:QT_QPA_PLATFORM = $platform
+            "== tst_contenttype with $platform" | Tee-Object -FilePath tests-few.log -Append
+            cmd /c "build\windows-tests\tst_contenttype.exe 2>&1" | Select-Object -Last 25 | Tee-Object -FilePath tests-few.log -Append
+            "exit code: $LASTEXITCODE (hex $('{0:x}' -f $LASTEXITCODE))" | Tee-Object -FilePath tests-few.log -Append
+          }
+          python .github/scripts/errors_as_notes.py tests-few.log "build: tests, one by hand" "."
           exit 0
