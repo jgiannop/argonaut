@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: 1
     steps:
       - uses: actions/checkout@v5
 
@@ -48,3 +50,18 @@ jobs:
         with:
           name: argonaut-windows
           path: dist
+
+      # The tests, where they stand on Windows: built and run to see what there
+      # is to do. Nothing here fails the job yet.
+      - name: Tests (to see where they stand)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | Tee-Object -FilePath tests-configure.log
+          cmake --build build/windows-tests -- -k 0 2>&1 | Tee-Object -FilePath tests-build.log
+          ctest --test-dir build/windows-tests --timeout 300 2>&1 | Tee-Object -FilePath tests-run.log
+          python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"
+          python .github/scripts/errors_as_notes.py tests-build.log "build: tests, compiling"
+          python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "Passed|Failed|Timeout|Not Run|Exception|tests passed|No tests"
+          exit 0
