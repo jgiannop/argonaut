@@ -90,6 +90,8 @@ QList<App::Menu> App::menus()
     edit.items.append(line());
     edit.items.append(item(QStringLiteral("Select All"), QStringLiteral("Ctrl+A"), press(Key::control('a'))));
     edit.items.append(item(QStringLiteral("Clear the Selection"), QStringLiteral("Esc"), press(Key::of(Key::Escape)), !p.selected.isEmpty()));
+    edit.items.append(line());
+    edit.items.append(item(QStringLiteral("Claude API Key…"), QString(), [this] { setClaudeKey(); }));
     fromExtensions(&edit.items, "edit");
     list.append(edit);
 

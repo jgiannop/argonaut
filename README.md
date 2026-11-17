@@ -211,6 +211,7 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | View → Effects | on by default: exact theme colours, names coloured by kind, hover, rounded menus with a shadow, smooth bars; off for the plain look or a slow line |
 | Ctrl+P | the command palette: type a few letters of what you want ("new", "trash", "big") and press Enter. Themes are there too ("theme forest"): the window's themes and your own theme files, or the terminal's own colours |
 | Tab / Shift+Tab | the next of the panes and the places at the left |
+| in a box an extension opens | Connect to Server's login and Organize with Claude's questions: Tab or the arrows go round the fields and buttons, Space changes a tick or a choice, Enter goes on, Esc cancels. Claude's plan is a list to tick: Space ticks, `a` is all or none, Enter applies (Ctrl+Z undoes it), Esc changes nothing. Edit → Claude API Key… is where the key is typed on a machine without the window |
 | Ctrl+B | show or hide the places at the left (Recent, Starred, Home…, Trash, bookmarks, drives); in them Enter, or a click, opens one in the pane |
 | F9 | the pane as a list with sizes and dates, a grid of names, or big icons, in turn (in a grid the arrows move four ways, Enter opens and Backspace goes up) |
 | Space or Insert | select |

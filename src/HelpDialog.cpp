@@ -702,6 +702,13 @@ colours are the default): <b>System Dashboard</b> opens in the preview at the ri
 drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
 the biggest things inside it, and <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory
 first ([[Tab]] to the preview, then [[/]] searches the list by name).</li>
+<li><b>Connect to Server and Organize with Claude</b> work there too. What an extension asks (a login, your
+wishes) is a box over the files: [[Tab]] or the arrows go round its fields and buttons, [[Space]] changes a tick
+or a choice, [[Enter]] goes on and [[Esc]] cancels; a password is shown as dots. What it proposes (Claude's plan)
+is a list with a tick for every change: [[Space]] ticks, [[a]] is all or none, [[Enter]] applies what is ticked
+(and [[Ctrl+Z]] undoes it), [[Esc]] changes nothing. While Claude is being asked the message line says so, and
+[[Esc]] stops waiting. On a machine without this window, <b>Edit → Claude API Key…</b> is where the key is typed
+(as dots); it is kept as it is here and no extension ever sees it.</li>
 <li><b>Effects</b> (View → Effects, on unless you switch them off): a theme in its exact colours where the terminal
 can show any colour, names in the colour of their kind (pictures, archives, code), the row under the mouse lit up,
 menus with rounded corners and a shadow over a dimmed screen, and scrollbars and bars that move by eighths of a

@@ -144,22 +144,30 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
             [this](const QString &, const QString &folder) { navigate(pane(), folder); });
     connect(Extensions::Host::instance(), &Extensions::Host::message, this,
             [this](const QString &, const QString &text) { say(text); });
-    // What an extension wants to ask (a login) has no dialog here yet: it
-    // is told no, and the user why nothing happens.
-    connect(Extensions::Host::instance(), &Extensions::Host::formRequested, this, [this](const Extensions::Form &form) {
-        if (!Extensions::Host::instance()->takeForm(form.extension, form.id))
-            return;
-        Extensions::Host::instance()->answerForm(form.extension, form.id, true);
-        say(QStringLiteral("“%1” has something to ask, which only the window version can show yet").arg(form.extensionName));
-    }, Qt::QueuedConnection);
-    // Nor changes an extension proposes (a plan): dismissed, and said so, so
-    // the extension isn't left waiting.
-    connect(Extensions::Host::instance(), &Extensions::Host::planRequested, this, [this](const Extensions::Plan &plan) {
-        if (!Extensions::Host::instance()->takePlan(plan.extension, plan.id))
-            return;
-        Extensions::Host::instance()->answerPlan(plan.extension, plan.id, true);
-        say(QStringLiteral("“%1” proposes changes, which only the window version can show yet").arg(plan.extensionName));
-    }, Qt::QueuedConnection);
+    // What an extension asks (a login) and the changes one proposes (a plan)
+    // are boxes over the files (AppDialogs.cpp). The host hands out one at a
+    // time and only for something the user chose; a menu that happens to be
+    // open gives way, a question that is being answered is answered first.
+    connect(Extensions::Host::instance(), &Extensions::Host::formRequested, this, &App::formArrived, Qt::QueuedConnection);
+    connect(Extensions::Host::instance(), &Extensions::Host::planRequested, this, &App::planArrived, Qt::QueuedConnection);
+    // Claude is being asked something for an extension, which takes a while:
+    // the message line says so, with the seconds, until the answer is there.
+    m_claudeTimer.setInterval(1000);
+    connect(&m_claudeTimer, &QTimer::timeout, this, &App::changed);
+    connect(Extensions::Host::instance(), &Extensions::Host::claudeWaiting, this,
+            [this](const QString &extension, const QString &name, int waiting) {
+                if (waiting > 0) {
+                    if (m_claudeExtension != extension)
+                        m_claudeSince.start();
+                    m_claudeExtension = extension;
+                    m_claudeName = name;
+                    m_claudeTimer.start();
+                } else if (extension == m_claudeExtension) {
+                    m_claudeExtension.clear();
+                    m_claudeTimer.stop();
+                }
+                emit changed();
+            });
     m_messageTimer.setSingleShot(true);
     m_messageTimer.setInterval(4000);
     connect(&m_messageTimer, &QTimer::timeout, this, [this] {
@@ -213,6 +221,35 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
 }
 
 App::~App() = default;
+
+// A box of an extension's can open now: nothing else is being answered. A
+// menu, the palette or the help that is open gives way to it.
+bool App::roomForABox()
+{
+    if (m_mode == Mode::Menu || m_mode == Mode::Palette || m_mode == Mode::Help)
+        m_mode = Mode::Normal;
+    return m_mode == Mode::Normal;
+}
+
+void App::formArrived(const Extensions::Form &form)
+{
+    if (!roomForABox()) { // a question is open: after it
+        QTimer::singleShot(300, this, [this, form] { formArrived(form); });
+        return;
+    }
+    if (Extensions::Host::instance()->takeForm(form.extension, form.id))
+        showForm(form);
+}
+
+void App::planArrived(const Extensions::Plan &plan)
+{
+    if (!roomForABox()) {
+        QTimer::singleShot(300, this, [this, plan] { planArrived(plan); });
+        return;
+    }
+    if (Extensions::Host::instance()->takePlan(plan.extension, plan.id))
+        showPlan(plan);
+}
 
 // -------------------------------------------------------------- state ---
 
@@ -755,6 +792,7 @@ void App::jobFinished(FileJob *job)
 void App::prompt(const QString &label, const QString &text, int selectTo, std::function<void(const QString &)> done, bool emptyToo)
 {
     m_promptEmptyToo = emptyToo;
+    m_promptSecret = false;
     m_mode = Mode::Prompt;
     m_promptLabel = label;
     m_promptText = text;
@@ -910,6 +948,12 @@ void App::key(const Key &key)
     case Mode::Menu:
         menuKey(key);
         return;
+    case Mode::Form:
+        formKey(key);
+        return;
+    case Mode::Plan:
+        planKey(key);
+        return;
     case Mode::Help: {
         // Longer than the screen: the arrows and the page keys move through
         // it. Any other key closes it.
@@ -1054,6 +1098,14 @@ void App::mouse(const Mouse &mouse)
     }
     if (m_mode == Mode::Menu || (m_mode == Mode::Normal && mouse.y == 0)) {
         mouseInMenus(mouse);
+        return;
+    }
+    if (m_mode == Mode::Form) {
+        mouseInForm(mouse);
+        return;
+    }
+    if (m_mode == Mode::Plan) {
+        mouseInPlan(mouse);
         return;
     }
     if (m_mode != Mode::Normal)
@@ -1436,6 +1488,11 @@ void App::normalKey(const Key &key)
             ask({QStringLiteral("Stop"), QStringLiteral("Stop the running file operation?"),
                  QStringLiteral("What is already done stays done."), QStringLiteral("Stop")},
                 [this] { m_ops->cancelAll(); });
+        } else if (isWaitingForClaude()) {
+            // Not waiting any longer: the extension hears an error at once,
+            // and the answer, when it comes, is dropped (it is still paid for).
+            Extensions::Host::instance()->stopWaitingForClaude(m_claudeExtension);
+            say(QStringLiteral("Not waiting for Claude any longer"));
         } else if (!p.selected.isEmpty()) {
             p.selected.clear();
             emit changed();
@@ -1578,6 +1635,10 @@ void App::render(Screen &screen)
         drawPalette(screen); // over everything
     if (m_mode == Mode::Menu)
         drawMenu(screen);
+    if (m_mode == Mode::Form)
+        drawForm(screen);
+    if (m_mode == Mode::Plan)
+        drawPlan(screen);
     if (m_shell && m_inShell && m_mode == Mode::Normal) {
         int x = 0, y = 0;
         if (m_shell->cursor(&x, &y) && y < shellHeight - 1)
@@ -2596,6 +2657,11 @@ QString App::statusText() const
             text += QStringLiteral(" · %1").arg(progress.current);
         return text + QStringLiteral("   (Esc stops it)");
     }
+    if (isWaitingForClaude()) {
+        const qint64 seconds = m_claudeSince.elapsed() / 1000;
+        return QStringLiteral("“%1” is asking Claude…%2   (Esc stops waiting)")
+            .arg(m_claudeName, seconds >= 3 ? QStringLiteral(" %1 s").arg(seconds) : QString());
+    }
     return m_message;
 }
 
@@ -2612,6 +2678,18 @@ void App::drawBottom(Screen &screen)
         screen.put(1, keysY, QStringLiteral("Type to find a command   Up/Down: choose   Enter: do it   Esc: close"), kBar);
         return;
     }
+    if (m_mode == Mode::Form) {
+        screen.put(1, keysY, QStringLiteral("Tab/Up/Down: next   Space or Left/Right: change   Enter: go on   Esc: Cancel"), kBar);
+        return;
+    }
+    if (m_mode == Mode::Plan) {
+        const int kept = planKeptCount();
+        screen.put(1, keysY,
+                   QStringLiteral("Space: tick   a: all or none   Enter: %1   Esc: Dismiss")
+                       .arg(kept == 0 ? QStringLiteral("nothing to apply") : kept == 1 ? QStringLiteral("Apply 1 change") : QStringLiteral("Apply %1 changes").arg(kept)),
+                   kBar);
+        return;
+    }
     if (m_mode == Mode::Prompt) {
         const Style label{Ink::Accent, Paper::Normal, true};
         const int used = screen.put(1, messageY, m_promptLabel, label);
@@ -2620,12 +2698,14 @@ void App::drawBottom(Screen &screen)
         const Style field{Ink::Normal, Paper::Field, false};
         screen.fill(fieldX, messageY, fieldWidth, 1, field);
         // Keep the cursor in view in a long text.
-        const int cursorCells = Screen::widthOf(m_promptText.left(m_promptCursor));
+        // A key is typed as dots: it is never on screen.
+        const QString shown = m_promptSecret ? QString(m_promptText.size(), QChar(0x2022)) : m_promptText;
+        const int cursorCells = Screen::widthOf(shown.left(m_promptCursor));
         int skip = 0;
-        while (Screen::widthOf(m_promptText.mid(skip, m_promptCursor - skip)) > fieldWidth - 1)
+        while (Screen::widthOf(shown.mid(skip, m_promptCursor - skip)) > fieldWidth - 1)
             ++skip;
-        screen.put(fieldX, messageY, m_promptText.mid(skip), field, fieldWidth);
-        screen.setCursor(fieldX + cursorCells - Screen::widthOf(m_promptText.left(skip)), messageY);
+        screen.put(fieldX, messageY, shown.mid(skip), field, fieldWidth);
+        screen.setCursor(fieldX + cursorCells - Screen::widthOf(shown.left(skip)), messageY);
         screen.put(1, keysY, QStringLiteral("Enter: OK   Esc: Cancel"), kBar);
         return;
     }
@@ -2745,7 +2825,13 @@ void App::drawHelp(Screen &screen)
         "  Ctrl+R                            read the folder again",
         "",
         "  Space, Insert                     select and go down      Ctrl+A   select all",
-        "  Esc                               clear the selection (or stop a running operation)",
+        "  Esc                               clear the selection (or stop a running operation, or waiting for Claude)",
+        "",
+        "  What an extension asks (a login for Connect to Server, how to Organize with Claude) is a box over",
+        "  the files: Tab or Up/Down go round its fields and buttons, Space or Left/Right change a tick or a",
+        "  choice, Enter goes on, Esc cancels. What it proposes (a plan) is a list to tick: Space ticks,",
+        "  a is all or none, Enter applies what is ticked (Ctrl+Z undoes it), Esc changes nothing.",
+        "  Edit > Claude API Key... is where the key is typed, once, for every extension that asks Claude.",
         "",
         "  F5 / F6                           copy / move to the other pane",
         "  F7                                new folder",

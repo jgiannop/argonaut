@@ -121,6 +121,12 @@ public:
     QString typedName() const { return m_typed; } // the name being typed to go to (tests)
     void setTypeAheadPause(int ms) { m_typeAheadMs = ms; } // how long without a key ends that name (tests: they needn't wait a second)
     bool isAsking() const { return m_mode != Mode::Normal; } // a question or a text field is open
+    // What an extension asks (a login) and what it proposes (a plan) are
+    // boxes over the files here; while Claude is being asked something for
+    // an extension the message line says so.
+    bool isFormOpen() const { return m_mode == Mode::Form; }
+    bool isPlanOpen() const { return m_mode == Mode::Plan; }
+    bool isWaitingForClaude() const { return !m_claudeExtension.isEmpty(); }
     bool isBusy() const;                // a file operation is running
     bool isLoading() const;             // a folder is still being listed
     FileOperations *operations() const { return m_ops; }
@@ -166,7 +172,7 @@ private:
         int hover = -1;        // the row of the list under the mouse (-1: none)
         bool widthStale = true;
     };
-    enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette, Menu };
+    enum class Mode { Normal, Prompt, Question, Conflict, Help, Palette, Menu, Form, Plan };
     // The menus of the top line (File, Edit, View, Go, Help; Alt and the
     // first letter, or a click). An item is a command of the palette too.
     struct MenuItem
@@ -372,6 +378,47 @@ private:
     QString m_message;
     QTimer m_messageTimer;
 
+    // An extension's form (AppDialogs.cpp): one at a time, as the host
+    // hands them out. The stops the keys go round are the fields that are
+    // on, then the buttons, then Cancel.
+    void showForm(const Extensions::Form &form);
+    void closeForm(bool cancelled, int button);
+    void formKey(const Key &key);
+    void drawForm(Screen &screen);
+    void mouseInForm(const Mouse &mouse);
+    QList<int> formStops() const;      // a field's number, or -1 - n for button n (the last is Cancel)
+    QStringList formButtons() const;   // the form's own (or "OK"), then "Cancel"
+    bool formFieldOff(int field) const; // an "alone" tick is on: the other fields don't count
+    void formStep(int by);
+    Extensions::Form m_form;
+    QStringList m_formValues;          // a value a field
+    int m_formStop = 0;                // into formStops()
+    int m_formCaret = 0;               // in the text being typed
+    struct FormSpot { int x, y, width, stop; };
+    QList<FormSpot> m_formSpots;       // from the last frame, for the mouse
+    // An extension's plan: its report, then a line a move to tick.
+    void showPlan(const Extensions::Plan &plan);
+    void closePlan(bool apply);
+    void planKey(const Key &key);
+    void drawPlan(Screen &screen);
+    void mouseInPlan(const Mouse &mouse);
+    int planKeptCount() const;
+    Extensions::Plan m_plan;
+    QList<bool> m_planKept;
+    int m_planCursor = 0, m_planTop = 0;
+    int m_planHead = 0;                // lines above the moves (the report), from the last frame
+    int m_planX = 0, m_planY = 0, m_planWidth = 0, m_planShown = 0, m_planTotal = 0;
+    // Claude is being asked something for an extension.
+    QString m_claudeExtension, m_claudeName;
+    QElapsedTimer m_claudeSince;
+    QTimer m_claudeTimer;              // a second: the count on the message line moves
+    void setClaudeKey();               // Edit → Claude API Key…
+    void backToNormal();               // a box closed: the next question in line, if any
+    bool roomForABox();                // nothing else is being answered (a menu gives way)
+    void formArrived(const Extensions::Form &form);
+    void planArrived(const Extensions::Plan &plan);
+
+    bool m_promptSecret = false;       // what is typed is shown as dots (a key)
     QString m_promptLabel;
     QString m_promptText;
     int m_promptCursor = 0;

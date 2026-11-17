@@ -302,7 +302,6 @@ private:
     QHash<QString, QMenu *> m_extensionMenus; // "view" → the View menu
     void showExtensionResult(const QString &extension, const QString &title, const Extensions::PreviewReply &content);
     QMenu *scriptsMenu(const QStringList &selection);
-    void applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves);
     QAction *m_searchContentsAct = nullptr; // search also inside files (search/contents)
     QToolButton *m_filterButton = nullptr;  // search filters: type and date
     QActionGroup *m_typeFilters = nullptr;

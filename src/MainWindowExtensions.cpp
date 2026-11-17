@@ -12,6 +12,7 @@
 #include "FileJob.h"
 #include "FileOperations.h"
 #include "PathBar.h"
+#include "PlanApply.h"
 #include "QuickLook.h"
 
 #include <QApplication>
@@ -76,41 +77,6 @@ void MainWindow::showExtensionResult(const QString &extension, const QString &ti
         toggleQuickLook();
     if (m_quickLook)
         m_quickLook->showResult(title.isEmpty() ? extension : title, extension, content);
-}
-
-// A plan's kept moves (an extension proposed them: applyExtensionPlan): new
-// folders first (undoable on their own), then one move job with renames
-// ("Undo Organize" puts everything back).
-void MainWindow::applyOrganizePlan(const QString &folder, const QList<QPair<QString, QPair<QString, QString>>> &moves)
-{
-    QList<TransferResult> created; // the top-most folders made for the plan
-    QList<Transfer> transfers;
-    for (const auto &m : moves) {
-        const QString &item = m.first;
-        const QString &sub = m.second.first;
-        const QString &newName = m.second.second;
-        QString dir = folder;
-        for (const QString &part : sub.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
-            dir += QLatin1Char('/') + part;
-            if (!QFileInfo::exists(dir)) {
-                if (!QDir().mkdir(dir)) {
-                    showMessage(tr("Couldn't create the folder “%1”").arg(part));
-                    return;
-                }
-                bool inside = false;
-                for (const TransferResult &c : std::as_const(created))
-                    inside = inside || dir.startsWith(c.target + QLatin1Char('/'));
-                if (!inside)
-                    created.append({QString(), dir});
-            }
-        }
-        transfers.append({folder + QLatin1Char('/') + item, dir, newName.isEmpty() ? item : newName});
-    }
-    if (!created.isEmpty())
-        m_ops->recordUndo(FileJob::Kind::Copy, created, tr("New Folders"));
-    if (!transfers.isEmpty())
-        m_ops->moveItems(transfers, tr("Organize"));
-    showMessage(transfers.size() == 1 ? tr("Organizing 1 item…") : tr("Organizing %1 items…").arg(transfers.size()));
 }
 
 // ⏏ on a row an extension added (a connected server): the extension does
@@ -179,25 +145,8 @@ void MainWindow::showExtensionPlan(const Extensions::Plan &plan)
 // so it can be undone. The extension is told how many were.
 void MainWindow::applyExtensionPlan(const Extensions::Plan &plan, const QList<Extensions::PlanMove> &kept)
 {
-    QList<Extensions::PlanMove> moves = kept;
-    Extensions::Host::checkPlan(plan.folder, &moves);
-    QList<QPair<QString, QPair<QString, QString>>> doing;
-    int skipped = 0;
-    for (const Extensions::PlanMove &move : std::as_const(moves)) {
-        if (!move.problem.isEmpty())
-            ++skipped;
-        else
-            doing.append({move.item, {move.folder, move.newName}});
-    }
-    if (!doing.isEmpty())
-        applyOrganizePlan(plan.folder, doing);
-    Extensions::Host::instance()->answerPlan(plan.extension, plan.id, false, int(doing.size()), skipped);
-    if (skipped > 0) {
-        showMessage(doing.isEmpty() ? tr("Nothing was moved: the folder has changed since the plan was made")
-                                    : tr("Moving %1 items; %2 were left where they are: the folder has changed since the plan was made")
-                                          .arg(doing.size())
-                                          .arg(skipped));
-    }
+    // The same code carries a plan out for the terminal interface.
+    showMessage(PlanApply::message(PlanApply::run(m_ops, plan, kept)));
 }
 
 void MainWindow::showExtensionForm(const Extensions::Form &form)

@@ -74,6 +74,8 @@ qt_add_library(argonaut_core STATIC
     src/StatTime.h
     src/FileRules.h
     src/FileRules.cpp
+    src/PlanApply.h
+    src/PlanApply.cpp
     src/Tools.h
     src/Tools.cpp
     src/DesktopActions.h
@@ -238,6 +240,7 @@ qt_add_library(argonaut_tui STATIC
     src/tui/App.cpp
     src/tui/AppMenus.cpp
     src/tui/AppPreview.cpp
+    src/tui/AppDialogs.cpp
     src/tui/AppInternal.h
     src/tui/Frames.h
     src/tui/Shell.h

@@ -258,7 +258,7 @@ int main(int argc, char **argv)
                     tell(QStringLiteral("Organize: %1").arg(message.value(QLatin1String("error")).toObject().value(QLatin1String("message")).toString()));
                     finish();
                 } else if (!message.value(QLatin1String("hasKey")).toBool()) {
-                    tell(QStringLiteral("Organize with Claude needs your Claude API key: Preferences → Claude"));
+                    tell(QStringLiteral("Organize with Claude needs your Claude API key: Preferences → Claude (in the terminal: Edit → Claude API Key…)"));
                     finish();
                 } else {
                     // About what it will cost (counting is free), then the question.

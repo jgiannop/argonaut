@@ -7,6 +7,7 @@
 #include "Bookmarks.h"
 #include "DirectoryModel.h"
 #include "Extensions.h"
+#include "KeyStore.h"
 #include "FileOperations.h"
 #include "Screen.h"
 #include "TestSupport.h"
@@ -70,6 +71,10 @@ private slots:
     void commandPalette();
     void menus();
     void extensionResultInThePreview();
+    void extensionFormInABox();
+    void extensionPlanIsTickedAndApplied();
+    void waitingForClaudeIsSaid();
+    void claudeKeyIsTypedAsDots();
     void themes();
     void effects();
     void typingGoesToAName();
@@ -2070,6 +2075,261 @@ void TestTui::drawingABigFolderIsQuick()
     qInfo("a frame with a selection %.2f ms, without %.2f ms", withSelection, without);
     QVERIFY2(withSelection < without * 2 + 1.0, qPrintable(QStringLiteral("%1 against %2").arg(withSelection).arg(without)));
 }
+
+// What an extension asks (a login) is a box over the files: filled in with
+// the keys, named after its extension, a secret never drawn, and answered
+// once: with a button, or cancelled.
+void TestTui::extensionFormInABox()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    const QString fakeFolder = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake";
+    QFile::remove(fakeFolder + "/forms");
+    auto logged = [&] {
+        QFile file(fakeFolder + "/forms");
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    host->setEnabled("fake", true);
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QSignalSpy said(host, &Extensions::Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    auto askForIt = [&] {
+        for (const Extensions::Command &command : host->commands(m_left, {})) {
+            if (command.id == "form") {
+                host->invoke(command, m_left, {});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(askForIt(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(app->isFormOpen(), 10000);
+    QVERIFY(app->isAsking());
+    QString shown = screen(100, 30);
+    QVERIFY2(shown.contains("Log in to nas") && shown.contains("That didn't work") && shown.contains("Enter <b>it</b>"), qPrintable(shown));
+    QVERIFY2(shown.contains("Fake"), qPrintable(shown)); // whose form it is
+    QVERIFY2(shown.contains("[ ] Anonymously") && shown.contains("User") && shown.contains("‹ music ›"), qPrintable(shown));
+    QVERIFY2(shown.contains("[ Connect ]") && shown.contains("[ Later ]") && shown.contains("[ Cancel ]"), qPrintable(shown));
+    QVERIFY2(!shown.contains("never shown") && shown.contains("•••••"), qPrintable(shown)); // a secret is dots
+    QVERIFY(!shown.contains("one at a time")); // the second form waits, or is refused: one at a time
+
+    // The keys go round the fields: the user, the password, the share, where.
+    keys({Key::of(Key::Down), Key::control('u')});
+    type("john");
+    keys({Key::of(Key::Enter), Key::control('u')}); // Enter: on to the next field
+    type("pw");
+    QVERIFY(!screen(100, 30).contains("pw"));
+    keys({Key::of(Key::Down), Key::of(Key::Left)}); // music → photos
+    QVERIFY(screen(100, 30).contains("‹ photos ›"));
+    keys({Key::of(Key::Down), Key::of(Key::PageDown)}); // what was used before: "here"
+    QVERIFY(screen(100, 30).contains("here"));
+    // The mouse doesn't answer anything beside the box.
+    app->mouse({Tui::Mouse::Press, 1, 1});
+    QVERIFY(app->isFormOpen());
+    // Tab to the first button, and press it.
+    for (int i = 0; i < 6 && !screen(100, 30).contains("Enter: go on"); ++i)
+        keys({Key::of(Key::Tab)});
+    Tui::Screen s(100, 30);
+    for (int i = 0; i < 8; ++i) {
+        app->render(s);
+        if (s.cursorY() >= 0 && s.line(s.cursorY()).contains("[ Connect ]") && s.cursorX() < s.line(s.cursorY()).indexOf("[ Later ]"))
+            break;
+        keys({Key::of(Key::Tab)});
+    }
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("form john|pw|false|photos|here button 0"), 10000);
+
+    // Its next question comes as the next box; Esc is "no".
+    QTRY_VERIFY_WITH_TIMEOUT(app->isFormOpen() && screen(100, 30).contains("Are you sure?"), 10000);
+    shown = screen(100, 30);
+    QVERIFY2(shown.contains("[ Yes ]") && shown.contains("[ No & Never ]"), qPrintable(shown));
+    keys({Key::of(Key::Escape)});
+    QVERIFY(!app->isFormOpen() && !app->isAsking());
+    QTRY_VERIFY_WITH_TIMEOUT(logged().contains("\"id\": \"again\"") , 10000);
+    QVERIFY2(logged().split('\n').filter("again").first().contains("\"cancelled\": true"), qPrintable(logged()));
+
+    // A tick that stands alone: the other fields are passed over, and a
+    // click on a button presses it.
+    said.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(askForIt(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(app->isFormOpen() && screen(100, 30).contains("Log in to nas"), 10000);
+    keys({Key::character(' ')});
+    QVERIFY(screen(100, 30).contains("[x] Anonymously"));
+    keys({Key::of(Key::Down)}); // straight to the buttons
+    type("zzz");                // typed at a button: nothing
+    app->render(s);
+    int laterY = -1, laterX = -1;
+    for (int y = 0; y < 30; ++y) {
+        if (s.line(y).contains("[ Later ]")) {
+            laterY = y;
+            laterX = int(s.line(y).indexOf("[ Later ]")) + 3;
+        }
+    }
+    QVERIFY(laterY > 0);
+    app->mouse({Tui::Mouse::Press, laterX, laterY});
+    QVERIFY(!app->isFormOpen());
+    QTRY_VERIFY_WITH_TIMEOUT(heard("form me|never shown|true|music| button 1"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(app->isFormOpen(), 10000);
+    keys({Key::of(Key::Escape)});
+    host->setEnabled("fake", false);
+}
+
+// Changes an extension proposes are a box too: its report, a line a move.
+// What can't be done can't be ticked; Enter does what is ticked through the
+// file engine (so it is undone with Ctrl+Z), Esc changes nothing.
+void TestTui::extensionPlanIsTickedAndApplied()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    for (const char *name : {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"})
+        make(name, name);
+    const QString trigger = make("make-plan.txt");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QSignalSpy said(host, &Extensions::Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    auto propose = [&] {
+        const QList<Extensions::Item> one{{trigger, "text/plain", false}};
+        for (const Extensions::Command &command : host->commands(m_left, one)) {
+            if (command.id == "hello") {
+                host->invoke(command, m_left, {trigger});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(propose(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(app->isPlanOpen(), 10000);
+    QString shown = screen(120, 30);
+    QVERIFY2(shown.contains("Fake") && shown.contains("Found") && shown.contains("Three texts."), qPrintable(shown));
+    QVERIFY2(!shown.contains("**") && !shown.contains("passwd") && !shown.contains("# Found"), qPrintable(shown)); // read as text; nothing fetched
+    QVERIFY2(shown.contains("[x] a.txt → Texts/") && shown.contains("A text"), qPrintable(shown));
+    QVERIFY2(shown.contains("[x] b.txt → Texts/Old/") && shown.contains("[x] c.txt → renamed.txt"), qPrintable(shown));
+    QVERIFY2(shown.contains("[!] missing.txt") && shown.contains("[!] d.txt") && shown.contains("[!] e.txt"), qPrintable(shown));
+    QVERIFY2(shown.contains("3 of 7 ticked") && shown.contains("No charge") && shown.contains("Apply 3 changes"), qPrintable(shown));
+
+    // Esc: nothing is changed, and the extension hears so.
+    keys({Key::of(Key::Escape)});
+    QVERIFY(!app->isPlanOpen() && !app->isAsking());
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 dismissed"), 10000);
+    QVERIFY(QFile::exists(m_left + "/a.txt") && !QDir(m_left + "/Texts").exists());
+
+    // Again: a.txt is unticked, what can't be done stays so whatever is pressed.
+    said.clear();
+    QTRY_VERIFY_WITH_TIMEOUT(propose(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(app->isPlanOpen(), 10000);
+    keys({Key::character(' ')}); // a.txt off; the cursor goes on to b.txt
+    keys({Key::of(Key::Down), Key::of(Key::Down), Key::character(' ')}); // on missing.txt
+    shown = screen(120, 30);
+    QVERIFY2(shown.contains("[ ] a.txt") && shown.contains("[!] missing.txt") && shown.contains("2 of 7 ticked"), qPrintable(shown));
+    keys({Key::character('a')}); // all that can be
+    QVERIFY(screen(120, 30).contains("3 of 7 ticked"));
+    keys({Key::character('a')}); // none
+    QVERIFY(screen(120, 30).contains("0 of 7 ticked") && screen(120, 30).contains("nothing to apply"));
+    keys({Key::character('a'), Key::of(Key::Home), Key::character(' ')}); // all but a.txt
+    QVERIFY(screen(120, 30).contains("Apply 2 changes"));
+    // A click on a move changes its tick, and back.
+    {
+        Tui::Screen s(120, 30);
+        app->render(s);
+        int y = -1;
+        for (int row = 0; row < 30; ++row) {
+            if (s.line(row).contains("] c.txt"))
+                y = row;
+        }
+        QVERIFY(y > 0);
+        app->mouse({Tui::Mouse::Press, 20, y});
+        QVERIFY(screen(120, 30).contains("[ ] c.txt"));
+        app->mouse({Tui::Mouse::Press, 20, y});
+        QVERIFY(screen(120, 30).contains("[x] c.txt"));
+    }
+    runJob([&] { keys({Key::of(Key::Enter)}); });
+    QVERIFY(!app->isPlanOpen());
+    QTRY_VERIFY_WITH_TIMEOUT(heard("plan p1 applied=2 skipped=0"), 10000);
+    QVERIFY(QFile::exists(m_left + "/a.txt"));
+    QVERIFY(QFile::exists(m_left + "/Texts/Old/b.txt") && !QFile::exists(m_left + "/b.txt"));
+    QVERIFY(QFile::exists(m_left + "/renamed.txt") && !QFile::exists(m_left + "/c.txt"));
+    QVERIFY(QFile::exists(m_left + "/d.txt") && QFile::exists(m_left + "/e.txt"));
+    // Ctrl+Z puts the items back, and once more takes the new folders away.
+    runJob([&] { keys({Key::control('z')}); });
+    QVERIFY(QFile::exists(m_left + "/b.txt") && QFile::exists(m_left + "/c.txt") && !QFile::exists(m_left + "/renamed.txt"));
+    runJob([&] { keys({Key::control('z')}); });
+    QVERIFY(!QDir(m_left + "/Texts").exists());
+    host->setEnabled("fake", false);
+}
+
+// While Claude is asked something for an extension, the message line says
+// so; Esc is "don't wait".
+void TestTui::waitingForClaudeIsSaid()
+{
+    Extensions::Host *host = Extensions::Host::instance();
+    QVERIFY(!app->isWaitingForClaude());
+    emit host->claudeWaiting("some-extension", "Some Extension", 1);
+    QVERIFY(app->isWaitingForClaude());
+    QString shown = screen(100, 24);
+    QVERIFY2(shown.contains("“Some Extension” is asking Claude…") && shown.contains("Esc stops waiting"), qPrintable(shown));
+    QTRY_VERIFY_WITH_TIMEOUT(screen(100, 24).contains(QRegularExpression("asking Claude… \\d+ s")), 6000); // it is seen to go on
+    // Another extension's end isn't this one's.
+    emit host->claudeWaiting("another", "Another", 0);
+    QVERIFY(app->isWaitingForClaude());
+    keys({Key::of(Key::Escape)});
+    QCOMPARE(app->message(), QStringLiteral("Not waiting for Claude any longer"));
+    emit host->claudeWaiting("some-extension", "Some Extension", 0); // what the host says when it has stopped
+    QVERIFY(!app->isWaitingForClaude());
+    QVERIFY(!screen(100, 24).contains("asking Claude"));
+}
+
+// Edit → Claude API Key…: typed as dots, kept where Argonaut keeps it.
+void TestTui::claudeKeyIsTypedAsDots()
+{
+    qunsetenv("ANTHROPIC_API_KEY");
+    KeyStore::remove();
+    keys({Key::control('p')});
+    type("claude api");
+    QCOMPARE(app->paletteNames().value(0), QStringLiteral("Claude API Key…"));
+    keys({Key::of(Key::Enter)});
+    QVERIFY(app->isAsking());
+    type("sk-test-123");
+    const QString shown = screen(100, 24);
+    QVERIFY2(shown.contains("Claude API key:") && !shown.contains("sk-test") && shown.contains("•••••••••••"), qPrintable(shown));
+    keys({Key::of(Key::Enter)});
+    QVERIFY(!app->isAsking());
+    KeyStore::Where where = KeyStore::Where::None;
+    QCOMPARE(KeyStore::load(&where), QStringLiteral("sk-test-123"));
+    QCOMPARE(where, KeyStore::Where::File);
+    QVERIFY2(app->message().startsWith("The key is kept in"), qPrintable(app->message()));
+    // The next text field is plain again.
+    keys({Key::of(Key::F7)});
+    type("visible");
+    QVERIFY(screen(100, 24).contains("visible"));
+    keys({Key::of(Key::Escape)});
+    // With the key in the environment, that one is used, and it says so.
+    qputenv("ANTHROPIC_API_KEY", "sk-env");
+    keys({Key::control('p')});
+    type("claude api");
+    keys({Key::of(Key::Enter)});
+    QVERIFY(!app->isAsking());
+    QVERIFY2(app->message().contains("ANTHROPIC_API_KEY"), qPrintable(app->message()));
+    qunsetenv("ANTHROPIC_API_KEY");
+    KeyStore::remove();
+}
+
 
 // Themes: the terminal's own colours unless one of Argonaut's themes is
 // chosen in the command palette; then every cell has the theme's colours

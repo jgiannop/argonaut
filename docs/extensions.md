@@ -567,7 +567,8 @@ it tells you:
 The rules are those of a form: a plan is shown only while you are doing
 something the user asked of you, one at a time (a second one, or one out
 of the blue, is answered `"dismissed": true` at once). The terminal
-interface doesn't show plans yet.
+interface shows forms and plans too, as boxes over the files, so an
+extension that uses them works there without doing anything for it.
 
 ### Asking Claude
 
