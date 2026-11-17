@@ -12,12 +12,12 @@
 #include <QStack>
 #include <QString>
 
-#if defined(ARGONAUT_DBUS)
-#include "FileChooserRequest.h"
-#include <optional>
 class ChooserMode;
 class QVBoxLayout;
 class QWindow;
+#if defined(ARGONAUT_DBUS)
+#include "FileChooserRequest.h"
+#include <optional>
 #endif
 
 namespace OpenWith {
@@ -497,11 +497,11 @@ private:
     QString otherPaneFolder() const; // where F5/F6 copy and move to, or empty
     void transferToOtherPane(bool move);
 
-#if defined(ARGONAUT_DBUS)
     // Open/Save window: set by startChooser(), which hands that behaviour
-    // to ChooserMode. Null in a file manager window.
+    // to ChooserMode. Null in a file manager window, and always where there
+    // is no D-Bus to be asked over (it is declared all the same: the code
+    // that asks "is this an Open/Save window?" is the same everywhere).
     ChooserMode *m_chooser = nullptr;
-#endif
     QVBoxLayout *m_contentLayout = nullptr;
     QWidget *m_menuRow = nullptr; // the menu bar's row; drags the window like the bar
 };
