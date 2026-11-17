@@ -10,6 +10,7 @@
 
 #include "DirectoryModel.h"
 #include "Extensions.h"
+#include "FileClipboard.h"
 #include "FileJob.h"
 #include "FileOperations.h"
 #include "Format.h"
@@ -517,6 +518,86 @@ void App::transfer(bool move)
         return;
     }
     move ? m_ops->move(paths, target) : m_ops->copy(paths, target);
+}
+
+// Ctrl+C and Ctrl+X: the selection (or the item under the cursor) is what
+// Ctrl+V will put somewhere. Nothing happens to the files yet.
+void App::copyTargets(bool cut)
+{
+    const QStringList paths = targets();
+    if (paths.isEmpty()) {
+        say(QStringLiteral("Nothing is selected"));
+        return;
+    }
+    if (cut && !canChangeTargets()) {
+        say(QStringLiteral("You can't move items out of this folder"));
+        return;
+    }
+    m_clipPaths = paths;
+    m_clipCut = cut;
+    m_cutShown = cut ? QSet<QString>(paths.begin(), paths.end()) : QSet<QString>();
+    FileClipboard::copyToDesktop(paths, cut); // other programs can paste them too, where there is a desktop
+    const QString what = paths.size() == 1 ? QStringLiteral("“%1”").arg(QFileInfo(paths.first()).fileName())
+                                           : QStringLiteral("%1 items").arg(paths.size());
+    QString text = cut ? QStringLiteral("%1 will be moved when you paste (Ctrl+V)").arg(what) : QStringLiteral("%1 copied: Ctrl+V pastes").arg(what);
+    // A desktop, but the program that reaches its clipboard is missing (the
+    // package brings it, unless it was installed without what it recommends).
+    if (const QString missing = FileClipboard::missingHelper(); !missing.isEmpty())
+        text += QStringLiteral(" here (for other programs too: sudo apt install %1)").arg(missing);
+    say(text);
+}
+
+void App::forgetClipboard()
+{
+    m_clipPaths.clear();
+    m_clipCut = false;
+    m_cutShown.clear();
+}
+
+// Ctrl+V: into the folder of the pane you are in, through the file engine
+// (progress, a question when a name is taken, undo). What the desktop's
+// clipboard holds comes first, since another program may have copied
+// something since; without a desktop, what was copied here.
+void App::paste()
+{
+    QStringList paths;
+    bool cut = false;
+    switch (FileClipboard::readDesktop(&paths, &cut)) {
+    case FileClipboard::Read::Files:
+        break;
+    case FileClipboard::Read::Empty:
+        forgetClipboard(); // something else was copied since: ours is gone, as in the window
+        break;
+    case FileClipboard::Read::Unavailable:
+        paths = m_clipPaths;
+        cut = m_clipCut;
+        break;
+    }
+    QStringList there;
+    for (const QString &path : std::as_const(paths)) {
+        if (QFileInfo::exists(path) || QFileInfo(path).isSymLink())
+            there << path;
+    }
+    if (there.isEmpty()) {
+        say(paths.isEmpty() ? QStringLiteral("There is nothing to paste") : QStringLiteral("What was copied is no longer there"));
+        return;
+    }
+    const QString target = pane().current;
+    if (!FileRules::isTransferTarget(target)) {
+        say(QStringLiteral("Things can't be pasted here"));
+        return;
+    }
+    if (const QString problem = FileRules::transferProblem(there, target, cut); !problem.isEmpty()) {
+        say(problem);
+        return;
+    }
+    if (cut) {
+        m_ops->move(there, target);
+        forgetClipboard(); // a cut is pasted once
+        FileClipboard::clearDesktop();
+    } else {
+        m_ops->copy(there, target);
+    }
 }
 
 void App::remove(bool permanently)
@@ -1496,6 +1577,11 @@ void App::normalKey(const Key &key)
         } else if (!p.selected.isEmpty()) {
             p.selected.clear();
             emit changed();
+        } else if (m_clipCut) {
+            // A cut that wasn't pasted: forgotten, and the items look as before.
+            forgetClipboard();
+            FileClipboard::clearDesktop();
+            say(QStringLiteral("The cut was forgotten: nothing will be moved"));
         }
         return;
     case Key::F1:
@@ -1543,6 +1629,12 @@ void App::normalKey(const Key &key)
             m_ops->redo();
         else
             say(QStringLiteral("Nothing to redo"));
+    } else if (key.isControl('c')) {
+        copyTargets(false);
+    } else if (key.isControl('x')) {
+        copyTargets(true);
+    } else if (key.isControl('v')) {
+        paste();
     } else if (key.isControl('a')) {
         for (int item = 0; item < p.model->rowCount(); ++item)
             p.selected.insert(p.model->filePath(p.model->index(item, 0)));
@@ -2203,6 +2295,11 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         // archives, code…), as the big icons are; the cursor's row stays plain.
         style.ink = selected ? Ink::Selected : dir ? Ink::Folder : m_effects && !cursor ? kindInk(name, index0) : Ink::Normal;
         style.bold = dir || selected;
+        // Cut, waiting to be pasted: faint, as in the window.
+        if (!m_cutShown.isEmpty() && !cursor && !selected && m_cutShown.contains(p.model->filePath(index0))) {
+            style.ink = Ink::Dim;
+            style.bold = false;
+        }
         screen.fill(x, y, width, 1, style);
         screen.put(x, y, selected ? QStringLiteral("*") : QStringLiteral(" "), style);
         if (dir)
@@ -2327,9 +2424,10 @@ void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int t
             const QModelIndex index0 = p.model->index(at - up, 0);
             const bool dir = p.model->isDir(index0);
             const bool selected = !p.selected.isEmpty() && p.selected.contains(p.model->filePath(index0));
-            const Style style{selected ? Ink::Selected : dir ? Ink::Folder
+            const bool cut = !m_cutShown.isEmpty() && !cursor && !selected && m_cutShown.contains(p.model->filePath(index0));
+            const Style style{cut ? Ink::Dim : selected ? Ink::Selected : dir ? Ink::Folder
                                   : m_effects && paper == Paper::Normal ? kindInk(p.model->fileName(index0), index0) : Ink::Normal,
-                              paper, dir || selected};
+                              paper, !cut && (dir || selected)};
             screen.fill(cx, y, p.cellWidth - 1, 1, style);
             if (selected)
                 screen.put(cx, y, QStringLiteral("*"), style);
@@ -2531,10 +2629,12 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
             const bool selected = !upRow && !p.selected.isEmpty() && p.selected.contains(p.model->filePath(index0));
             QString name = upRow ? QStringLiteral("..") : p.model->fileName(index0);
             const bool link = !upRow && index0.data(DirectoryModel::SymLinkRole).toBool();
+            // Cut, waiting to be pasted: faint.
+            const bool waiting = !upRow && !selected && !m_cutShown.isEmpty() && m_cutShown.contains(p.model->filePath(index0));
 
             // The picture.
             if (dir) {
-                const Style folder{selected ? Ink::Selected : upRow ? Ink::Dim : Ink::Folder, Paper::Normal, false};
+                const Style folder{selected ? Ink::Selected : upRow || waiting ? Ink::Dim : Ink::Folder, Paper::Normal, false};
                 screen.put(iconX, y + 1, QStringLiteral("▄▄▄"), folder);
                 screen.put(iconX, y + 2, QStringLiteral("███████"), folder);
                 screen.put(iconX, y + 3, QStringLiteral("███████"), folder);
@@ -2546,6 +2646,7 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
                 const bool dangerous = index0.data(DirectoryModel::VerdictRole).toInt() == int(ContentType::Verdict::Dangerous);
                 const Ink ink = selected ? Ink::Selected
                                 : dangerous ? Ink::Bad
+                                : waiting ? Ink::Dim
                                 : sort == Sort::Picture ? Ink::Good
                                 : sort == Sort::Sound || sort == Sort::Film ? Ink::Accent
                                 : sort == Sort::Archive ? Ink::Warning
@@ -2580,8 +2681,8 @@ void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int 
             else if (link)
                 name += QLatin1Char('@');
             const bool cursor = at == p.cursor;
-            const Style text{selected ? Ink::Selected : cursor && active ? Ink::Accent : dir ? Ink::Folder : Ink::Normal, Paper::Normal,
-                             selected || (cursor && active)};
+            const Style text{selected ? Ink::Selected : waiting ? Ink::Dim : cursor && active ? Ink::Accent : dir ? Ink::Folder : Ink::Normal, Paper::Normal,
+                             selected || (cursor && active && !waiting)};
             QString second;
             QString first = takeCells(name, nameWidth, &second);
             if (!second.isEmpty()) {
@@ -2833,6 +2934,10 @@ void App::drawHelp(Screen &screen)
         "  a is all or none, Enter applies what is ticked (Ctrl+Z undoes it), Esc changes nothing.",
         "  Edit > Claude API Key... is where the key is typed, once, for every extension that asks Claude.",
         "",
+        "  Ctrl+C / Ctrl+X, then Ctrl+V      copy / cut the selection, go anywhere, and paste it there",
+        "                                    (a cut item is faint until it is pasted; Esc forgets the cut. With a",
+        "                                    desktop and xclip or wl-clipboard, the window version and other file",
+        "                                    managers paste what was copied here, and the other way round)",
         "  F5 / F6                           copy / move to the other pane",
         "  F7                                new folder",
         "  F2                                rename",

@@ -685,6 +685,11 @@ round the one you are on).</li>
 <li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell under the files (about a third of the height), in the pane's
 folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
 files to its folder and <code>exit</code> closes it.</li>
+<li><b>Copy and paste:</b> [[Ctrl+C]] copies and [[Ctrl+X]] cuts the selection, as here; go to any folder and
+[[Ctrl+V]] pastes. A cut item is faint until it is pasted, and [[Esc]] forgets the cut. Where there is a desktop
+and <code>xclip</code> (or <code>wl-clipboard</code> on Wayland) is installed, the clipboard is the desktop's: what
+is copied there can be pasted in this window or another file manager, and the other way round. Otherwise (over
+SSH) it is Argonaut's own.</li>
 <li><b>Files:</b> [[Space]] or [[Insert]] selects, [[F7]] makes a folder, [[F2]] renames, [[F8]] or [[Delete]]
 moves to the Trash, [[Shift+Delete]] deletes for good (it asks, and only <b>y</b> means yes), [[Ctrl+Z]] and
 [[Ctrl+Y]] undo and redo.</li>

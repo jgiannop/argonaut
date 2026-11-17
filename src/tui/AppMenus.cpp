@@ -88,6 +88,10 @@ QList<App::Menu> App::menus()
     edit.items.append(item(m_ops->canUndo() ? m_ops->undoText() : QStringLiteral("Undo"), QStringLiteral("Ctrl+Z"), press(Key::control('z')), m_ops->canUndo()));
     edit.items.append(item(m_ops->canRedo() ? m_ops->redoText() : QStringLiteral("Redo"), QStringLiteral("Ctrl+Y"), press(Key::control('y')), m_ops->canRedo()));
     edit.items.append(line());
+    edit.items.append(item(QStringLiteral("Copy"), QStringLiteral("Ctrl+C"), press(Key::control('c')), some));
+    edit.items.append(item(QStringLiteral("Cut"), QStringLiteral("Ctrl+X"), press(Key::control('x')), some && canChangeTargets()));
+    edit.items.append(item(QStringLiteral("Paste"), QStringLiteral("Ctrl+V"), press(Key::control('v')), FileRules::isTransferTarget(p.current)));
+    edit.items.append(line());
     edit.items.append(item(QStringLiteral("Select All"), QStringLiteral("Ctrl+A"), press(Key::control('a'))));
     edit.items.append(item(QStringLiteral("Clear the Selection"), QStringLiteral("Esc"), press(Key::of(Key::Escape)), !p.selected.isEmpty()));
     edit.items.append(line());
@@ -227,6 +231,9 @@ void App::openContextMenu(int x, int y, bool onItems)
         add("Open");
         add("Rename…");
         line();
+        add("Copy");
+        add("Cut");
+        line();
         add("Copy to the Other Pane");
         add("Move to the Other Pane");
         line();
@@ -234,6 +241,7 @@ void App::openContextMenu(int x, int y, bool onItems)
         add("Delete Permanently…");
     } else {
         add("New Folder…");
+        add("Paste");
         add("Up");
         line();
         add("Select All");

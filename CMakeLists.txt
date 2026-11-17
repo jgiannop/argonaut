@@ -74,6 +74,8 @@ qt_add_library(argonaut_core STATIC
     src/StatTime.h
     src/FileRules.h
     src/FileRules.cpp
+    src/FileClipboard.h
+    src/FileClipboard.cpp
     src/PlanApply.h
     src/PlanApply.cpp
     src/Tools.h
@@ -515,7 +517,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_INSTALL_PREFIX STREQUAL "/usr")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 endif()
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
-    "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git")
+    "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git, xclip | wl-clipboard")
 include(CPack)
 
 add_custom_target(uninstall

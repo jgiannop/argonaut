@@ -127,6 +127,8 @@ public:
     bool isFormOpen() const { return m_mode == Mode::Form; }
     bool isPlanOpen() const { return m_mode == Mode::Plan; }
     bool isWaitingForClaude() const { return !m_claudeExtension.isEmpty(); }
+    QStringList clipboardPaths() const { return m_clipPaths; } // what Ctrl+C or Ctrl+X took (tests)
+    bool clipboardIsCut() const { return m_clipCut; }
     bool isBusy() const;                // a file operation is running
     bool isLoading() const;             // a folder is still being listed
     FileOperations *operations() const { return m_ops; }
@@ -234,6 +236,12 @@ private:
     bool canChangeTargets() const;
 
     void transfer(bool move);
+    // Copy, cut and paste, as in the window (Ctrl+C, Ctrl+X, Ctrl+V): the
+    // items go on the desktop's clipboard where it can be reached
+    // (FileClipboard), and are kept here in any case.
+    void copyTargets(bool cut);
+    void paste();
+    void forgetClipboard();
     void remove(bool permanently);
     void newFolder();
     void rename();
@@ -418,6 +426,9 @@ private:
     void formArrived(const Extensions::Form &form);
     void planArrived(const Extensions::Plan &plan);
 
+    QStringList m_clipPaths;           // what was copied or cut here
+    bool m_clipCut = false;
+    QSet<QString> m_cutShown;          // the cut items, to draw them faint until they are pasted
     bool m_promptSecret = false;       // what is typed is shown as dots (a key)
     QString m_promptLabel;
     QString m_promptText;

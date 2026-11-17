@@ -7,6 +7,7 @@
 #include "Bookmarks.h"
 #include "DirectoryModel.h"
 #include "Extensions.h"
+#include "FileClipboard.h"
 #include "KeyStore.h"
 #include "FileOperations.h"
 #include "Screen.h"
@@ -71,6 +72,8 @@ private slots:
     void commandPalette();
     void menus();
     void extensionResultInThePreview();
+    void copyCutAndPaste();
+    void clipboardSharedWithTheDesktop();
     void extensionFormInABox();
     void extensionPlanIsTickedAndApplied();
     void waitingForClaudeIsSaid();
@@ -210,7 +213,7 @@ void TestTui::showsTwoPanes()
     QVERIFY(screen(30, 5).contains("too small"));
     // F1: the keys.
     keys({Key::of(Key::F1)});
-    QVERIFY(screen(100, 40).contains("copy / move to the other pane"));
+    QVERIFY(screen(100, 70).contains("copy / move to the other pane") && screen(100, 70).contains("Ctrl+C / Ctrl+X, then Ctrl+V"));
     keys({Key::character('x')}); // any key closes it, and does nothing else
     QVERIFY(screen().contains("alpha.txt"));
 }
@@ -2074,6 +2077,219 @@ void TestTui::drawingABigFolderIsQuick()
     const double without = timer.nsecsElapsed() / 1e6 / 60;
     qInfo("a frame with a selection %.2f ms, without %.2f ms", withSelection, without);
     QVERIFY2(withSelection < without * 2 + 1.0, qPrintable(QStringLiteral("%1 against %2").arg(withSelection).arg(without)));
+}
+
+// Ctrl+C / Ctrl+X, go anywhere, Ctrl+V, as in the window: through the file
+// engine, so it is undone; a cut is pasted once; nothing happens to the
+// files before the paste.
+void TestTui::copyCutAndPaste()
+{
+    QVERIFY(!FileClipboard::desktopAvailable()); // tests keep to themselves
+    QVERIFY(screen().contains("alpha.txt"));
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("There is nothing to paste"));
+
+    // Copy alpha.txt, go into Documents, paste.
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::control('c')});
+    QCOMPARE(app->clipboardPaths(), QStringList{m_left + "/alpha.txt"});
+    QVERIFY(!app->clipboardIsCut());
+    QVERIFY2(app->message().contains("“alpha.txt” copied"), qPrintable(app->message()));
+    app->selectPath(m_left + "/Documents");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    runJob([&] { keys({Key::control('v')}); });
+    QVERIFY(QFile::exists(m_left + "/Documents/alpha.txt") && QFile::exists(m_left + "/alpha.txt"));
+    // A copy can be pasted again; the name is taken now, which is a question as for any copy.
+    runJob([&] {
+        keys({Key::control('v')});
+        QTRY_VERIFY_WITH_TIMEOUT(app->isAsking(), 10000);
+        QVERIFY(screen().contains("is already in"));
+        keys({Key::character('k')}); // keep both
+    });
+    QCOMPARE(QDir(m_left + "/Documents").entryList(QDir::Files).size(), 3);
+    // And undone.
+    runJob([&] { keys({Key::control('z')}); });
+    runJob([&] { keys({Key::control('z')}); });
+    QCOMPARE(QDir(m_left + "/Documents").entryList(QDir::Files), QStringList{"inside.txt"});
+
+    // Cut two items: they are drawn faint, and nothing has moved.
+    keys({Key::of(Key::Backspace)});
+    settle();
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::character(' '), Key::character(' ')}); // alpha.txt and beta.txt
+    QCOMPARE(app->selectedPaths().size(), 2);
+    keys({Key::control('x')});
+    QVERIFY(app->clipboardIsCut());
+    QVERIFY2(app->message().contains("2 items will be moved when you paste"), qPrintable(app->message()));
+    QVERIFY(QFile::exists(m_left + "/alpha.txt") && QFile::exists(m_left + "/beta.txt"));
+    keys({Key::of(Key::Escape)}); // the selection goes; the cut stays
+    QVERIFY(app->selectedPaths().isEmpty() && app->clipboardIsCut());
+    app->selectPath(m_left + "/Documents");
+    {
+        Screen s(100, 24);
+        app->render(s);
+        int y = -1;
+        for (int row = 0; row < 24; ++row) {
+            if (s.line(row).contains("beta.txt"))
+                y = row;
+        }
+        QVERIFY(y > 0);
+        const int x = int(s.line(y).indexOf("beta.txt"));
+        QCOMPARE(s.at(x, y).style.ink, Tui::Ink::Dim);
+    }
+    // Pasted where they already are: refused, and the cut is kept.
+    keys({Key::control('v')});
+    QVERIFY2(app->message().contains("already in that folder"), qPrintable(app->message()));
+    QVERIFY(app->clipboardIsCut());
+    // Into the other pane's folder: moved, once.
+    keys({Key::of(Key::Tab)});
+    QCOMPARE(app->activePane(), 1);
+    QVERIFY(app->folder(1) != m_left);
+    const QString there = app->folder(1);
+    runJob([&] { keys({Key::control('v')}); });
+    QVERIFY(QFile::exists(there + "/alpha.txt") && QFile::exists(there + "/beta.txt"));
+    QVERIFY(!QFile::exists(m_left + "/alpha.txt") && !QFile::exists(m_left + "/beta.txt"));
+    QVERIFY(app->clipboardPaths().isEmpty() && !app->clipboardIsCut());
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("There is nothing to paste"));
+    runJob([&] { keys({Key::control('z')}); });
+    QVERIFY(QFile::exists(m_left + "/alpha.txt") && QFile::exists(m_left + "/beta.txt"));
+
+    // A cut that isn't wanted after all: Esc forgets it.
+    keys({Key::of(Key::Tab)});
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::control('x')});
+    QVERIFY(app->clipboardIsCut());
+    keys({Key::of(Key::Escape)});
+    QVERIFY(!app->clipboardIsCut() && app->clipboardPaths().isEmpty());
+    // What was copied and then removed can't be pasted.
+    keys({Key::control('c')});
+    QVERIFY(QFile::remove(m_left + "/alpha.txt"));
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("What was copied is no longer there"));
+    // Nothing is pasted into a place that isn't a folder, and nothing is cut out of one that can't be changed.
+    make("alpha.txt");
+    settle();
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::control('c')});
+    keys({Key::control('l'), Key::control('u')});
+    type("trash");
+    keys({Key::of(Key::Enter)});
+    settle();
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("Things can't be pasted here"));
+    // The menus have the three.
+    keys({Key::of(Key::Backspace)});
+    Key altE = Key::character('e');
+    altE.alt = true;
+    keys({altE});
+    const QStringList names = app->menuNames();
+    QVERIFY2(names.join('|').contains("Copy") && names.join('|').contains("Cut") && names.join('|').contains("Paste"), qPrintable(names.join('|')));
+    keys({Key::of(Key::Escape)});
+}
+
+// Where there is a desktop the items go on its clipboard, in the format
+// the window and Nautilus use, and what another program put there is what
+// is pasted. (A pretend xclip: no test touches the real clipboard.)
+void TestTui::clipboardSharedWithTheDesktop()
+{
+    // The format, both ways; only local files with whole paths come out.
+    QCOMPARE(FileClipboard::encode({"/tmp/a b.txt", "/tmp/ü"}, true), QByteArray("cut\nfile:///tmp/a%20b.txt\nfile:///tmp/%C3%BC"));
+    QStringList paths;
+    bool cut = false;
+    QVERIFY(FileClipboard::decode("copy\nfile:///tmp/a%20b.txt\r\nhttp://example.com/x\nfile:///tmp/../etc/x\nrelative\n", &paths, &cut));
+    QCOMPARE(paths, (QStringList{"/tmp/a b.txt", "/etc/x"}));
+    QVERIFY(!cut);
+    QVERIFY(!FileClipboard::decode("delete\nfile:///tmp/a", &paths, &cut));
+    QVERIFY(!FileClipboard::decode("", &paths, &cut));
+    QVERIFY(FileClipboard::decodeUriList("# a comment\r\nfile:///tmp/a\r\nfile:///tmp/a\r\n", &paths));
+    QCOMPARE(paths, QStringList{"/tmp/a"});
+
+    // A pretend xclip that keeps what it is given, by kind, in a folder.
+    const QString store = m_tmp->path() + "/clip";
+    QDir().mkpath(store);
+    const QString program = m_tmp->path() + "/xclip";
+    TestSupport::writeScript(program, QStringLiteral(R"(#!/bin/sh
+store="%1"
+kind=""; mode=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -t) kind="$2"; shift ;;
+    -i) mode=in ;;
+    -o) mode=out ;;
+  esac
+  shift
+done
+echo "$mode $kind" >> "$store/log"
+name=$(echo "$kind" | tr '/' '_')
+if [ "$mode" = in ]; then
+  rm -f "$store"/kind_*
+  cat > "$store/kind_$name"
+elif [ "$kind" = TARGETS ]; then
+  ls "$store" | grep '^kind_' >/dev/null || exit 1
+  for f in "$store"/kind_*; do [ -s "$f" ] && basename "$f" | sed 's/^kind_//; s/_/\//'; done
+  echo TARGETS
+else
+  [ -f "$store/kind_$name" ] || exit 1
+  cat "$store/kind_$name"
+fi
+)").arg(store));
+    qputenv("ARGONAUT_CLIPBOARD", "1");
+    qputenv("ARGONAUT_CLIPBOARD_PROGRAM", QFile::encodeName(program));
+    struct Off { ~Off() { qunsetenv("ARGONAUT_CLIPBOARD"); qunsetenv("ARGONAUT_CLIPBOARD_PROGRAM"); } } off;
+    QVERIFY(FileClipboard::desktopAvailable());
+    auto stored = [&](const QString &kind) {
+        QFile file(store + "/kind_" + kind);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray("(none)");
+    };
+
+    // Nothing on it yet.
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("There is nothing to paste"));
+    // Ctrl+C puts the item there as other file managers expect it.
+    app->selectPath(m_left + "/alpha.txt");
+    keys({Key::control('c')});
+    QCOMPARE(stored("x-special_gnome-copied-files"), QByteArray("copy\n") + QUrl::fromLocalFile(m_left + "/alpha.txt").toEncoded());
+    // Another program copies something else: that is what Ctrl+V pastes.
+    {
+        QFile::remove(store + "/kind_x-special_gnome-copied-files");
+        QFile other(store + "/kind_text_uri-list");
+        QVERIFY(other.open(QIODevice::WriteOnly));
+        other.write(QUrl::fromLocalFile(m_left + "/beta.txt").toEncoded() + "\r\n");
+    }
+    app->selectPath(m_left + "/Documents");
+    keys({Key::of(Key::Enter)});
+    settle();
+    runJob([&] { keys({Key::control('v')}); });
+    QVERIFY(QFile::exists(m_left + "/Documents/beta.txt") && !QFile::exists(m_left + "/Documents/alpha.txt"));
+    QVERIFY(QFile::exists(m_left + "/beta.txt")); // a plain list of files is a copy
+    // A cut made elsewhere (the window, Nautilus) is a move here, and the clipboard is emptied after.
+    {
+        QFile::remove(store + "/kind_text_uri-list");
+        QFile other(store + "/kind_x-special_gnome-copied-files");
+        QVERIFY(other.open(QIODevice::WriteOnly));
+        other.write(FileClipboard::encode({m_left + "/alpha.txt"}, true));
+    }
+    runJob([&] { keys({Key::control('v')}); });
+    QVERIFY(QFile::exists(m_left + "/Documents/alpha.txt") && !QFile::exists(m_left + "/alpha.txt"));
+    QVERIFY2(stored("x-special_gnome-copied-files") == "(none)", stored("x-special_gnome-copied-files").constData());
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("There is nothing to paste"));
+    // Text copied elsewhere after our Ctrl+C: ours is gone, as in the window.
+    app->selectPath(m_left + "/Documents/inside.txt");
+    keys({Key::control('c')});
+    QVERIFY(!app->clipboardPaths().isEmpty());
+    {
+        QFile::remove(store + "/kind_x-special_gnome-copied-files");
+        QFile other(store + "/kind_text_plain");
+        QVERIFY(other.open(QIODevice::WriteOnly));
+        other.write("just words");
+    }
+    keys({Key::control('v')});
+    QCOMPARE(app->message(), QStringLiteral("There is nothing to paste"));
+    QVERIFY(app->clipboardPaths().isEmpty());
 }
 
 // What an extension asks (a login) is a box over the files: filled in with
