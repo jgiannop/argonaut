@@ -51,7 +51,7 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cmake --build build/windows --target argonaut -- -k 0 2>&1 | Tee-Object -FilePath build.log
+          cmake --build build/windows -- -k 0 2>&1 | Tee-Object -FilePath build.log
           exit $LASTEXITCODE
 
       # The log can't be read without signing in; notes on the run can.
@@ -60,10 +60,13 @@ jobs:
         run: python .github/scripts/errors_as_notes.py build.log
 
       - name: Put the program and its Qt libraries together
+        shell: cmd
         run: |
           mkdir dist
-          copy build\windows\argonaut.exe dist\
+          copy build\windows\*.exe dist\
           copy build\windows\*.dll dist\
+          xcopy /E /I /Y build\windows\extensions dist\extensions
+          for %%f in (dist\argonaut-*-extension.exe) do windeployqt --release --no-translations --no-compiler-runtime %%f
           windeployqt --release --no-translations --no-compiler-runtime dist\argonaut.exe
 
       # Microsoft's C++ runtime (VCRUNTIME140.dll and the others), beside the

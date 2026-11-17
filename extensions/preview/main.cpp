@@ -29,7 +29,6 @@
 #include <functional>
 
 #include <cstdio>
-#include <unistd.h>
 
 #if defined(ARGONAUT_ARCHIVES)
 #include <archive.h>

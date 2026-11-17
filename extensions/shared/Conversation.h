@@ -14,7 +14,13 @@
 #include <cerrno>
 #include <cstdio>
 #include <functional>
+#if defined(Q_OS_WIN)
+#include <fcntl.h>
+#include <io.h>
+#include <thread>
+#else
 #include <unistd.h>
+#endif
 
 // Says something to Argonaut.
 inline void send(const QJsonObject &message)
@@ -35,6 +41,31 @@ inline void send(const QJsonObject &message)
 class Conversation
 {
 public:
+#if defined(Q_OS_WIN)
+    // Windows can't be asked to say when a pipe has something to read: a
+    // thread waits in a read and hands what came to the program's own thread.
+    // Lines go as they are, without Windows' own line endings.
+    explicit Conversation(std::function<void(const QJsonObject &)> handle, std::function<void()> afterAll = {})
+        : m_handle(std::move(handle))
+        , m_afterAll(std::move(afterAll))
+    {
+        _setmode(_fileno(stdin), _O_BINARY);
+        _setmode(_fileno(stdout), _O_BINARY);
+        std::thread([this] {
+            char chunk[65536];
+            for (;;) {
+                const int got = _read(_fileno(stdin), chunk, sizeof chunk);
+                const QByteArray data = got > 0 ? QByteArray(chunk, got) : QByteArray();
+                QMetaObject::invokeMethod(&m_context, [this, data] { take(data); }, Qt::QueuedConnection);
+                if (got <= 0)
+                    return;
+            }
+        }).detach();
+    }
+
+private:
+    QObject m_context;
+#else
     explicit Conversation(std::function<void(const QJsonObject &)> handle, std::function<void()> afterAll = {})
         : m_input(STDIN_FILENO, QSocketNotifier::Read)
         , m_handle(std::move(handle))
@@ -52,12 +83,22 @@ private:
         // not the pipe closing. The notifier calls again when there is more.
         if (got < 0 && (errno == EINTR || errno == EAGAIN))
             return;
-        if (got <= 0) { // Argonaut closed the pipe
+        if (got <= 0)
             m_input.setEnabled(false);
+        take(got > 0 ? QByteArray(chunk, qsizetype(got)) : QByteArray());
+    }
+
+    QSocketNotifier m_input;
+#endif
+
+    // What came from Argonaut; nothing: it closed the pipe (or is gone).
+    void take(const QByteArray &data)
+    {
+        if (data.isEmpty()) {
             QCoreApplication::quit();
             return;
         }
-        m_buffer.append(chunk, qsizetype(got));
+        m_buffer.append(data);
         qsizetype end;
         while ((end = m_buffer.indexOf('\n')) >= 0) {
             const QJsonObject message = QJsonDocument::fromJson(m_buffer.left(end)).object();
@@ -68,7 +109,6 @@ private:
             m_afterAll();
     }
 
-    QSocketNotifier m_input;
     QByteArray m_buffer;
     std::function<void(const QJsonObject &)> m_handle;
     std::function<void()> m_afterAll;

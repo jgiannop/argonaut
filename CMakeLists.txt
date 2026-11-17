@@ -481,6 +481,25 @@ if(UNIX)
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/space-overview)
 endif()
 
+# On Windows the program and its extensions are one folder that can be put
+# anywhere: each extension's program is beside argonaut.exe, and its
+# extension.json (in extensions/<id>/) names it by a relative path. Those
+# that only make sense on Linux (the desktop's, systemd's, /proc's) aren't built.
+if(WIN32)
+    function(argonaut_windows_extension name id variable)
+        qt_add_executable(argonaut-${name}-extension extensions/${name}/main.cpp)
+        target_link_libraries(argonaut-${name}-extension PRIVATE argonaut_core)
+        set(${variable} "../../argonaut-${name}-extension.exe")
+        configure_file(extensions/${name}/extension.json.in ${CMAKE_CURRENT_BINARY_DIR}/extensions/${id}/extension.json @ONLY)
+    endfunction()
+    argonaut_windows_extension(git git ARGONAUT_GIT_EXTENSION_EXE)
+    argonaut_windows_extension(preview document-preview ARGONAUT_PREVIEW_EXTENSION_EXE)
+    argonaut_windows_extension(about what-is-this-about ARGONAUT_ABOUT_EXTENSION_EXE)
+    argonaut_windows_extension(organize organize-with-claude ARGONAUT_ORGANIZE_EXTENSION_EXE)
+    argonaut_windows_extension(command tell-claude-what-to-do ARGONAUT_COMMAND_EXTENSION_EXE)
+    argonaut_windows_extension(space space-overview ARGONAUT_SPACE_EXTENSION_EXE)
+endif()
+
 # A package for other people has every feature, or isn't made: the optional
 # libraries above are optional for a build of your own, and a build machine
 # that lacks one (or lacks pkg-config, with which they are looked for) would

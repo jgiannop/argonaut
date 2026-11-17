@@ -35,7 +35,6 @@
 #include <QTime>
 
 #include <algorithm>
-#include <unistd.h>
 
 namespace {
 
@@ -268,7 +267,9 @@ Overview measured(const QString &folder)
 int main(int argc, char **argv)
 {
     // Pictures with text need Qt's drawing, but no window is ever shown.
+#if !defined(Q_OS_WIN) // (Windows has no such platform to ask for, and shows no window either)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QApplication app(argc, argv);
 
     if (app.arguments().value(1) == QLatin1String("--text")) { // as the terminal interface shows it

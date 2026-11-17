@@ -29,7 +29,6 @@
 #include <QSocketNotifier>
 
 #include <cstdio>
-#include <unistd.h>
 
 namespace {
 

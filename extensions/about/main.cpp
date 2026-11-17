@@ -392,7 +392,9 @@ QJsonObject requestFor(const Material &material)
 int main(int argc, char **argv)
 {
     // Pictures are read and made smaller with Qt's own readers; no window is ever shown.
+#if !defined(Q_OS_WIN) // (Windows has no such platform to ask for, and shows no window either)
     qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
     QGuiApplication app(argc, argv);
 #if defined(ARGONAUT_ARCHIVES)
     if (app.arguments().value(1) == QLatin1String("--office-text"))
