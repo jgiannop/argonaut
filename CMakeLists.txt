@@ -492,6 +492,8 @@ if(WIN32)
         set(${variable} "../../argonaut-${name}-extension.exe")
         configure_file(extensions/${name}/extension.json.in ${CMAKE_CURRENT_BINARY_DIR}/extensions/${id}/extension.json @ONLY)
     endfunction()
+    # The program's icon, as Explorer and the taskbar show it.
+    target_sources(argonaut PRIVATE data/argonaut.rc)
     argonaut_windows_extension(git git ARGONAUT_GIT_EXTENSION_EXE)
     argonaut_windows_extension(preview document-preview ARGONAUT_PREVIEW_EXTENSION_EXE)
     argonaut_windows_extension(about what-is-this-about ARGONAUT_ABOUT_EXTENSION_EXE)

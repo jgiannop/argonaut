@@ -85,6 +85,23 @@ jobs:
           name: argonaut-windows
           path: dist
 
+      # The installer: the same folder, with a Start menu entry and an uninstaller.
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(argonaut VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$version" "/DSource=..\dist" installer\argonaut.iss 2>&1 | Tee-Object -FilePath installer.log
+          if ($LASTEXITCODE -ne 0) { python .github/scripts/errors_as_notes.py installer.log "build: installer" "Error|error|line"; exit 1 }
+          Get-ChildItem installer-out
+
+      - name: Keep the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: argonaut-windows-setup
+          path: installer-out
+
       # The tests, where they stand on Windows: built and run to see what there
       # is to do. Nothing here fails the job yet.
       - name: Tests (to see where they stand)
