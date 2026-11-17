@@ -205,6 +205,7 @@ struct ListRow
     bool faint = false; // drawn lighter (not the system's, not yours)
     QString tip;     // more about it, shown when the mouse is on the ⓘ beside its name (none: no sign)
     bool bad = false; // something is wrong with it (a service that failed): its name and what is at the right in red
+    bool warn = false; // worth knowing about, not wrong (a port open to the network): the same in orange
 };
 
 struct ListHead
@@ -369,7 +370,8 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
     for (const ListRow &row : rows) {
         p.setFont(fontOf(u));
         const QColor wrong = levelColor(look, 1.0); // the red of a full gauge
-        p.setPen(row.bad ? wrong : look.dim);
+        const QColor noted = levelColor(look, 0.8); // the orange of a gauge that is nearly full
+        p.setPen(row.bad ? wrong : row.warn ? noted : look.dim);
         p.drawText(QRectF(left, y, room, u * 1.6), Qt::AlignRight | Qt::AlignVCenter, row.size);
         p.setPen(look.dim);
         if (tagColumn > 0)
@@ -377,7 +379,7 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
         // The name, then what it is in the room that is left.
         const double nameRoom = room - rightColumns - u;
         const QString name = p.fontMetrics().elidedText(row.name, Qt::ElideMiddle, qMax(10, int(nameRoom)));
-        p.setPen(row.bad ? wrong : look.text);
+        p.setPen(row.bad ? wrong : row.warn ? noted : look.text);
         p.drawText(QRectF(left, y, nameRoom, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter, name);
         double used = p.fontMetrics().horizontalAdvance(name) + u * 0.8;
         if (!row.tip.isEmpty() && nameRoom - used > u * 1.4) {
@@ -462,12 +464,13 @@ inline QString drawListAnsi(const ListHead &head, const QList<ListRow> &given, i
     for (const ListRow &row : rows) {
         const QString mark = row.mark.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(row.mark).left(qMax(0, nameWidth - 2));
         const QString name = padded(row.name, qMax(1, qMin(int(row.name.size()), nameWidth - int(mark.size()))));
-        const QString wrong = sgr(kFull); // red, for what something is wrong with
-        QString line = (row.bad ? wrong : kReset) + name + kDim + mark + kReset + QString(qMax(0, nameWidth - int(name.size()) - int(mark.size())), QLatin1Char(' '))
+        const bool marked = row.bad || row.warn;
+        const QString wrong = sgr(row.bad ? kFull : kNearlyFull); // red for what something is wrong with, orange for what is worth knowing
+        QString line = (marked ? wrong : kReset) + name + kDim + mark + kReset + QString(qMax(0, nameWidth - int(name.size()) - int(mark.size())), QLatin1Char(' '))
                        + QLatin1Char(' ');
         if (barWidth)
             line += blocks(barWidth, row.share, kAccent) + QLatin1Char(' ');
-        out << line + (row.bad ? wrong + padded(row.size, sizeWidth, true) + kReset : padded(row.size, sizeWidth, true));
+        out << line + (marked ? wrong + padded(row.size, sizeWidth, true) + kReset : padded(row.size, sizeWidth, true));
         if (!head.bars && !row.about.isEmpty()) // a list to read: what it says, on a line of its own
             out << kDim + QStringLiteral("  ") + row.about.left(qMax(0, columns - 2)) + kReset;
     }

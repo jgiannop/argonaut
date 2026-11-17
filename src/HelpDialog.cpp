@@ -616,7 +616,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>,
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>,
 <b>What Is This About</b>, <b>Tell Claude What to Do</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
@@ -705,6 +705,19 @@ is, for Claude to read.</li>
 <p>A program is never read or sent, nor a file that only looks like a document. What can't be read gets a line
 saying why, and Claude isn't asked. It needs your Claude API key (Preferences → Claude), costs a little each time
 (said under the answer), and every answer is kept with the other reports (Go → Claude Reports).</p>
+<p><b>Network Connections</b>: choose <b>View → Network Connections</b>, or find it in the command palette. The
+preview pane shows what this computer has to do with the network now, made again every three seconds: the network
+interfaces with their address and speed (and the Wi-Fi signal), the gateway and the DNS servers; then the programs
+that <b>listen</b> for connections, each with its port and what such a port is usually for; then the programs that
+are <b>connected</b>, with how many connections and where to. A port that other machines can connect to is in orange
+and marked <i>open to the network</i>; one marked <i>this computer only</i> can't be reached from outside. Open to the
+network is not a fault by itself: file sharing, printing and finding devices need it, and a firewall may still be in
+the way. The <b>ⓘ</b> beside a row says more: every address a program is connected to, or the processes behind a
+port. The field above the list searches programs, ports and addresses. It only shows; nothing is closed or blocked.
+Two things the system tells only the administrator, so they aren't here: how much each program sends and receives, and
+the names of the system's and other users' programs (shown as <i>system or another user</i>; <code>sudo ss -tulnp</code>
+in a terminal names them). <b>Analyze with Claude</b> under the list asks Claude what the open ports and the
+connections are and whether any deserves a look.</p>
 <p><b>System Journal</b>: choose <b>View → System Journal</b>, or find it in the command palette. The preview pane
 lists the errors and warnings that the system and its programs have written to the journal since the computer
 started: errors first, in red, then the warnings, newest first. A journal repeats itself, so the same message from
