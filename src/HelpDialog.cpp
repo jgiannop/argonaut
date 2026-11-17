@@ -575,7 +575,9 @@ Under the list of running processes it sends each process's name, ID, the ID of 
 it is, its memory and the program that was started (the 400 biggest), and never its arguments. Under the System
 Journal it sends the messages themselves (the 150 most important kinds, with who wrote them, how often and when),
 which can name users, computers, addresses and files. <b>Tell Claude What to Do Here…</b> sends your sentence and the names, sizes, dates and types of the open folder's
-items, never their contents. <b>Ask Claude: What Is This About?</b> sends what it reads of
+items, never their contents. <b>Ask Claude: How to Install…</b> sends what you typed, the system's name and version,
+its processor type, the desktop, which package tools it has and, for packages Claude asks about, whether they are
+installed and which version the system offers; nothing about your files. <b>Ask Claude: What Is This About?</b> sends what it reads of
 the one file or folder you chose: the beginning of a text, a document's text, a small copy of a picture, or the names
 inside a folder or an archive.</p>
 )"));
@@ -616,8 +618,8 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>,
-<b>What Is This About</b>, <b>Tell Claude What to Do</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>How to Install</b>,
+<b>What Is This About</b>, <b>Tell Claude What to Do</b>, <b>How to Install</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
 Extensions window says which extensions use Claude and what each has cost so far.</p>
@@ -705,6 +707,14 @@ is, for Claude to read.</li>
 <p>A program is never read or sent, nor a file that only looks like a document. What can't be read gets a line
 saying why, and Claude isn't asked. It needs your Claude API key (Preferences → Claude), costs a little each time
 (said under the answer), and every answer is kept with the other reports (Go → Claude Reports).</p>
+<p><b>How to Install</b>: choose <b>File → Ask Claude: How to Install…</b>, or find it in the command palette, and
+name a program: "mysql server", "docker", "node 22". Claude answers in the preview pane with the best way to install
+it on this computer: which edition and from where, the commands step by step, how to check that it works and how to
+remove it again. When you name a version, that is the one it gives; otherwise it recommends one and says why. So that
+the advice is about this system and not from memory, Claude is told the system's name and version, its processor type,
+the desktop and which package tools it has, and it can ask whether a package is installed and which version the
+system's sources offer (that look-up only reads). <b>It only advises: Argonaut runs none of the commands.</b> Read each
+one before you type it. The field under the answer asks about another program.</p>
 <p><b>Network Connections</b>: choose <b>View → Network Connections</b>, or find it in the command palette. The
 preview pane shows what this computer has to do with the network now, made again every three seconds: the network
 interfaces with their address and speed (and the Wi-Fi signal), the gateway and the DNS servers; then the programs

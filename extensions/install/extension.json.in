@@ -1,0 +1,13 @@
+{
+    "id": "how-to-install",
+    "name": "How to Install",
+    "description": "File → Ask Claude: How to Install… (or the command palette): name a program (\"mysql server\", \"docker\", \"node 22\") and Claude says the best way to install it on this computer: which edition and from where, the commands step by step, how to check it works and how to remove it. It only advises: Argonaut runs none of the commands. Sent to Anthropic, only when you ask: what you typed, the system's name and version, its processor type, the desktop, which package tools it has, and, for the packages Claude asks about, whether they are installed and which version the system offers. Nothing about your files.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "install", "label": "Ask Claude: How to Install…", "menu": "file",
+                  "ask": {"label": "What do you want to install?"}}],
+    "exec": ["@ARGONAUT_INSTALL_EXTENSION_EXE@"]
+}

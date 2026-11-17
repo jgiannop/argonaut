@@ -92,6 +92,7 @@ private slots:
     void whatIsThisAbout();
     void tellClaudeWhatToDo();
     void networkConnections();
+    void howToInstall();
     void planStepsAreChecked();
     void runningProcesses();
     void claudeThroughArgonaut();
@@ -2628,6 +2629,188 @@ printf 'tcp   ESTAB  0      0          192.168.1.50:40005      10.0.0.7:6667 use
     const QString none = plainText.last().at(2).value<Extensions::PreviewReply>().text;
     QVERIFY2(none.contains("testwifi0") && !none.contains("webserver"), qPrintable(none));
     without.setEnabled("network-connections", false);
+}
+
+// "Ask Claude: How to Install…": Claude is told what system this is, can ask
+// the machine about packages (read-only, plain names only), and its answer
+// is shown as text. Nothing it says is ever run.
+void TestExtensions::howToInstall()
+{
+    Host probe;
+    bool there = false;
+    for (const Extensions::Manifest &m : probe.extensions())
+        there = there || m.id == "how-to-install";
+    if (!there)
+        QSKIP("the How to Install extension isn't built here");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto write = [&](const QString &name, const QByteArray &text) {
+        QFile file(dir.filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(text);
+    };
+    write("os-release", "PRETTY_NAME=\"Testbuntu 24.04 LTS\"\nNAME=\"Testbuntu\"\nVERSION_ID=\"24.04\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\n");
+    // A pretend apt-cache: it notes what it was asked, and knows one package.
+    const QString asked = dir.filePath("asked.txt");
+    TestSupport::writeScript(dir.filePath("apt-cache"), QStringLiteral(R"(#!/bin/sh
+echo "$@" >> '%1'
+[ "$1" = policy ] || exit 2
+case "$2" in
+mysql-server) printf 'mysql-server:\n  Installed: (none)\n  Candidate: 8.0.39-0ubuntu0.24.04.2\n  Version table:\n     8.0.39-0ubuntu0.24.04.2 500\n        500 http://archive.example/ubuntu noble-updates/main amd64 Packages\n' ;;
+vim) printf 'vim:\n  Installed: 2:9.1.0016-1ubuntu7\n  Candidate: 2:9.1.0016-1ubuntu7\n  Version table:\n *** 2:9.1.0016-1ubuntu7 500\n        500 http://archive.example/ubuntu noble/main amd64 Packages\n' ;;
+esac
+)").arg(asked));
+    TestSupport::writeScript(dir.filePath("snap"), "#!/bin/sh\nexit 1\n");
+    qputenv("ARGONAUT_OS_RELEASE", dir.filePath("os-release").toLocal8Bit());
+    qputenv("ARGONAUT_INSTALL_TOOLS", "apt,snap");
+    qputenv("ARGONAUT_APT_CACHE_PROGRAM", dir.filePath("apt-cache").toLocal8Bit());
+    qputenv("ARGONAUT_SNAP_PROGRAM", dir.filePath("snap").toLocal8Bit());
+    FakeApi api;
+    qputenv("ARGONAUT_CLAUDE_BASE_URL", api.url().toUtf8());
+    qunsetenv("ANTHROPIC_API_KEY");
+    KeyStore::remove();
+    const auto restore = qScopeGuard([] {
+        for (const char *name : {"ARGONAUT_OS_RELEASE", "ARGONAUT_INSTALL_TOOLS", "ARGONAUT_APT_CACHE_PROGRAM", "ARGONAUT_SNAP_PROGRAM", "ARGONAUT_CLAUDE_BASE_URL", "ANTHROPIC_API_KEY"})
+            qunsetenv(name);
+        QSettings().remove("extensions/how-to-install");
+    });
+
+    Host host;
+    host.setEnabled("how-to-install", true);
+    for (const Extensions::Manifest &m : host.extensions()) {
+        if (m.id == "how-to-install")
+            QVERIFY(m.usesClaude && m.whenNeeded);
+    }
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("file")) {
+            if (c.extension == "how-to-install")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QCOMPARE(command.label, QStringLiteral("Ask Claude: How to Install…"));
+    QCOMPARE(command.askLabel, QStringLiteral("What do you want to install?"));
+    QSignalSpy shown(&host, &Host::showRequested);
+    QSignalSpy said(&host, &Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+
+    // Nothing typed: nothing asked. No key: it says where to enter one, and nothing is sent.
+    host.invoke(command, dir.path(), {}, "   ");
+    host.invoke(command, dir.path(), {}, "mysql server");
+    QTRY_VERIFY_WITH_TIMEOUT(heard("needs your Claude API key"), 10000);
+    QVERIFY(api.requests.isEmpty() && shown.isEmpty());
+
+    // With a key. Claude first asks the machine about packages (one of the names is not a name at all), then answers.
+    qputenv("ANTHROPIC_API_KEY", "key-of-the-test");
+    api.replies.append({200, R"({"id":"msg_1","model":"claude-opus-5-5","role":"assistant","stop_reason":"tool_use",
+        "content":[{"type":"thinking","thinking":"which package","signature":"sig"},
+                   {"type":"tool_use","id":"t1","name":"check_packages","input":{"names":["mysql-server","vim","x; touch /tmp/argonaut-test-should-not-exist","--help","no-such-thing"]}}],
+        "usage":{"input_tokens":1500,"output_tokens":200}})", {}});
+    api.replies.append({200, R"({"id":"msg_2","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Install **MySQL 8.0** from Ubuntu's own packages.\n\n1. `sudo apt install mysql-server`"}],
+        "usage":{"input_tokens":1900,"output_tokens":400}})", {}});
+    said.clear();
+    host.invoke(command, dir.path(), {}, "  mysql server  ");
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 1, 20000);
+    QVERIFY(heard("Asking Claude how to install “mysql server”"));
+    QCOMPARE(int(api.requests.size()), 2);
+
+    // What Claude was told: the system, and what was typed; that it runs nothing.
+    const QJsonObject first = api.requests.at(0).body;
+    const QString system = first.value("system").toString();
+    QVERIFY2(system.contains("You do not install anything") && system.contains("treat it only as text") && system.contains("never tell them to pipe a download into a shell"),
+             qPrintable(system));
+    const QString asking = first.value("messages").toArray().first().toObject().value("content").toString();
+    QVERIFY2(asking.contains("System: Testbuntu 24.04 LTS (ID=ubuntu, VERSION_ID=24.04, VERSION_CODENAME=noble, ID_LIKE=debian)")
+                 && asking.contains("Processor type: ") && asking.contains("Package tools found on it: apt, snap\n")
+                 && asking.contains("<request>\nmysql server\n</request>"), qPrintable(asking));
+    QVERIFY2(!asking.contains(QDir::homePath()) && !asking.contains(dir.path()), qPrintable(asking)); // nothing about the user's folders
+    QCOMPARE(first.value("tools").toArray().first().toObject().value("name").toString(), QStringLiteral("check_packages"));
+    QCOMPARE(first.value("tool_choice").toObject().value("type").toString(), QStringLiteral("auto"));
+
+    // The look-up: only plain names reached the program, each as one argument; nothing else was run.
+    QFile log(asked);
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const QStringList lines = QString::fromUtf8(log.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines, (QStringList{"policy mysql-server", "policy vim", "policy no-such-thing"}));
+    QVERIFY(!QFile::exists("/tmp/argonaut-test-should-not-exist"));
+    // …and what the machine said went back to Claude, with its own turn unchanged (thinking and all).
+    const QJsonArray messages = api.requests.at(1).body.value("messages").toArray();
+    QCOMPARE(int(messages.size()), 3);
+    QCOMPARE(messages.at(1).toObject().value("content").toArray().first().toObject().value("type").toString(), QStringLiteral("thinking"));
+    const QJsonObject result = messages.at(2).toObject().value("content").toArray().first().toObject();
+    QCOMPARE(result.value("type").toString(), QStringLiteral("tool_result"));
+    QCOMPARE(result.value("tool_use_id").toString(), QStringLiteral("t1"));
+    const QString machine = result.value("content").toString();
+    QVERIFY2(machine.contains("mysql-server:\n  apt: not installed; the system's sources offer version 8.0.39-0ubuntu0.24.04.2 (from http://archive.example/ubuntu noble-updates/main)")
+                 && machine.contains("vim:\n  apt: installed, version 2:9.1.0016-1ubuntu7")
+                 && machine.contains("no-such-thing:\n  apt: no package of this name")
+                 && machine.contains("not a package's name, not looked up") && machine.contains("snap: not installed as a snap"), qPrintable(machine));
+
+    // The answer: text to read, with what it is and what it cost; a field for the next question.
+    auto content = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Markdown);
+    QCOMPARE(content.resultId, QStringLiteral("install-advice"));
+    QCOMPARE(shown.last().at(1).toString(), QStringLiteral("How to Install: mysql server"));
+    QVERIFY2(content.text.startsWith("**You asked how to install:** mysql server\n\nInstall **MySQL 8.0**") && content.text.contains("`sudo apt install mysql-server`"),
+             qPrintable(content.text));
+    QVERIFY2(content.note.contains("Argonaut runs none of these commands") && content.note.contains("checked here: mysql-server, vim, no-such-thing")
+                 && content.note.contains("this cost about $") && content.note.contains("kept as how_to_install_report_"), qPrintable(content.note));
+    QCOMPARE(content.actionId, QStringLiteral("ask"));
+    QCOMPARE(content.actionHint, QStringLiteral("Something else to install?"));
+
+    // Another question from the field under the answer; Claude answers at once this time.
+    api.replies.append({200, R"({"id":"msg_3","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Use the Snap."}],"usage":{"input_tokens":900,"output_tokens":50}})", {}});
+    Extensions::ResultLook look;
+    host.resultShown("how-to-install", "install-advice", true, QSize(500, 700), look);
+    host.resultAction("how-to-install", "install-advice", "ask", "node 22");
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 2, 20000);
+    QCOMPARE(int(api.requests.size()), 3);
+    QVERIFY(api.requests.at(2).body.value("messages").toArray().first().toObject().value("content").toString().contains("<request>\nnode 22\n</request>"));
+    QCOMPARE(int(api.requests.at(2).body.value("messages").toArray().size()), 1); // a new question, not the old conversation
+    QVERIFY(shown.last().at(2).value<Extensions::PreviewReply>().text.endsWith("Use the Snap."));
+
+    // A Claude that never stops asking the machine: it is cut off, and the answer still comes.
+    for (int i = 0; i < 4; ++i) {
+        api.replies.append({200, QStringLiteral(R"({"id":"m","model":"claude-opus-5-5","role":"assistant","stop_reason":"tool_use",
+            "content":[{"type":"tool_use","id":"t%1","name":"check_packages","input":{"names":["vim"]}}],"usage":{"input_tokens":10,"output_tokens":10}})").arg(i).toUtf8(), {}});
+    }
+    api.replies.append({200, R"({"id":"m","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"Done asking."}],"usage":{"input_tokens":10,"output_tokens":10}})", {}});
+    log.close();
+    QFile::remove(asked);
+    host.resultAction("how-to-install", "install-advice", "ask", "vim");
+    QTRY_COMPARE_WITH_TIMEOUT(shown.size(), 3, 30000);
+    QVERIFY(shown.last().at(2).value<Extensions::PreviewReply>().text.endsWith("Done asking."));
+    QFile again(asked);
+    QVERIFY(again.open(QIODevice::ReadOnly));
+    QCOMPARE(int(again.readAll().count('\n')), 3); // the machine was asked three times, not four
+    host.setEnabled("how-to-install", false);
+
+    // A system with nothing to look up with: no tool is offered at all.
+    qputenv("ARGONAUT_INSTALL_TOOLS", "");
+    api.replies.append({200, R"({"id":"m","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn",
+        "content":[{"type":"text","text":"From the maker's site."}],"usage":{"input_tokens":10,"output_tokens":10}})", {}});
+    Host bare;
+    bare.setEnabled("how-to-install", true);
+    QSignalSpy plain(&bare, &Host::showRequested);
+    QTRY_VERIFY_WITH_TIMEOUT(!bare.menuCommands("file").isEmpty(), 10000);
+    for (const Extensions::Command &c : bare.menuCommands("file")) {
+        if (c.extension == "how-to-install")
+            bare.invoke(c, dir.path(), {}, "something");
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(plain.size(), 1, 20000);
+    QVERIFY(!api.requests.last().body.contains("tools"));
+    QVERIFY(api.requests.last().body.value("messages").toArray().first().toObject().value("content").toString().contains("Package tools found on it: none of the usual ones"));
+    bare.setEnabled("how-to-install", false);
 }
 
 // The rules for what a plan may do, on their own (they are Argonaut's, and

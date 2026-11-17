@@ -466,6 +466,19 @@ if(UNIX)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/tell-claude-what-to-do/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/tell-claude-what-to-do)
 
+    # How to Install: Claude's advice on installing a program on this system.
+    qt_add_executable(argonaut-install-extension extensions/install/main.cpp)
+    target_link_libraries(argonaut-install-extension PRIVATE argonaut_core)
+    set(ARGONAUT_INSTALL_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-install-extension")
+    configure_file(extensions/install/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/how-to-install/extension.json @ONLY)
+    set(ARGONAUT_INSTALL_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-install-extension")
+    configure_file(extensions/install/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/how-to-install/extension.json @ONLY)
+    install(TARGETS argonaut-install-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/how-to-install/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/how-to-install)
+
     # Space Overview: the open folder's size and the biggest things inside it,
     # in the preview pane (measured with Analyze's DiskUsageModel).
     qt_add_executable(argonaut-space-extension extensions/space/main.cpp)
@@ -500,6 +513,7 @@ if(WIN32)
     argonaut_windows_extension(organize organize-with-claude ARGONAUT_ORGANIZE_EXTENSION_EXE)
     argonaut_windows_extension(command tell-claude-what-to-do ARGONAUT_COMMAND_EXTENSION_EXE)
     argonaut_windows_extension(space space-overview ARGONAUT_SPACE_EXTENSION_EXE)
+    argonaut_windows_extension(install how-to-install ARGONAUT_INSTALL_EXTENSION_EXE)
 endif()
 
 # A package for other people has every feature, or isn't made: the optional
