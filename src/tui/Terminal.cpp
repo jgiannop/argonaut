@@ -126,7 +126,8 @@ Terminal::Terminal()
     // waiting to see whether a second one follows: the interface tells a
     // double click itself). A press and its release that arrive together
     // come as one "clicked", so that is asked for too.
-    ::mousemask(BUTTON1_PRESSED | BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON3_PRESSED | BUTTON3_CLICKED
+    ::mousemask(BUTTON1_PRESSED | BUTTON1_RELEASED | BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON3_PRESSED | BUTTON3_CLICKED
+                    | BUTTON_CTRL
                     | BUTTON4_PRESSED
 #if defined(BUTTON5_PRESSED)
                     | BUTTON5_PRESSED
@@ -145,6 +146,7 @@ Terminal::Terminal()
 Terminal::~Terminal()
 {
     setMotion(false);
+    setDragging(false);
     setExactColors(false);
     ::curs_set(1);
     ::endwin();
@@ -256,10 +258,24 @@ void Terminal::setMotion(bool on)
     m_motion = on;
     // "Any event" tracking: where the mouse is, as it moves.
     tell(on ? "\033[?1003h" : "\033[?1003l");
+    if (!on && m_dragging)
+        tell("\033[?1002h"); // switching the one off must not take the other with it
+}
+
+// "Button event" tracking: the mouse says where it is while a button is
+// held, which is what dragging a rectangle over the files needs. ncurses
+// asks only for presses and releases.
+void Terminal::setDragging(bool on)
+{
+    if (on == m_dragging)
+        return;
+    m_dragging = on;
+    tell(on ? "\033[?1002h" : "\033[?1002l");
 }
 
 void Terminal::show(const Screen &screen)
 {
+    setDragging(true);
     setMotion(screen.wantsMotion());
     if (!(screen.palette() == m_palette) || m_again) {
         m_again = false;
@@ -362,6 +378,7 @@ void Terminal::suspend()
     // The other program gets the terminal as it was: its own colours, and
     // a mouse that doesn't report every move.
     setMotion(false);
+    setDragging(false);
     setExactColors(false);
     m_again = true;
     ::def_prog_mode();
@@ -406,17 +423,31 @@ QList<Key> Terminal::readKeys(bool *resized)
                     Mouse mouse;
                     mouse.x = event.x;
                     mouse.y = event.y;
-                    if (event.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
+                    mouse.ctrl = (event.bstate & BUTTON_CTRL) != 0;
+                    // A move comes first: one with the button held may carry
+                    // the button too, and is still a move.
+                    if (event.bstate & REPORT_MOUSE_POSITION) {
+                        mouse.kind = Mouse::Move;
+                    } else if (event.bstate & BUTTON1_PRESSED) {
                         mouse.kind = Mouse::Press;
+                    } else if (event.bstate & BUTTON1_RELEASED) {
+                        mouse.kind = Mouse::Release;
+                    } else if (event.bstate & BUTTON1_CLICKED) {
+                        mouse.kind = Mouse::Press; // a press and its release in one
+                        m_mouse.append(mouse);
+                        mouse.kind = Mouse::Release;
                     } else if (event.bstate & BUTTON1_DOUBLE_CLICKED) {
                         mouse.kind = Mouse::Press;
                         m_mouse.append(mouse); // two clicks in one
+                        mouse.kind = Mouse::Release;
+                        m_mouse.append(mouse);
+                        mouse.kind = Mouse::Press;
+                        m_mouse.append(mouse);
+                        mouse.kind = Mouse::Release;
                     } else if (event.bstate & (BUTTON3_PRESSED | BUTTON3_CLICKED))
                         mouse.kind = Mouse::RightPress;
                     else if (event.bstate & BUTTON4_PRESSED)
                         mouse.kind = Mouse::WheelUp;
-                    else if (event.bstate & REPORT_MOUSE_POSITION)
-                        mouse.kind = Mouse::Move;
 #if defined(BUTTON5_PRESSED)
                     else if (event.bstate & BUTTON5_PRESSED)
                         mouse.kind = Mouse::WheelDown;
@@ -435,6 +466,8 @@ QList<Key> Terminal::readKeys(bool *resized)
             case KEY_END: key.code = Key::End; break;
             case KEY_PPAGE: key.code = Key::PageUp; break;
             case KEY_NPAGE: key.code = Key::PageDown; break;
+            case KEY_SPREVIOUS: key.code = Key::PageUp; key.shift = true; break;  // Shift+PgUp, where the terminal passes it on
+            case KEY_SNEXT: key.code = Key::PageDown; key.shift = true; break;
             case KEY_IC: key.code = Key::Insert; break;
             case KEY_DC: key.code = Key::Delete; break;
             case KEY_SDC: key.code = Key::Delete; key.shift = true; break;

@@ -46,10 +46,11 @@ struct Key
 // What the mouse did, in cells from the top-left corner.
 struct Mouse
 {
-    enum Kind { Press, RightPress, WheelUp, WheelDown, Move };
+    enum Kind { Press, RightPress, WheelUp, WheelDown, Move, Release };
     Kind kind = Press;
     int x = 0;
     int y = 0;
+    bool ctrl = false; // Ctrl was held (where the terminal says so)
     bool isWheel() const { return kind == WheelUp || kind == WheelDown; }
 };
 
@@ -323,11 +324,37 @@ private:
     void mouseInSidebar(const Mouse &mouse);
     void mouseInPreview(const Mouse &mouse);
     void mouseInPane(int i, const Mouse &mouse);
+    // A rectangle dragged over the files with the button held, as in the
+    // window: what it covers is the selection (with Ctrl: added to what was
+    // selected). It is anchored to items, not to the screen, so the list can
+    // scroll under it when the mouse goes past the top or the bottom.
+    struct Band
+    {
+        bool down = false;   // the button is held, after a press on the files
+        bool active = false; // and the mouse has moved to another item: a rectangle is being dragged
+        int pane = 0;
+        int line = 0, col = 0; // where it started: a line of items, and a column of the grid
+        int x = 0;             // …and the screen column
+        int nowX = 0, nowY = 0; // where the mouse is
+        int nowLine = -1, nowCol = -1;
+        QSet<QString> base;    // what stays selected whatever the rectangle covers (Ctrl)
+    };
+    Band m_band;
+    QTimer m_bandTimer;        // the mouse is held past an edge: the list goes on scrolling
+    void startBand(int pane, const Mouse &mouse);
+    void bandTo(int x, int y);
+    void updateBand();
+    void endBand();
+    void drawBand(Screen &screen);
+public:
+    bool isDraggingARectangle() const { return m_band.active; } // (tests)
+private:
     // The shell panel (F12): made when first asked for, gone when the shell ends.
     Shell *m_shell = nullptr;
     bool m_inShell = false;       // keys go to the shell, not to the files
     bool m_embeddedShell = true;
     int m_shellX = 0, m_shellY = -1, m_shellHeight = 0; // from the last frame
+    int m_shellBarX = -1;         // its scrollbar's column
     int m_lastWidth = 100, m_lastHeight = 30;
     // The sidebar: the places (Places::list, as in the window), looked up
     // now and then. Rows are entries with a line between the groups.

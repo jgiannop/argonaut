@@ -684,7 +684,8 @@ grid of names, and big icons (a picture made of characters for every item, with 
 round the one you are on).</li>
 <li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell under the files (about a third of the height), in the pane's
 folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
-files to its folder and <code>exit</code> closes it.</li>
+files to its folder and <code>exit</code> closes it. What scrolls off its top is kept (the last 5,000 lines): the
+wheel over the panel, its scrollbar at the right, or [[Shift+PgUp]] look back, and typing shows the newest again.</li>
 <li><b>Copy and paste:</b> [[Ctrl+C]] copies and [[Ctrl+X]] cuts the selection, as here; go to any folder and
 [[Ctrl+V]] pastes. A cut item is faint until it is pasted, and [[Esc]] forgets the cut. Where there is a desktop
 and <code>xclip</code> (or <code>wl-clipboard</code> on Wayland) is installed, the clipboard is the desktop's: what
@@ -721,7 +722,10 @@ character. Switch them off for the plain look, or on a slow connection: they sen
 <li><b>Mouse:</b> click, double-click, the wheel, and the words on the bottom line. A right-click works as it does
 here: the item becomes the selection (one of several selected items keeps the others) and a menu opens at the
 pointer with what can be done with it, extensions' commands included; on empty space or on <b>..</b> the menu is
-the folder's. [[Space]] or [[Insert]] select several.</li>
+the folder's. [[Space]] or [[Insert]] select several, and so does the mouse, as here: <b>drag with the button
+held</b> and everything the rectangle covers is selected (held past the top or the bottom, the list scrolls on);
+[[Ctrl]] and a click adds or removes one item, [[Ctrl]] and a drag adds to what is selected, and a click on empty
+space clears the selection.</li>
 <li>[[F1]] lists every key; [[Ctrl+Q]] quits ([[F10]] too, where the terminal doesn't keep it for its own menu).</li>
 </ul>
 <p>Menus, search, tabs and the preview pane are not in the terminal version yet.</p>

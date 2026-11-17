@@ -120,6 +120,17 @@ void Screen::shade(int x, int y, int width, int height)
     }
 }
 
+void Screen::tint(int x, int y, int width, int height, Paper from, Paper to)
+{
+    for (int row = qMax(0, y); row < qMin(m_height, y + height); ++row) {
+        for (int column = qMax(0, x); column < qMin(m_width, x + width); ++column) {
+            Style &style = m_cells[row * m_width + column].style;
+            if (!style.raw && style.paper == from)
+                style.paper = to;
+        }
+    }
+}
+
 void Screen::fill(int x, int y, int width, int height, const Style &style, char32_t ch)
 {
     for (int row = qMax(0, y); row < qMin(m_height, y + height); ++row) {

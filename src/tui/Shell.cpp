@@ -36,12 +36,51 @@ struct Shell::Private
     VTerm *vt = nullptr;
     VTermScreen *screen = nullptr;
     bool cursorVisible = true;
+    bool wholePanel = false; // a program has the alternate screen (an editor, a pager)
+    QList<QList<VTermScreenCell>> history; // the lines that scrolled off the top, oldest first
+
+    // A line leaves the top: kept. While the panel looks back, what it shows stays where it is.
+    static int pushLine(int cols, const VTermScreenCell *cells, void *user)
+    {
+        auto *self = static_cast<Shell *>(user);
+        self->d->history.append(QList<VTermScreenCell>(cells, cells + cols));
+        if (self->d->history.size() > MaxHistory)
+            self->d->history.removeFirst();
+        else if (self->m_back > 0)
+            ++self->m_back;
+        return 1;
+    }
+    // The panel got taller: the newest kept line comes back onto the screen.
+    static int popLine(int cols, VTermScreenCell *cells, void *user)
+    {
+        auto *self = static_cast<Shell *>(user);
+        if (self->d->history.isEmpty())
+            return 0;
+        const QList<VTermScreenCell> line = self->d->history.takeLast();
+        for (int i = 0; i < cols; ++i) {
+            if (i < line.size()) {
+                cells[i] = line.at(i);
+            } else {
+                cells[i] = VTermScreenCell{};
+                cells[i].width = 1;
+                cells[i].fg.type = VTERM_COLOR_DEFAULT_FG;
+                cells[i].bg.type = VTERM_COLOR_DEFAULT_BG;
+            }
+        }
+        self->m_back = qMin(self->m_back, int(self->d->history.size()));
+        return 1;
+    }
 
     static void output(const char *bytes, size_t length, void *user) { static_cast<Shell *>(user)->send(bytes, length); }
     static int termProp(VTermProp prop, VTermValue *value, void *user)
     {
+        auto *self = static_cast<Shell *>(user);
         if (prop == VTERM_PROP_CURSORVISIBLE)
-            static_cast<Shell *>(user)->d->cursorVisible = value->boolean;
+            self->d->cursorVisible = value->boolean;
+        if (prop == VTERM_PROP_ALTSCREEN) {
+            self->d->wholePanel = value->boolean;
+            self->m_back = 0; // a program takes the panel, or gives it back: the newest is shown
+        }
         return 1;
     }
 };
@@ -115,6 +154,8 @@ bool Shell::start(const QString &folder, int rows, int columns)
     d->screen = vterm_obtain_screen(d->vt);
     static VTermScreenCallbacks callbacks{};
     callbacks.settermprop = &Private::termProp;
+    callbacks.sb_pushline = &Private::pushLine;
+    callbacks.sb_popline = &Private::popLine;
     vterm_screen_set_callbacks(d->screen, &callbacks, this);
     vterm_screen_enable_altscreen(d->screen, 1);
     vterm_screen_reset(d->screen, 1);
@@ -243,10 +284,25 @@ void Shell::flush()
         m_writeNotifier->setEnabled(m_fd >= 0 && !m_pending.isEmpty());
 }
 
+int Shell::historySize() const
+{
+    return d->wholePanel ? 0 : int(d->history.size());
+}
+
+void Shell::scrollBack(int lines)
+{
+    const int to = qBound(0, m_back + lines, historySize());
+    if (to == m_back)
+        return;
+    m_back = to;
+    emit changed();
+}
+
 void Shell::key(const Key &key)
 {
     if (!d->vt || m_fd < 0)
         return;
+    scrollToNewest(); // what is typed is seen
     int mod = VTERM_MOD_NONE;
     if (key.ctrl)
         mod |= VTERM_MOD_CTRL;
@@ -286,11 +342,19 @@ void Shell::draw(Screen &screen, int x, int y) const
 {
     if (!d->screen)
         return;
+    // Looking back: the first rows are kept lines, the rest the screen's first rows.
+    const int back = qMin(m_back, historySize());
     for (int row = 0; row < m_rows; ++row) {
+        const QList<VTermScreenCell> *kept = row < back ? &d->history.at(d->history.size() - back + row) : nullptr;
         for (int column = 0; column < m_columns; ++column) {
             VTermScreenCell from;
-            if (!vterm_screen_get_cell(d->screen, VTermPos{row, column}, &from))
+            if (kept) {
+                if (column >= kept->size())
+                    break; // the line was shorter (the panel was narrower then)
+                from = kept->at(column);
+            } else if (!vterm_screen_get_cell(d->screen, VTermPos{row - back, column}, &from)) {
                 continue;
+            }
             Cell cell;
             // One character a cell: joining marks after the first are left out.
             cell.ch = from.chars[0] >= 32 && from.chars[0] != 0x7f ? char32_t(from.chars[0]) : U' ';
@@ -319,8 +383,8 @@ bool Shell::cursor(int *x, int *y) const
     VTermPos pos;
     vterm_state_get_cursorpos(vterm_obtain_state(d->vt), &pos);
     *x = pos.col;
-    *y = pos.row;
-    return true;
+    *y = pos.row + qMin(m_back, historySize()); // pushed down while the panel looks back
+    return *y < m_rows;
 }
 
 QString Shell::folder() const
@@ -365,6 +429,8 @@ void Shell::readPty() {}
 void Shell::flush() {}
 void Shell::send(const char *, size_t) {}
 void Shell::key(const Key &) {}
+int Shell::historySize() const { return 0; }
+void Shell::scrollBack(int) {}
 void Shell::draw(Screen &, int, int) const {}
 
 bool Shell::cursor(int *, int *) const

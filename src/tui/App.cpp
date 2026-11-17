@@ -169,6 +169,9 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
                 }
                 emit changed();
             });
+    // A rectangle dragged past the top or bottom of the files: the list scrolls on while the mouse is held there.
+    m_bandTimer.setInterval(70);
+    connect(&m_bandTimer, &QTimer::timeout, this, &App::updateBand);
     m_messageTimer.setSingleShot(true);
     m_messageTimer.setInterval(4000);
     connect(&m_messageTimer, &QTimer::timeout, this, [this] {
@@ -1066,6 +1069,11 @@ void App::key(const Key &key)
                     navigate(pane(), folder);
                 return;
             }
+            if ((key.code == Key::PageUp || key.code == Key::PageDown) && key.shift && !key.ctrl && !key.alt) {
+                // Shift+PgUp / PgDn: what the shell wrote before, a panel's height at a time.
+                m_shell->scrollBack((key.code == Key::PageUp ? 1 : -1) * qMax(1, m_shell->rows() - 1));
+                return;
+            }
             m_shell->key(key); // everything else is typed into the shell
             return;
         }
@@ -1118,7 +1126,7 @@ void App::toggleShell()
     connect(m_shell, &Shell::changed, this, &App::changed);
     connect(m_shell, &Shell::finished, this, &App::closeShell, Qt::QueuedConnection);
     const int paneHeight = m_lastHeight - 3;
-    if (!m_shell->start(folder, shellHeightFor(paneHeight) - 1, m_lastWidth - m_sideWidth - m_previewWidth)) {
+    if (!m_shell->start(folder, shellHeightFor(paneHeight) - 1, m_lastWidth - m_sideWidth - m_previewWidth - 1)) {
         delete m_shell;
         m_shell = nullptr;
         say(QStringLiteral("The shell could not be started"));
@@ -1162,9 +1170,17 @@ void App::scrollTo(Pane &p, int top)
 void App::mouse(const Mouse &mouse)
 {
     if (mouse.kind == Mouse::Move) {
-        hoverAt(mouse.x, mouse.y);
+        if (m_band.down)
+            bandTo(mouse.x, mouse.y); // the button is held: a rectangle over the files
+        else
+            hoverAt(mouse.x, mouse.y);
         return;
     }
+    if (mouse.kind == Mouse::Release) {
+        endBand();
+        return;
+    }
+    endBand(); // a press: whatever was being dragged is over (its release was lost)
     if (m_mode == Mode::Help) {
         // The wheel moves through a help longer than the screen.
         if (mouse.isWheel()) {
@@ -1216,6 +1232,20 @@ void App::mouse(const Mouse &mouse)
     // The shell panel: a click goes there to type. (The shell's programs
     // don't get the mouse.)
     if (m_shell && mouse.x >= m_shellX && mouse.y >= m_shellY && mouse.y < m_shellY + m_shellHeight) {
+        // The wheel looks back at what the shell wrote before; a click on
+        // the scrollbar goes to that part of it.
+        if (mouse.isWheel()) {
+            m_shell->scrollBack(mouse.kind == Mouse::WheelUp ? 3 : -3);
+            return;
+        }
+        if (mouse.kind == Mouse::Press && mouse.x == m_shellBarX && mouse.y > m_shellY && m_shell->historySize() > 0) {
+            const int rows = m_shellHeight - 1;
+            const int at = mouse.y - m_shellY - 1; // 0: the oldest; the last row: the newest
+            const int history = m_shell->historySize();
+            const int wanted = rows > 1 ? int(qint64(history) * (rows - 1 - at) / (rows - 1)) : 0;
+            m_shell->scrollBack(wanted - m_shell->scrolledBack());
+            return;
+        }
         if (mouse.kind == Mouse::Press && !m_inShell) {
             m_inSidebar = false;
             m_inPreview = false;
@@ -1369,6 +1399,11 @@ void App::mouseInPane(int i, const Mouse &mouse)
         return;
     }
     const int height = qMax(1, p.lineHeight); // screen lines to a line of items
+    // A press on the files (an item or the empty space after them) may be
+    // the start of a rectangle.
+    const bool onFiles = mouse.y >= p.rowsY && mouse.y < p.rowsY + p.rowsShown * height;
+    if (mouse.kind == Mouse::Press && onFiles)
+        startBand(i, mouse);
     int row = p.top + (mouse.y - p.rowsY) / height;
     bool beside = false; // right of the last column
     if (p.view != View::List) {
@@ -1381,6 +1416,8 @@ void App::mouseInPane(int i, const Mouse &mouse)
             // Empty space, as in the window: nothing is selected, and the menu is the folder's.
             p.selected.clear();
             openContextMenu(mouse.x, mouse.y, false);
+        } else if (mouse.kind == Mouse::Press && onFiles && !mouse.ctrl) {
+            p.selected.clear(); // a click on empty space: nothing is selected, as in the window
         }
         emit changed(); // empty space: only the pane changes
         return;
@@ -1388,6 +1425,15 @@ void App::mouseInPane(int i, const Mouse &mouse)
     moveCursor(p, row);
     const bool upRow = upRows(p) == 1 && row == 0;
     const QString path = upRow ? QStringLiteral("..") : pathAt(p, row);
+    if (mouse.kind == Mouse::Press && mouse.ctrl) {
+        // Ctrl and a click: this item in or out of the selection, the rest as it was.
+        if (!upRow && !p.selected.remove(path))
+            p.selected.insert(path);
+        m_band.base = p.selected;
+        m_lastClick.invalidate();
+        emit changed();
+        return;
+    }
     if (mouse.kind == Mouse::RightPress) {
         // As in the window: an item that isn't selected becomes the
         // selection, one that is keeps the others with it; then the menu
@@ -1408,6 +1454,130 @@ void App::mouseInPane(int i, const Mouse &mouse)
         m_lastClick.invalidate();
         openCursor();
     }
+}
+
+// ------------------------------------------------- the rectangle ---
+
+void App::startBand(int index, const Mouse &mouse)
+{
+    Pane &p = m_panes[index];
+    const int height = qMax(1, p.lineHeight);
+    m_band = Band();
+    m_band.down = true;
+    m_band.pane = index;
+    m_band.line = p.top + (mouse.y - p.rowsY) / height;
+    m_band.col = p.view == View::List ? 0 : qMax(0, mouse.x - p.x - 1) / qMax(1, p.cellWidth);
+    m_band.x = mouse.x;
+    m_band.nowX = mouse.x;
+    m_band.nowY = mouse.y;
+    m_band.nowLine = m_band.line;
+    m_band.nowCol = m_band.col;
+    if (mouse.ctrl)
+        m_band.base = p.selected;
+    p.hover = -1;
+}
+
+// The mouse moved with the button held.
+void App::bandTo(int x, int y)
+{
+    if (!m_band.down || m_mode != Mode::Normal)
+        return;
+    const Pane &p = m_panes[m_band.pane];
+    m_band.nowX = qBound(p.x, x, p.x + qMax(1, p.width) - 1);
+    m_band.nowY = y;
+    updateBand();
+    // Past the top or the bottom: the list scrolls for as long as it is held there.
+    const bool outside = y < p.rowsY || y >= p.rowsY + p.rowsShown * qMax(1, p.lineHeight);
+    if (outside && m_band.active)
+        m_bandTimer.start();
+    else
+        m_bandTimer.stop();
+}
+
+// What the rectangle covers, from where it started to where the mouse is,
+// becomes the selection. Called again by the timer while the mouse is held
+// past an edge: each time the rectangle reaches one line further.
+void App::updateBand()
+{
+    if (!m_band.down) {
+        m_bandTimer.stop();
+        return;
+    }
+    Pane &p = m_panes[m_band.pane];
+    const int height = qMax(1, p.lineHeight);
+    const int per = perLine(p);
+    const int count = rowCount(p);
+    const int lines = (count + per - 1) / per;
+    int line;
+    if (m_band.nowY < p.rowsY)
+        line = p.top - 1; // one line above what is shown
+    else if (m_band.nowY >= p.rowsY + p.rowsShown * height)
+        line = p.top + p.rowsShown;
+    else
+        line = p.top + (m_band.nowY - p.rowsY) / height;
+    line = qMax(0, line);
+    const int col = p.view == View::List ? 0 : qMax(0, m_band.nowX - p.x - 1) / qMax(1, p.cellWidth);
+    if (!m_band.active && line == m_band.line && col == m_band.col)
+        return; // still on the item it was pressed on: a click, so far
+    if (m_band.active && line == m_band.nowLine && col == m_band.nowCol)
+        return;
+    m_band.active = true;
+    m_band.nowLine = line;
+    m_band.nowCol = col;
+    m_lastClick.invalidate(); // a drag is not half of a double click
+    QSet<QString> selected = m_band.base;
+    const int fromLine = qMin(m_band.line, line), toLine = qMin(qMax(m_band.line, line), lines - 1);
+    const int fromCol = qMin(m_band.col, col), toCol = qMin(qMax(m_band.col, col), per - 1);
+    for (int l = fromLine; l <= toLine; ++l) {
+        for (int c = fromCol; c <= toCol; ++c) {
+            const int at = l * per + c;
+            if (at >= count)
+                break;
+            const QString path = pathAt(p, at);
+            if (!path.isEmpty()) // ".." is not something to select
+                selected.insert(path);
+        }
+    }
+    p.selected = selected;
+    // The cursor goes along (which is what scrolls the list at an edge).
+    if (count > 0)
+        moveCursor(p, qMin(count - 1, qMin(line, lines - 1) * per + qMin(col, per - 1)));
+    emit changed();
+}
+
+void App::endBand()
+{
+    if (!m_band.down)
+        return;
+    m_bandTimer.stop();
+    m_band.down = false;
+    m_band.active = false;
+    emit changed();
+}
+
+// The rectangle itself: a tint under what it covers on screen.
+void App::drawBand(Screen &screen)
+{
+    if (!m_band.active)
+        return;
+    const Pane &p = m_panes[m_band.pane];
+    if (p.width <= 0)
+        return;
+    const int height = qMax(1, p.lineHeight);
+    const int bottom = p.rowsY + p.rowsShown * height - 1;
+    const int startY = qBound(p.rowsY, p.rowsY + (m_band.line - p.top) * height, bottom);
+    const int nowY = qBound(p.rowsY, m_band.nowY, bottom);
+    int fromY = qMin(startY, nowY), toY = qMax(startY, nowY);
+    if (height > 1) { // whole lines of big cells
+        fromY = p.rowsY + (fromY - p.rowsY) / height * height;
+        toY = qMin(bottom, p.rowsY + (toY - p.rowsY) / height * height + height - 1);
+    }
+    int fromX = qMin(m_band.x, m_band.nowX), toX = qMax(m_band.x, m_band.nowX);
+    if (p.view == View::List) { // a list's rows are selected whole
+        fromX = p.x;
+        toX = p.x + p.width - 2;
+    }
+    screen.tint(fromX, fromY, toX - fromX + 1, toY - fromY + 1, Paper::Normal, Paper::Hover);
 }
 
 // The name that is being typed: the cursor goes to the first item of the
@@ -1720,6 +1890,7 @@ void App::render(Screen &screen)
         syncPreview();
         drawPreview(screen, right, m_previewWidth, 1, paneHeight + shellHeight);
     }
+    drawBand(screen); // a rectangle being dragged over the files
     if (m_shell)
         drawShell(screen, x0, right, 1 + paneHeight, shellHeight);
     drawBottom(screen);
@@ -2194,8 +2365,10 @@ void App::drawShell(Screen &screen, int left, int w, int y, int height)
     screen.fill(left, y, w - left, height, Style());
     screen.fill(left, y, w - left, 1, kBar);
     int x = left + 1 + screen.put(left + 1, y, QStringLiteral("Terminal"), {m_inShell ? Ink::Accent : Ink::Dim, Paper::Bar, m_inShell});
-    const QString hint = m_inShell ? QStringLiteral("F12 back to the files · Ctrl+Up files come here · exit closes")
-                                   : QStringLiteral("F12 or a click to type here");
+    const int back = m_shell->scrolledBack();
+    const QString hint = back > 0 ? QStringLiteral("%1 lines back · wheel or Shift+PgDn: forward · any key: the newest").arg(back)
+                         : m_inShell ? QStringLiteral("F12 back to the files · Ctrl+Up files come here · exit closes")
+                                     : QStringLiteral("F12 or a click to type here");
     const int hintWidth = Screen::widthOf(hint);
     const bool hintFits = w - x - 3 - hintWidth >= 10;
     const QString folder = m_shell->folder();
@@ -2203,8 +2376,24 @@ void App::drawShell(Screen &screen, int left, int w, int y, int height)
         screen.put(x + 1, y, Screen::elided(shown(folder), w - x - 3 - (hintFits ? hintWidth + 2 : 0)), {Ink::Dim, Paper::Bar, false});
     if (hintFits)
         screen.put(w - 1 - hintWidth, y, hint, {Ink::Dim, Paper::Bar, false});
-    m_shell->resize(height - 1, w - left);
+    // The last column is the scrollbar's, always (so the shell's width
+    // doesn't change when the first line scrolls off).
+    const int rows = height - 1;
+    m_shell->resize(rows, w - left - 1);
     m_shell->draw(screen, left, y + 1);
+    m_shellBarX = w - 1;
+    const int history = m_shell->historySize();
+    const Style track{Ink::Dim, Paper::Normal, false};
+    for (int row = 0; row < rows; ++row)
+        screen.put(m_shellBarX, y + 1 + row, QStringLiteral("│"), track);
+    if (history > 0 && rows > 1) {
+        // The handle: as much of everything as the panel shows, at the bottom when the newest is shown.
+        const int total = history + rows;
+        const int thumb = qBound(1, int(qint64(rows) * rows / total), rows - 1);
+        const int at = int(qint64(rows - thumb) * (history - m_shell->scrolledBack()) / history);
+        for (int row = at; row < at + thumb; ++row)
+            screen.put(m_shellBarX, y + 1 + row, QStringLiteral("█"), {m_inShell ? Ink::Accent : Ink::Dim, Paper::Normal, false});
+    }
 }
 
 namespace {
@@ -2906,7 +3095,8 @@ void App::drawHelp(Screen &screen)
         "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
         "                                    in a list of services or processes, / searches it)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
-        "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it)",
+        "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it;",
+        "                                    the wheel, its scrollbar or Shift+PgUp look back at what it wrote before)",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",
         "  F4                                a second pane beside this one, or back to one",
@@ -2950,7 +3140,10 @@ void App::drawHelp(Screen &screen)
         "  Mouse: click a row to go to it, double-click to open it (.. or the folder's",
         "  name at the top: up), right-click for the menu of what can be done with it (it",
         "  becomes the selection, as in the window), wheel to scroll, click a word on the",
-        "  bottom line. Hold Shift to select text.",
+        "  bottom line. Drag with the button held to select everything the rectangle covers",
+        "  (past the top or bottom the list scrolls on); Ctrl and a click adds or removes one",
+        "  item, Ctrl and a drag adds; a click on empty space clears the selection.",
+        "  Hold Shift to select text.",
         "",
         "Commands act on the selected items; with none selected, on the item under the cursor.",
         "",

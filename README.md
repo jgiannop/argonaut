@@ -215,6 +215,7 @@ argonaut --tui ~/src /mnt/usb  # two folders, side by side
 | Ctrl+B | show or hide the places at the left (Recent, Starred, Home…, Trash, bookmarks, drives); in them Enter, or a click, opens one in the pane |
 | F9 | the pane as a list with sizes and dates, a grid of names, or big icons, in turn (in a grid the arrows move four ways, Enter opens and Backspace goes up) |
 | Space or Insert | select |
+| drag the mouse with the button held | select everything the rectangle covers, as in the window (past the top or bottom the list scrolls on); Ctrl+click adds or removes one item, Ctrl+drag adds, a click on empty space clears |
 | Ctrl+C / Ctrl+X, then Ctrl+V | copy / cut the selection, go anywhere, paste. With a desktop and `xclip` (or `wl-clipboard`) the clipboard is shared with the window version and other file managers; over SSH it is Argonaut's own |
 | F5 / F6 | copy / move to the other pane |
 | F7 / F2 | new folder / rename |

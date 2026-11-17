@@ -37,6 +37,17 @@ os.write(fd, b"\x1bOP")      # F1: the help
 pump(0.6)
 os.write(fd, b"x")            # any key closes it
 pump(0.4)
+# A rectangle: the button pressed on the first item (row 5), the mouse moved one row down with it held
+# (a "motion" report), and released. Both items are selected; Esc clears that.
+os.write(fd, b"\x1b[<0;30;5M")
+pump(0.2)
+os.write(fd, b"\x1b[<32;30;6M")
+pump(0.4)
+os.write(fd, b"\x1b[<0;30;6m")
+pump(0.4)
+dragged = out.decode("utf-8", "replace")
+os.write(fd, b"\x1b")
+pump(0.8)
 # A double click on the first item ("inside/": screen row 5, under "..", column 30, right of the
 # places at the left, which take 22 columns): into the folder.
 for _ in range(2):
@@ -65,6 +76,10 @@ elif status != 0:
 for needle in ("Argonaut", "Places", "Trash", "a-file.txt", "inside/", "Quit", "open the folder, or the file with its app", "deep-file.txt", "File", "Help", "Delete Permanently", "Rename"):
     if needle not in text:
         problems.append("never drew %r" % needle)
+if "2 selected" not in dragged:
+    problems.append("dragging the mouse over two items did not select them")
+if "\x1b[?1002h" not in text or "\x1b[?1002l" not in text:
+    problems.append("the mouse was not asked to report dragging, or not told to stop at the end")
 if "\x1b[?1049l" not in text and "\x1b[?47l" not in text:
     problems.append("did not give the terminal back (no leave-alternate-screen)")
 shutil.rmtree(home, ignore_errors=True)

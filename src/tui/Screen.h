@@ -98,6 +98,9 @@ public:
     // menu is open over it (dim), and the cells its shadow falls on (shade).
     void dim(int x, int y, int width, int height);
     void shade(int x, int y, int width, int height);
+    // The cells of this rectangle that are on `from` get `to` under what
+    // they show (the rectangle dragged over the files).
+    void tint(int x, int y, int width, int height, Paper from, Paper to);
     // One cell as it is (the shell panel's); outside the grid it is dropped.
     void set(int x, int y, const Cell &cell)
     {

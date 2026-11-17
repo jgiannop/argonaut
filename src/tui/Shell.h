@@ -44,6 +44,17 @@ public:
     // The folder the shell is in (Linux); empty when it can't be told.
     QString folder() const;
 
+    // What has scrolled off the top is kept (the last MaxHistory lines), and
+    // the panel can look back at it: `scrolledBack()` lines above the newest.
+    // Typing goes back to the newest. Nothing is kept of a program that has
+    // the whole panel to itself (an editor, a pager): there is no looking
+    // back while one runs.
+    static constexpr int MaxHistory = 5000;
+    int historySize() const;
+    int scrolledBack() const { return m_back; }
+    void scrollBack(int lines); // more than there is: as far as it goes; negative: towards the newest
+    void scrollToNewest() { scrollBack(-m_back); }
+
 signals:
     void changed();  // something new to draw
     void finished(); // the shell has ended
@@ -59,6 +70,7 @@ private:
     int m_fd = -1;
     int m_rows = 0;
     int m_columns = 0;
+    int m_back = 0; // lines the panel looks back
     QByteArray m_pending; // typed, not yet taken by the shell
     QSocketNotifier *m_readNotifier = nullptr;
     QSocketNotifier *m_writeNotifier = nullptr;

@@ -72,6 +72,7 @@ private slots:
     void commandPalette();
     void menus();
     void extensionResultInThePreview();
+    void rectangleSelects();
     void copyCutAndPaste();
     void clipboardSharedWithTheDesktop();
     void extensionFormInABox();
@@ -84,6 +85,7 @@ private slots:
     void drawingABigFolderIsQuick();
     void shellInTheFolder();
     void shellPanel();
+    void shellPanelLooksBack();
 
 private:
     QString make(const QString &relative, const QByteArray &content = "x");
@@ -865,7 +867,7 @@ void TestTui::scrollbars()
     keys({Key::character('x')});
     QVERIFY(!app->isAsking());
     keys({Key::of(Key::F1)});
-    QVERIFY(screen(100, 60).contains("Press any key."));
+    QVERIFY(screen(100, 80).contains("Press any key."));
     keys({Key::of(Key::Down)}); // it all fits: Down is "any key"
     QVERIFY(!app->isAsking());
 }
@@ -2077,6 +2079,238 @@ void TestTui::drawingABigFolderIsQuick()
     const double without = timer.nsecsElapsed() / 1e6 / 60;
     qInfo("a frame with a selection %.2f ms, without %.2f ms", withSelection, without);
     QVERIFY2(withSelection < without * 2 + 1.0, qPrintable(QStringLiteral("%1 against %2").arg(withSelection).arg(without)));
+}
+
+// The mouse dragged with the button held selects what the rectangle covers,
+// as in the window: in a list the rows, in a grid the cells; with Ctrl it
+// adds to what was selected, and past an edge the list scrolls on.
+void TestTui::rectangleSelects()
+{
+    using Tui::Mouse;
+    auto at = [](Mouse::Kind kind, int x, int y, bool ctrl = false) {
+        Mouse m;
+        m.kind = kind;
+        m.x = x;
+        m.y = y;
+        m.ctrl = ctrl;
+        return m;
+    };
+    for (int n = 0; n < 40; ++n)
+        make(QStringLiteral("file%1.txt").arg(n, 2, 10, QLatin1Char('0')));
+    QTRY_VERIFY_WITH_TIMEOUT(screen(100, 60).contains("file39.txt"), 10000); // the folder has shown them
+    Screen s(100, 24);
+    app->render(s);
+    auto rowOf = [&](const QString &name) {
+        app->render(s);
+        for (int y = 0; y < s.height(); ++y) {
+            if (s.line(y).left(48).contains(name))
+                return y;
+        }
+        return -1;
+    };
+    const int alpha = rowOf("alpha.txt");
+    QVERIFY(alpha > 0);
+    QCOMPARE(rowOf("beta.txt"), alpha + 1);
+
+    // A press and a release on one item is a click: nothing is selected.
+    app->mouse(at(Mouse::Press, 10, alpha));
+    QVERIFY(!app->isDraggingARectangle());
+    app->mouse(at(Mouse::Move, 12, alpha)); // still on the same row
+    QVERIFY(!app->isDraggingARectangle());
+    app->mouse(at(Mouse::Release, 12, alpha));
+    QVERIFY(app->selectedPaths().isEmpty());
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+
+    // Dragged two rows down: three items, and the cursor is where the mouse is.
+    app->mouse(at(Mouse::Press, 10, alpha));
+    app->mouse(at(Mouse::Move, 14, alpha + 2));
+    QVERIFY(app->isDraggingARectangle());
+    QCOMPARE(app->selectedPaths(), (QStringList{m_left + "/alpha.txt", m_left + "/beta.txt", m_left + "/file00.txt"}));
+    QCOMPARE(app->cursorPath(), m_left + "/file00.txt");
+    app->render(s);
+    QCOMPARE(s.at(30, alpha + 1).style.paper, Tui::Paper::Hover); // the rectangle is seen
+    QCOMPARE(s.at(30, alpha + 3).style.paper, Tui::Paper::Normal);
+    // Back up past where it started: the rectangle turns over.
+    app->mouse(at(Mouse::Move, 14, alpha - 1));
+    QCOMPARE(app->selectedPaths(), (QStringList{m_left + "/Documents", m_left + "/alpha.txt"}));
+    app->mouse(at(Mouse::Release, 14, alpha - 1));
+    QVERIFY(!app->isDraggingARectangle());
+    QCOMPARE(app->selectedPaths().size(), 2); // it stays selected
+    app->render(s);
+    QCOMPARE(s.at(30, alpha).style.paper == Tui::Paper::Hover, false);
+    // Moving the mouse afterwards (no button) changes nothing.
+    app->mouse(at(Mouse::Move, 14, alpha + 5));
+    QCOMPARE(app->selectedPaths().size(), 2);
+    // The release didn't open anything, and a drag isn't half of a double click.
+    QCOMPARE(app->folder(0), m_left);
+
+    // ".." is never selected.
+    const int up = rowOf("../");
+    QVERIFY(up > 0 && up < alpha);
+    app->mouse(at(Mouse::Press, 10, up));
+    app->mouse(at(Mouse::Move, 10, up + 1));
+    QCOMPARE(app->selectedPaths(), QStringList{m_left + "/Documents"});
+    app->mouse(at(Mouse::Release, 10, up + 1));
+
+    // Ctrl and a click: one item more, or one less; Ctrl and a drag adds.
+    app->mouse(at(Mouse::Press, 10, alpha + 1, true)); // beta.txt
+    app->mouse(at(Mouse::Release, 10, alpha + 1, true));
+    QCOMPARE(app->selectedPaths(), (QStringList{m_left + "/Documents", m_left + "/beta.txt"}));
+    app->mouse(at(Mouse::Press, 10, alpha + 3, true)); // file01.txt, dragged to file02.txt
+    app->mouse(at(Mouse::Move, 10, alpha + 4, true));
+    app->mouse(at(Mouse::Release, 10, alpha + 4, true));
+    QVERIFY2(app->selectedPaths().size() == 4 && app->selectedPaths().contains(m_left + "/Documents")
+                 && app->selectedPaths().contains(m_left + "/file02.txt"), qPrintable(app->selectedPaths().join(' ')));
+    app->mouse(at(Mouse::Press, 10, alpha + 1, true)); // beta.txt out again
+    app->mouse(at(Mouse::Release, 10, alpha + 1, true));
+    QVERIFY(!app->selectedPaths().contains(m_left + "/beta.txt"));
+    QCOMPARE(app->selectedPaths().size(), 3);
+
+    // Held past the bottom, the list scrolls on and the rectangle reaches further every moment.
+    app->mouse(at(Mouse::Press, 10, alpha));
+    app->mouse(at(Mouse::Move, 10, alpha + 1));
+    app->mouse(at(Mouse::Move, 10, 23)); // below the files
+    app->render(s);
+    const int before = int(app->selectedPaths().size()); // what was in sight, and a line more
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        app->render(s); // what the terminal does after every change
+        return app->selectedPaths().size() >= before + 8;
+    }(), 5000);
+    QVERIFY2(rowOf("* alpha.txt") < 0 && rowOf("* file1") > 0, qPrintable(s.text())); // scrolled out of sight, and still selected
+    QVERIFY(app->selectedPaths().contains(m_left + "/alpha.txt"));
+    app->mouse(at(Mouse::Release, 10, 23));
+    const int kept = int(app->selectedPaths().size());
+    QTest::qWait(250);
+    app->render(s);
+    QCOMPARE(int(app->selectedPaths().size()), kept); // released: it stops
+
+    // A click on the empty space after the items: nothing is selected. (The other pane has room.)
+    app->mouse(at(Mouse::Press, 70, 15));
+    app->mouse(at(Mouse::Release, 70, 15));
+    QCOMPARE(app->activePane(), 1);
+    QVERIFY(app->selectedPaths().isEmpty());
+    keys({Key::of(Key::Tab)});
+    QVERIFY(!app->selectedPaths().isEmpty()); // each pane has its own
+    keys({Key::of(Key::Escape)});
+
+    // In a grid the rectangle is one of cells: two columns of two lines.
+    keys({Key::of(Key::Home), Key::of(Key::F9)});
+    QVERIFY(app->isGrid(0));
+    app->render(s);
+    int gy = -1, gx = -1, gx2 = -1;
+    for (int y = 0; y < s.height() && gy < 0; ++y) {
+        const QString line = s.line(y).left(49);
+        if (line.contains("alpha.txt") && line.contains("beta.txt")) {
+            gy = y;
+            gx = int(line.indexOf("alpha.txt")) + 1;
+            gx2 = int(line.indexOf("beta.txt")) + 1;
+        }
+    }
+    QVERIFY2(gy > 0, qPrintable(s.text()));
+    app->mouse(at(Mouse::Press, gx, gy));
+    app->mouse(at(Mouse::Move, gx2, gy + 1));
+    QCOMPARE(app->selectedPaths().size(), 4);
+    QVERIFY(app->selectedPaths().contains(m_left + "/alpha.txt") && app->selectedPaths().contains(m_left + "/beta.txt"));
+    app->mouse(at(Mouse::Move, gx, gy + 1)); // one column narrower
+    QCOMPARE(app->selectedPaths().size(), 2);
+    QVERIFY(!app->selectedPaths().contains(m_left + "/beta.txt"));
+    app->mouse(at(Mouse::Release, gx, gy + 1));
+
+    // A question is open: the mouse drags nothing.
+    keys({Key::of(Key::Escape), Key::of(Key::F7)});
+    QVERIFY(app->isAsking());
+    app->mouse(at(Mouse::Press, gx, gy));
+    app->mouse(at(Mouse::Move, gx2, gy + 1));
+    QVERIFY(!app->isDraggingARectangle() && app->selectedPaths().isEmpty());
+    keys({Key::of(Key::Escape)});
+}
+
+// What scrolled off the top of the shell panel is kept: the wheel, its
+// scrollbar and Shift+PgUp look back at it, and typing shows the newest again.
+void TestTui::shellPanelLooksBack()
+{
+    if (!Tui::Shell::available())
+        QSKIP("built without libvterm: no shell panel");
+    qputenv("SHELL", "/bin/sh");
+    qputenv("PS1", "ready> ");
+    keys({Key::of(Key::F12)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("ready>"), 10000);
+    Screen s(100, 24);
+    app->render(s);
+    int title = -1;
+    for (int y = 0; y < s.height(); ++y) {
+        if (s.line(y).contains("Terminal") && s.line(y).contains("left"))
+            title = y;
+    }
+    QVERIFY(title > 0);
+    const int rows = 24 - 2 - title - 1; // the panel's lines under its title
+    const int barX = 99;
+    auto bar = [&] { // the handle's rows, as a string: "..##" is at the bottom
+        app->render(s);
+        QString out;
+        for (int y = title + 1; y <= title + rows; ++y)
+            out += s.at(barX, y).ch == U'█' ? '#' : '.';
+        return out;
+    };
+    QVERIFY2(!bar().contains('#'), qPrintable(bar())); // nothing to look back at yet
+    // The shell is as wide as the panel less the bar's column.
+    type("printf 'cols=%s.\\n' \"$(stty size | cut -d' ' -f2)\"");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("cols=99."), 10000);
+
+    type("i=1; while [ $i -le 120 ]; do echo line-$i-; i=$((i+1)); done");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("line-120-"), 10000);
+    QVERIFY(!screen().contains("line-60-"));
+    QVERIFY2(bar().endsWith('#') && bar().startsWith('.'), qPrintable(bar())); // the handle, at the bottom
+
+    // The wheel over the panel goes back three lines at a time.
+    for (int i = 0; i < 20; ++i)
+        app->mouse({Tui::Mouse::WheelUp, 30, title + 2});
+    QString shown = screen();
+    QVERIFY2(shown.contains("line-60-") && !shown.contains("line-120-"), qPrintable(shown));
+    QVERIFY2(shown.contains("60 lines back"), qPrintable(shown));
+    QVERIFY2(!bar().endsWith('#'), qPrintable(bar()));
+    app->render(s);
+    QVERIFY(s.cursorY() < 0 || s.cursorY() <= title); // the text cursor isn't shown in old lines
+    app->mouse({Tui::Mouse::WheelDown, 30, title + 2});
+    shown = screen();
+    QVERIFY(shown.contains("57 lines back"));
+    // Shift+PgUp / PgDn: a panel's height at a time.
+    Key pageUp = Key::of(Key::PageUp), pageDown = Key::of(Key::PageDown);
+    pageUp.shift = pageDown.shift = true;
+    keys({pageUp});
+    QVERIFY2(screen().contains(QStringLiteral("%1 lines back").arg(57 + rows - 1)), qPrintable(screen()));
+    keys({pageDown});
+    QVERIFY(screen().contains("57 lines back"));
+    // As far as it goes, and no further: the very first lines.
+    for (int i = 0; i < 100; ++i)
+        app->mouse({Tui::Mouse::WheelUp, 30, title + 2});
+    QVERIFY2(screen().contains("cols=99.") && bar().startsWith('#'), qPrintable(screen()));
+    // A click on the bar: its bottom is the newest, its top the oldest.
+    app->mouse({Tui::Mouse::Press, barX, title + rows});
+    QVERIFY2(screen().contains("line-120-") && !screen().contains("lines back"), qPrintable(screen()));
+    app->mouse({Tui::Mouse::Press, barX, title + 1});
+    QVERIFY(screen().contains("cols=99."));
+    // Typing shows the newest again, and the key reaches the shell.
+    type("echo back-again");
+    QVERIFY2(!screen().contains("lines back"), qPrintable(screen()));
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("echo back-again"), 10000);
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().count("back-again") >= 2, 10000);
+
+    // A program that takes the whole panel (a pager, an editor) has nothing to look back at.
+    type("printf '\\033[?1049hWHOLE-PANEL'");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("WHOLE-PANEL"), 10000);
+    app->mouse({Tui::Mouse::WheelUp, 30, title + 2});
+    QVERIFY2(screen().contains("WHOLE-PANEL") && !screen().contains("lines back") && !bar().contains('#'), qPrintable(screen()));
+    type("printf '\\033[?1049l'");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(bar().contains('#'), 10000); // back: the kept lines are still there
+    app->mouse({Tui::Mouse::WheelUp, 30, title + 2});
+    QVERIFY(screen().contains("3 lines back"));
+    keys({Key::of(Key::F12)});
 }
 
 // Ctrl+C / Ctrl+X, go anywhere, Ctrl+V, as in the window: through the file
