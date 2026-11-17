@@ -60,8 +60,8 @@ jobs:
         run: |
           cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | Tee-Object -FilePath tests-configure.log
           cmake --build build/windows-tests -- -k 0 2>&1 | Tee-Object -FilePath tests-build.log
-          ctest --test-dir build/windows-tests --timeout 300 2>&1 | Tee-Object -FilePath tests-run.log
+          ctest --test-dir build/windows-tests --timeout 300 --output-on-failure 2>&1 | Tee-Object -FilePath tests-run.log
           python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"
           python .github/scripts/errors_as_notes.py tests-build.log "build: tests, compiling"
-          python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "Passed|Failed|Timeout|Not Run|Exception|tests passed|No tests"
+          python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "FAIL!|Loc: |QFATAL|ASSERT|Passed|Failed|Timeout|Not Run|Exception|Totals|tests passed|No tests|0xc0|cannot|not found"
           exit 0
