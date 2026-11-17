@@ -649,9 +649,13 @@ source, with a complete example.</p>
 
 #if defined(ARGONAUT_TERMINAL)
     add("terminal", tr("Terminal"), tr(R"(
-<p>[[Ctrl+`]] opens a terminal under the files, in the open folder. When you go to another folder, the
-terminal follows, but only while the shell is waiting for a command, so a running program is never interrupted.</p>
+<p>[[Ctrl+`]] opens a terminal under the files, in the open folder. The terminal stays in its folder while you
+move about in the files.</p>
 <ul>
+<li><b>To bring the terminal to the files:</b> press [[Ctrl+`]] again (or the terminal button in the header) while
+it is open. If its shell is in another folder than the one you are looking at, it goes there (a <code>cd</code>)
+and stays open. If it is already there, the key closes the panel, as does the ✕ on it. This happens only while
+the shell is waiting for a command, so nothing is ever typed into a running program.</li>
 <li>Right-click a folder → <b>Open in Terminal</b> opens it there.</li>
 <li>The other way round is [[Ctrl+Up]] in the terminal: after a <code>cd</code> there, it brings the files
 to the folder the shell is in (and reads the folder again if they are already there).</li>
@@ -683,8 +687,9 @@ press [[Enter]]; it opens in the pane you were in. [[Ctrl+B]] hides or shows the
 grid of names, and big icons (a picture made of characters for every item, with its name under it and a frame
 round the one you are on).</li>
 <li><b>A terminal under the files:</b> [[F12]] (or [[Ctrl+`]]) opens a shell under the files (about a third of the height), in the pane's
-folder. The same key goes back to the files and leaves the shell open; in the shell, [[Ctrl+Up]] brings the
-files to its folder and <code>exit</code> closes it. What scrolls off its top is kept (the last 5,000 lines): the
+folder. The same key goes back to the files and leaves the shell open, and from the files it goes to the shell
+again, <b>which comes to the folder you are looking at</b> if it was elsewhere (only while it waits for a command);
+in the shell, [[Ctrl+Up]] brings the files to its folder and <code>exit</code> closes it. What scrolls off its top is kept (the last 5,000 lines): the
 wheel over the panel, its scrollbar at the right, or [[Shift+PgUp]] look back, and typing shows the newest again.</li>
 <li><b>Copy and paste:</b> [[Ctrl+C]] copies and [[Ctrl+X]] cuts the selection, as here; go to any folder and
 [[Ctrl+V]] pastes. A cut item is faint until it is pasted, and [[Esc]] forgets the cut. Where there is a desktop

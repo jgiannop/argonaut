@@ -213,6 +213,7 @@ private:
     QWidget *buildTerminalPanel();
     void showTerminal(const QString &directory);
     void hideTerminal();
+    bool terminalComesToTheFiles(); // the open terminal is elsewhere: its shell comes to the pane's folder
 
     // Inline rename (F2, and right after New Folder / New File).
     void renameSelection();

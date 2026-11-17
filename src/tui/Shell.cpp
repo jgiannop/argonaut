@@ -284,6 +284,20 @@ void Shell::flush()
         m_writeNotifier->setEnabled(m_fd >= 0 && !m_pending.isEmpty());
 }
 
+bool Shell::changeDirectory(const QString &folder)
+{
+    if (m_pid <= 0 || m_fd < 0 || ::tcgetpgrp(m_fd) != m_pid)
+        return false; // a program has the terminal: it is not ours to type into
+    QByteArray quoted = QFile::encodeName(folder);
+    quoted.replace('\'', "'\\''");
+    // Ctrl+E Ctrl+U clears what is typed at the prompt; the leading space
+    // keeps the command out of bash's history (HISTCONTROL=ignorespace).
+    const QByteArray line = "\x05\x15 cd -- '" + quoted + "'\r";
+    scrollToNewest();
+    send(line.constData(), size_t(line.size()));
+    return true;
+}
+
 int Shell::historySize() const
 {
     return d->wholePanel ? 0 : int(d->history.size());
@@ -429,6 +443,7 @@ void Shell::readPty() {}
 void Shell::flush() {}
 void Shell::send(const char *, size_t) {}
 void Shell::key(const Key &) {}
+bool Shell::changeDirectory(const QString &) { return false; }
 int Shell::historySize() const { return 0; }
 void Shell::scrollBack(int) {}
 void Shell::draw(Screen &, int, int) const {}

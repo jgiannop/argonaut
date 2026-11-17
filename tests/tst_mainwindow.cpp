@@ -68,6 +68,7 @@
 #include <QTextDocument>
 #include <QTextTable>
 #include <QTimer>
+#include <QToolButton>
 #include <QUrl>
 #include <QtTest>
 
@@ -115,6 +116,7 @@ private slots:
     void previewFromAnExtension();
     void richTextGetsAPageLook();
     void terminalBringsTheFilesAlong();
+    void terminalComesToTheFiles();
     void extensionMenusAskAndShow();
     void diffIsColoured();
     void extensionListIsAPlace();
@@ -1406,6 +1408,69 @@ void TestMainWindow::terminalBringsTheFilesAlong()
     QTest::keyClick(terminal, Qt::Key_Up, Qt::ControlModifier);
     QCOMPARE(int(w->m_pane->back.size()), history);
     w->m_terminalAct->trigger();
+#else
+    QSKIP("no embedded terminal in this build");
+#endif
+}
+
+// The other way round: Ctrl+` (or the header's button) while the terminal is
+// open and in another folder brings its shell to the pane's folder and
+// leaves it open; in the same folder it closes the panel, as before.
+void TestMainWindow::terminalComesToTheFiles()
+{
+#if defined(ARGONAUT_TERMINAL) && defined(Q_OS_LINUX)
+    const QString other = m_dir + "/else where";
+    QDir().mkpath(other);
+    open(m_dir);
+    w->m_terminalAct->trigger();
+    TerminalWidget *terminal = w->m_terminal;
+    QVERIFY(terminal && terminal->isRunning());
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle() && terminal->shellDirectory() == m_dir, 10000);
+    QVERIFY(!w->m_terminalPanel->isHidden());
+
+    // The files go elsewhere; the terminal stays where it is...
+    open(other);
+    QCOMPARE(terminal->shellDirectory(), m_dir);
+    // ...until the key: it comes along, and the panel stays open and ticked.
+    w->m_terminalAct->trigger();
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    QTRY_VERIFY(w->m_terminalAct->isChecked() && w->m_terminalButton->isChecked());
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), other, 10000);
+    QCOMPARE(w->m_pane->current, other);
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    // The header's button does the same.
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
+    open(m_dir);
+    w->m_terminalButton->click();
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    QTRY_VERIFY(w->m_terminalAct->isChecked() && w->m_terminalButton->isChecked());
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), m_dir, 10000);
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    // In the same folder: the key closes the panel, as it always did.
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
+    w->m_terminalAct->trigger();
+    QVERIFY(w->m_terminalPanel->isHidden());
+    QVERIFY(!w->m_terminalAct->isChecked() && !w->m_terminalButton->isChecked());
+    // Opened again from another folder: it comes there (that is not new).
+    open(other);
+    w->m_terminalAct->trigger();
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), other, 10000);
+    // ✕ on the panel always hides it, wherever the shell is.
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
+    open(m_dir);
+    w->m_terminalCloseButton->click();
+    QVERIFY(w->m_terminalPanel->isHidden());
+    QVERIFY(!w->m_terminalAct->isChecked() && !w->m_terminalButton->isChecked());
+    QCOMPARE(terminal->shellDirectory(), other);
+    // In a place that isn't a folder the key closes too (there is nowhere to come to).
+    w->m_terminalAct->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->shellDirectory(), m_dir, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
+    QVERIFY(w->navigateTo(DirectoryModel::recentPath()));
+    w->m_terminalAct->trigger();
+    QVERIFY(w->m_terminalPanel->isHidden());
+    QCOMPARE(terminal->shellDirectory(), m_dir);
 #else
     QSKIP("no embedded terminal in this build");
 #endif

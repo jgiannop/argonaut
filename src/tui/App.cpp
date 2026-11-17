@@ -1113,6 +1113,13 @@ void App::toggleShell()
     }
     if (m_shell) {
         m_inShell = !m_inShell;
+        if (m_inShell && real) {
+            // To the terminal from the files: a shell that is in another
+            // folder comes to this one (the opposite of Ctrl+Up there).
+            const QString where = m_shell->folder();
+            if (!where.isEmpty() && where != QFileInfo(p.current).canonicalFilePath() && !m_shell->changeDirectory(p.current))
+                say(QStringLiteral("A program is running in the terminal, so it stays where it is"));
+        }
         if (!m_inShell) {
             // Back at the files: what was done in the shell shows.
             for (Pane &each : m_panes)
@@ -3095,7 +3102,8 @@ void App::drawHelp(Screen &screen)
         "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
         "                                    in a list of services or processes, / searches it)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
-        "                                    (in it: Ctrl+Up brings the files to its folder, exit closes it;",
+        "                                    (from the files, F12 also brings the shell to the folder you are in;",
+        "                                    in it: Ctrl+Up brings the files to its folder, exit closes it;",
         "                                    the wheel, its scrollbar or Shift+PgUp look back at what it wrote before)",
         "  Backspace, Left, Enter on ..      up to the folder it is in",
         "  Alt+Left                          back to where you were",

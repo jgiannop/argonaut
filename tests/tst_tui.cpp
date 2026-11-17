@@ -86,6 +86,7 @@ private slots:
     void shellInTheFolder();
     void shellPanel();
     void shellPanelLooksBack();
+    void shellComesToTheFiles();
 
 private:
     QString make(const QString &relative, const QByteArray &content = "x");
@@ -2311,6 +2312,69 @@ void TestTui::shellPanelLooksBack()
     app->mouse({Tui::Mouse::WheelUp, 30, title + 2});
     QVERIFY(screen().contains("3 lines back"));
     keys({Key::of(Key::F12)});
+}
+
+// F12 from the files while the shell panel is open: a shell that is in
+// another folder comes to the pane's (the opposite of Ctrl+Up in it).
+void TestTui::shellComesToTheFiles()
+{
+    if (!Tui::Shell::available())
+        QSKIP("built without libvterm: no shell panel");
+    qputenv("SHELL", "/bin/sh");
+    qputenv("PS1", "ready> ");
+    keys({Key::of(Key::F12)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("ready>"), 10000);
+    auto shellIsIn = [&](const QString &folder) {
+        // Its folder is on the panel's title line.
+        for (const QString &line : screen(140, 24).split('\n')) {
+            if (line.contains("Terminal") && line.contains("~/"))
+                return line.contains(folder + " ") || line.contains(folder + "  ") || line.trimmed().endsWith(folder)
+                       || line.contains(QRegularExpression(QRegularExpression::escape(folder) + "(\\s|$)"));
+        }
+        return false;
+    };
+    QVERIFY(app->isInShell());
+    keys({Key::of(Key::F12)}); // back to the files: nothing is typed into the shell
+    QVERIFY(!app->isInShell());
+    QTest::qWait(200);
+    QVERIFY(!screen().contains("cd --"));
+
+    // The files go into Documents; the shell stays in the folder above.
+    app->selectPath(m_left + "/Documents");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    QVERIFY(shellIsIn("left"));
+    // F12: to the terminal, which comes along.
+    keys({Key::of(Key::F12)});
+    QVERIFY(app->isInShell());
+    QTRY_VERIFY_WITH_TIMEOUT(shellIsIn("left/Documents"), 10000);
+    type("pwd");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains(m_left + "/Documents\n") || screen(140, 24).contains("left/Documents"), 10000);
+    QCOMPARE(app->folder(0), m_left + "/Documents");
+    QTRY_VERIFY_WITH_TIMEOUT(screen(140, 24).contains("cd --"), 10000); // what was typed for it is there to see
+    QTest::qWait(300);
+    // Already there: F12 out and in again types nothing.
+    keys({Key::of(Key::F12)});
+    const int typedBefore = int(screen(140, 24).count("cd --"));
+    keys({Key::of(Key::F12)});
+    QTest::qWait(300);
+    QCOMPARE(int(screen(140, 24).count("cd --")), typedBefore);
+    // While a program runs in the shell nothing is typed into it: it stays, and says so.
+    type("cat");
+    keys({Key::of(Key::Enter)});
+    QTest::qWait(300);
+    keys({Key::of(Key::F12)}); // to the files
+    keys({Key::of(Key::Backspace)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    QTRY_VERIFY_WITH_TIMEOUT((keys({Key::of(Key::F12)}), app->message().contains("A program is running in the terminal")), 10000);
+    QVERIFY(shellIsIn("left/Documents"));
+    QVERIFY(!screen(140, 24).contains("cd -- '" + m_left + "'")); // nothing was typed into the program
+    if (!app->isInShell())
+        keys({Key::of(Key::F12)});
+    keys({Key::control('d')}); // ends cat
 }
 
 // Ctrl+C / Ctrl+X, go anywhere, Ctrl+V, as in the window: through the file

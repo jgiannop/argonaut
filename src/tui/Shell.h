@@ -43,6 +43,10 @@ public:
     bool cursor(int *x, int *y) const;
     // The folder the shell is in (Linux); empty when it can't be told.
     QString folder() const;
+    // The shell goes to this folder, as if "cd" were typed, but only while
+    // it waits at its prompt: nothing is ever typed into a running program
+    // (false then).
+    bool changeDirectory(const QString &folder);
 
     // What has scrolled off the top is kept (the last MaxHistory lines), and
     // the panel can look back at it: `scrolledBack()` lines above the newest.

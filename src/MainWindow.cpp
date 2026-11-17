@@ -323,7 +323,7 @@ void MainWindow::setupActions()
     connect(m_terminalAct, &QAction::toggled, this, [this](bool on) {
         if (on)
             showTerminal(m_pane->current);
-        else
+        else if (!terminalComesToTheFiles()) // open, but in another folder: it comes here instead of closing
             hideTerminal();
     });
     m_openTerminalHereAct = new QAction(tr("Open in Terminal"), this);
@@ -3912,8 +3912,16 @@ QWidget *MainWindow::buildTerminalPanel()
     m_terminalTitle->setObjectName("terminalTitle");
     m_terminalCloseButton = makeButton(tr("Hide terminal (Ctrl+`)"));
     m_terminalCloseButton->setFixedSize(26, 26);
-    connect(m_terminalCloseButton, &QToolButton::clicked, this,
-            [this] { m_terminalAct->setChecked(false); });
+    connect(m_terminalCloseButton, &QToolButton::clicked, this, [this] {
+        // ✕ always hides (the key and the header's button first bring a
+        // terminal that is elsewhere to the open folder).
+        {
+            const QSignalBlocker block(m_terminalAct), blockButton(m_terminalButton);
+            m_terminalAct->setChecked(false);
+            m_terminalButton->setChecked(false);
+        }
+        hideTerminal();
+    });
     row->addWidget(m_terminalTitle, 1);
     row->addWidget(m_terminalCloseButton);
     layout->addWidget(bar);
@@ -3979,6 +3987,33 @@ void MainWindow::showTerminal(const QString &folder)
     m_terminal->setFocus(Qt::ShortcutFocusReason);
 }
 
+// Ctrl+` (or the header's button) while the terminal is open: when its
+// shell is in another folder than the pane, the shell comes to the pane's
+// folder and the panel stays (the opposite of Ctrl+Up in the terminal).
+// False: there was nothing to do (the same folder, a place that isn't a
+// folder, a program running in the shell), so the panel closes as before.
+bool MainWindow::terminalComesToTheFiles()
+{
+    const QString folder = m_pane->current;
+    if (m_terminalPanel->isHidden() || !m_terminal->isRunning() || DirectoryModel::isVirtualPath(folder) || !QFileInfo(folder).isDir())
+        return false;
+    const QString shell = m_terminal->shellDirectory();
+    if (shell.isEmpty() || shell == QFileInfo(folder).canonicalFilePath() || !m_terminal->changeDirectory(folder))
+        return false;
+    // It stays open, so the action and the header's button stay ticked.
+    // They were just unticked and are still telling each other so: they are
+    // ticked again once that is over.
+    QTimer::singleShot(0, this, [this] {
+        if (m_terminalPanel->isHidden())
+            return;
+        const QSignalBlocker block(m_terminalAct), blockButton(m_terminalButton);
+        m_terminalAct->setChecked(true);
+        m_terminalButton->setChecked(true);
+    });
+    m_terminal->setFocus(Qt::ShortcutFocusReason);
+    return true;
+}
+
 void MainWindow::hideTerminal()
 {
     const bool hadFocus = m_terminal->hasFocus();
@@ -3995,6 +4030,7 @@ QWidget *MainWindow::buildTerminalPanel()
 }
 void MainWindow::showTerminal(const QString &) {}
 void MainWindow::hideTerminal() {}
+bool MainWindow::terminalComesToTheFiles() { return false; }
 
 #endif
 
