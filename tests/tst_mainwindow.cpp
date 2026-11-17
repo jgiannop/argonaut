@@ -127,6 +127,7 @@ private slots:
     void extensionResultStaysLive();
     void longPictureFromAnExtensionScrolls();
     void pictureFromAnExtensionHasTooltips();
+    void htmlPageInThePreview();
     void extensionResultCanBeSearched();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
@@ -1914,6 +1915,40 @@ void TestMainWindow::pictureFromAnExtensionHasTooltips()
     w->showExtensionResult("fake", "Tipped", content);
     QCOMPARE(picture->tipCount(), 0);
     QCOMPARE(picture->tipAt(first), QString());
+}
+
+// An HTML file's page (what Document Preview sends for one) is shown as a
+// page in the pane: its text is there to read, and nothing of it is loaded
+// or followed.
+void TestMainWindow::htmlPageInThePreview()
+{
+    open(m_dir);
+    Extensions::PreviewReply content;
+    content.kind = Extensions::PreviewReply::Html;
+    content.extension = "document-preview";
+    content.text = "<h1>A Heading</h1><p>Some <b>bold</b> text and a <a href=\"http://example.com/x\">link</a>.</p>"
+                   "<ul><li>One</li><li>Two</li></ul><table><tr><th>name</th></tr><tr><td>cell</td></tr></table>"
+                   "<img src=\"http://example.com/never-fetched.png\">";
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_HTML")) { // a real page, to look at it
+        QFile real(qEnvironmentVariable("ARGONAUT_TEST_HTML"));
+        if (real.open(QIODevice::ReadOnly))
+            content.text = QString::fromUtf8(real.readAll());
+    }
+    content.note = "As a page to read: without its styles and scripts";
+    w->showExtensionResult("document-preview", "page.html", content);
+    QVERIFY(w->m_quickLook && w->m_quickLook->isVisible());
+    QuickLook *preview = w->m_quickLook;
+    QVERIFY(preview->fromExtension());
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) {
+        w->resize(1200, 800);
+        QTest::qWait(600);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+        return;
+    }
+    const QString shown = preview->shownText();
+    QVERIFY2(shown.contains("A Heading") && shown.contains("Some bold text and a link.") && shown.contains("One") && shown.contains("cell"),
+             qPrintable(shown));
+    QVERIFY2(!shown.contains("<h1>") && !shown.contains("<b>"), qPrintable(shown)); // a page, not its source
 }
 
 // A result whose extension says it can be searched gets a field over it:

@@ -1889,6 +1889,59 @@ void TestExtensions::documentPreview()
     QVERIFY(reply.text.contains("say &quot;hi&quot;"));
     QCOMPARE(reply.note, QStringLiteral("3 rows"));
 
+    // An HTML file: a page to read. What would run, be fetched or fight
+    // with the window's colours is taken out; the text and its structure stay.
+    QVERIFY(host.canPreview("text/html") && host.canPreview("application/xhtml+xml"));
+    writeFile(m_dir + "/page.html",
+              "<!DOCTYPE html><html><head><title>My\n  Page</title><meta charset=\"utf-8\">"
+              "<style>body { color: white } .x { display: none }</style><link rel=\"stylesheet\" href=\"http://example.com/a.css\">"
+              "<script>alert('in the head')</script></head>"
+              "<body bgcolor=\"black\" onload=\"run()\"><!-- a comment with <b>tags</b> -->"
+              "<h1 class=\"big\" style=\"color:#fff\">A Heading</h1>"
+              "<p id=\"p1\" onclick=\"steal()\">Some <b>bold</b> text and a <a href=\"http://example.com/x\" class=\"l\">link</a>. "
+              "In text, style=\"red\" and class=\"x\" are only words.</p>"
+              "<img src=\"http://example.com/track.gif\" alt=\"A cat &amp; a dog\"><img src=\"logo.png\">"
+              "<IMG SRC='x.png' ALT='Upper'>"
+              "<ul><li>One</li><li>Two</li></ul><table><tr><td>cell</td></tr></table>"
+              "<script type=\"text/javascript\">document.write('<p>written</p>')</script>"
+              "<svg width=\"10\"><circle r=\"5\"/></svg><iframe src=\"http://example.com/\">inside a frame</iframe>"
+              "<p>Last words.</p><script>never closed");
+    reply = ask(m_dir + "/page.html", "text/html");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+    QVERIFY2(reply.text.contains("<h1>A Heading</h1>"), qPrintable(reply.text)); // its own colours and classes are gone
+    QVERIFY2(reply.text.contains("<p>Some <b>bold</b> text and a <a href=\"http://example.com/x\">link</a>."), qPrintable(reply.text));
+    QVERIFY2(reply.text.contains("In text, style=\"red\" and class=\"x\" are only words."), qPrintable(reply.text)); // what is read is left alone
+    QVERIFY2(reply.text.contains("<li>One</li>") && reply.text.contains("<td>cell</td>") && reply.text.contains("Last words."), qPrintable(reply.text));
+    for (const char *gone : {"alert", "document.write", "written", "<script", "<style", "display", "<link", "<meta", "a comment", "<svg", "circle",
+                             "iframe", "inside a frame", "<img", "<IMG", "track.gif", "logo.png", "onload", "onclick", "steal", "bgcolor", "never closed",
+                             "My\n", "<title"})
+        QVERIFY2(!reply.text.contains(QLatin1String(gone)), gone);
+    // A picture leaves its description where it has one.
+    QVERIFY2(reply.text.contains("<i>[A cat &amp;amp; a dog]</i>") || reply.text.contains("<i>[A cat &amp; a dog]</i>"), qPrintable(reply.text));
+    QVERIFY(reply.text.contains("<i>[Upper]</i>"));
+    QCOMPARE(reply.note, QStringLiteral("My Page · As a page to read: without its styles, scripts and pictures"));
+    // In the page's own encoding (here Greek, ISO 8859-7).
+    writeFile(m_dir + "/greek.htm", QByteArray("<html><head><meta charset=\"iso-8859-7\"></head><body><p>\xC8\xDC\xEB\xE1\xF3\xF3\xE1</p></body></html>"));
+    reply = ask(m_dir + "/greek.htm", "application/xhtml+xml");
+    QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+    QVERIFY2(reply.text.contains(QStringLiteral("<p>Θάλασσα</p>")), qPrintable(reply.text));
+    QCOMPARE(reply.note, QStringLiteral("As a page to read: without its styles and scripts"));
+    // A very long page: only its beginning, cut between tags, and it says so.
+    {
+        QByteArray longPage = "<html><body>";
+        for (int n = 0; n < 30000; ++n)
+            longPage += "<p>paragraph number " + QByteArray::number(n) + "</p>";
+        writeFile(m_dir + "/long.html", longPage);
+        reply = ask(m_dir + "/long.html", "text/html");
+        QCOMPARE(reply.kind, Extensions::PreviewReply::Html);
+        QVERIFY(reply.text.size() <= 300 * 1000 && reply.text.size() > 200 * 1000);
+        QVERIFY2(reply.text.endsWith("</p>"), qPrintable(reply.text.right(40)));
+        QVERIFY2(reply.note.endsWith("only the beginning"), qPrintable(reply.note));
+    }
+    // Not text after all: nothing from here.
+    writeFile(m_dir + "/binary.html", QByteArray("<html>\0\0\0", 9));
+    QCOMPARE(ask(m_dir + "/binary.html", "text/html").kind, Extensions::PreviewReply::None);
+
     // A file that isn't text gets no table.
     writeFile(m_dir + "/binary.csv", QByteArray("a,b\0c", 6));
     QCOMPARE(ask(m_dir + "/binary.csv", "text/csv").kind, Extensions::PreviewReply::None);

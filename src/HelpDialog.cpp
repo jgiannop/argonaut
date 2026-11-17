@@ -343,8 +343,11 @@ off. Until you choose there, it follows the desktop: off where animations are sw
 <p>[[Ctrl+H]] shows or hides dot-files and backups (names ending in ~).</p>
 <h2>Quick Look</h2>
 <p>Select a file and press [[Space]] for a preview without opening an app: photos, PDFs, videos, fonts,
-text and code, what's inside archives, and folders. Markdown is shown formatted, and CSV files and
-spreadsheets as a table (the <a href="topic:extensions">Document Preview extension</a>). The preview is a pane at the right of the files;
+text and code, what's inside archives, and folders. Markdown is shown formatted, an HTML file as a page to
+read (its text, headings, lists, tables and links, without its styles, scripts and pictures: nothing in it is run
+and nothing is fetched from the internet), and CSV files and
+spreadsheets as a table (the <a href="topic:extensions">Document Preview extension</a>; with it switched off an
+HTML file is shown as its source text). The preview is a pane at the right of the files;
 drag its edge to make it wider. It follows the file you select, so the arrow keys go through a folder.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
 <p>A PDF is shown whole: every page, one under another. Scroll with the wheel or the scrollbar; the line under
@@ -629,7 +632,8 @@ them, so the rows add up to more than the memory in use, which the bar at the to
 number, its owner or a word of how it was started). The list keeps to what fits and still updates. [[Esc]] empties
 the field; [[Esc]] again, or [[Enter]], gives the keys back to the files.</p>
 <p>An extension can also supply the preview ([[Space]]) for kinds of files Argonaut can't show itself.
-Document Preview does that for Markdown (shown as a formatted page) and for CSV files and spreadsheets
+Document Preview does that for Markdown (shown as a formatted page), for HTML files (a page to read: the text
+and its structure, without styles, scripts and pictures) and for CSV files and spreadsheets
 (.xlsx, .ods: the first sheet as a table).</p>
 <p>A command from an extension is carried out by the extension, not by Argonaut, so [[Ctrl+Z]] doesn't undo
 it.</p>

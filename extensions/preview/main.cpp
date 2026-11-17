@@ -1,5 +1,8 @@
 // The Document Preview extension: previews for the pane Space opens.
 //   Markdown            sent as it is; Argonaut formats it
+//   HTML                as a page to read: its text and structure, without
+//                       its scripts, styles and pictures (nothing is run,
+//                       nothing is fetched)
 //   CSV, TSV            the first rows as a table
 //   .xlsx, .ods         the first sheet as a table
 // Spreadsheets are zip files full of XML from who knows where, so they are
@@ -18,6 +21,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QList>
+#include <QRegularExpression>
+#include <QStringDecoder>
 #include <QSocketNotifier>
 #include <QXmlStreamReader>
 
@@ -37,6 +42,8 @@ constexpr int MaxRows = 200;
 constexpr int MaxColumns = 30;
 constexpr int MaxCellChars = 200;
 constexpr qint64 MaxTextBytes = 400 * 1000;
+constexpr qint64 MaxHtmlBytes = 3 * 1000 * 1000; // a page's source is mostly what isn't shown
+constexpr qsizetype MaxPageChars = 300 * 1000;   // of what is
 constexpr qint64 MaxEntryBytes = 32 * 1024 * 1024; // one XML file inside a spreadsheet
 
 using Table = QList<QStringList>;
@@ -378,6 +385,99 @@ QString tableNote(bool more, int rows, int sheets)
     return parts.join(QStringLiteral(" · "));
 }
 
+// An HTML file as a page to read. Argonaut shows it in a rich-text view
+// that runs nothing and loads nothing, and knows only simple HTML: so what
+// such a view can't use is taken out here (scripts, style sheets, pictures,
+// frames, drawings), leaving the text with its headings, lists, tables and
+// links. A picture leaves its description, where it has one.
+QString readablePage(QString html, bool *pictures)
+{
+    using Re = QRegularExpression;
+    const auto options = Re::CaseInsensitiveOption | Re::DotMatchesEverythingOption;
+    // With what is inside them; one that is never closed goes to the end.
+    for (const char *tag : {"script", "style", "svg", "iframe", "object", "embed", "template", "canvas", "video", "audio", "head"}) {
+        if (qstrcmp(tag, "head") == 0) {
+            // The head has nothing to show, but its title is worth keeping apart.
+            html.remove(Re(QStringLiteral("<head\\b.*?</head\\s*>"), options));
+            continue;
+        }
+        html.remove(Re(QStringLiteral("<%1\\b.*?(</%1\\s*>|$)").arg(QLatin1String(tag)), options));
+    }
+    html.remove(Re(QStringLiteral("<!--.*?(-->|$)"), options));
+    html.remove(Re(QStringLiteral("<(link|meta|base|source|track)\\b[^>]*>"), options));
+    // A picture: its description in its place.
+    const Re image(QStringLiteral("<img\\b[^>]*>"), options);
+    const Re alt(QStringLiteral("\\balt\\s*=\\s*(\"([^\"]*)\"|'([^']*)')"), options);
+    QString out;
+    qsizetype from = 0;
+    auto it = image.globalMatch(html);
+    while (it.hasNext()) {
+        const auto match = it.next();
+        *pictures = true;
+        out += html.mid(from, match.capturedStart() - from);
+        const auto described = alt.match(match.captured());
+        const QString words = (described.captured(2) + described.captured(3)).trimmed();
+        if (!words.isEmpty())
+            out += QStringLiteral("<i>[%1]</i>").arg(words.toHtmlEscaped());
+        from = match.capturedEnd();
+    }
+    out += html.mid(from);
+    // Styles written on the elements themselves (colours made for the page's
+    // own background) go too: inside tags only, never in what is read.
+    const Re tag(QStringLiteral("<[a-z][^>]*>"), options);
+    const Re styling(QStringLiteral("\\s(style|class|id|bgcolor|background|color|on[a-z]+)\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"), options);
+    QString plain;
+    from = 0;
+    auto tags = tag.globalMatch(out);
+    while (tags.hasNext()) {
+        const auto match = tags.next();
+        plain += QStringView(out).mid(from, match.capturedStart() - from);
+        plain += match.captured().remove(styling);
+        from = match.capturedEnd();
+    }
+    plain += QStringView(out).mid(from);
+    return plain;
+}
+
+QString titleOf(const QString &html)
+{
+    const auto match = QRegularExpression(QStringLiteral("<title\\b[^>]*>(.*?)</title\\s*>"),
+                                          QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption)
+                           .match(html);
+    return match.captured(1).simplified().left(120);
+}
+
+QJsonObject htmlPreview(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {{QStringLiteral("kind"), QStringLiteral("none")}};
+    const QByteArray bytes = file.read(MaxHtmlBytes);
+    if (bytes.left(4096).contains('\0'))
+        return {{QStringLiteral("kind"), QStringLiteral("none")}};
+    bool cut = !file.atEnd();
+    // In the page's own encoding (its <meta charset>, or a byte order mark; else UTF-8).
+    QStringDecoder decoder = QStringDecoder::decoderForHtml(bytes);
+    const QString source = decoder.isValid() ? QString(decoder.decode(bytes)) : QString::fromUtf8(bytes);
+    bool pictures = false;
+    QString page = readablePage(source, &pictures);
+    if (page.size() > MaxPageChars) {
+        // Not in the middle of a tag.
+        const qsizetype at = page.lastIndexOf(QLatin1Char('<'), MaxPageChars);
+        page.truncate(at > 0 ? at : MaxPageChars);
+        cut = true;
+    }
+    QStringList notes;
+    const QString title = titleOf(source);
+    if (!title.isEmpty())
+        notes << title;
+    notes << (pictures ? QStringLiteral("As a page to read: without its styles, scripts and pictures")
+                       : QStringLiteral("As a page to read: without its styles and scripts"));
+    if (cut)
+        notes << QStringLiteral("only the beginning");
+    return {{QStringLiteral("kind"), QStringLiteral("html")}, {QStringLiteral("text"), page}, {QStringLiteral("note"), notes.join(QStringLiteral(" · "))}};
+}
+
 QJsonObject preview(const QString &path, const QString &mime)
 {
     QJsonObject none{{QStringLiteral("kind"), QStringLiteral("none")}};
@@ -398,6 +498,9 @@ QJsonObject preview(const QString &path, const QString &mime)
                                                    table.value(QLatin1String("rows")).toInt(),
                                                    table.value(QLatin1String("sheets")).toInt(1))}};
     }
+    if (mime == QLatin1String("text/html") || mime == QLatin1String("application/xhtml+xml") || suffix == QLatin1String("html")
+        || suffix == QLatin1String("htm") || suffix == QLatin1String("xhtml"))
+        return htmlPreview(path);
     // Text files: read here, they are only ever shown.
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
@@ -437,7 +540,8 @@ int main(int argc, char **argv)
         if (type == QLatin1String("hello")) {
             send({{QStringLiteral("type"), QStringLiteral("previews")},
                   {QStringLiteral("types"),
-                   QJsonArray{QStringLiteral("text/markdown"), QStringLiteral("text/csv"),
+                   QJsonArray{QStringLiteral("text/markdown"), QStringLiteral("text/html"), QStringLiteral("application/xhtml+xml"),
+                              QStringLiteral("text/csv"),
                               QStringLiteral("text/tab-separated-values"),
                               QStringLiteral("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
                               QStringLiteral("application/vnd.oasis.opendocument.spreadsheet")}}});

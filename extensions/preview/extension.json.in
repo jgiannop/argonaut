@@ -1,12 +1,12 @@
 {
     "id": "document-preview",
     "name": "Document Preview",
-    "description": "In the preview pane (Space): Markdown shown as a formatted page, and CSV files and spreadsheets (.xlsx, .ods) as a table. Spreadsheets are read in a sandbox.",
+    "description": "In the preview pane (Space): Markdown and HTML files shown as a page to read (an HTML page without its scripts, styles and pictures: nothing is run or fetched), and CSV files and spreadsheets (.xlsx, .ods) as a table. Spreadsheets are read in a sandbox.",
     "version": "@PROJECT_VERSION@",
     "author": "Argonaut",
     "protocol": 1,
     "start": "when-needed",
-    "previews": ["text/markdown", "text/csv", "text/tab-separated-values",
+    "previews": ["text/markdown", "text/html", "application/xhtml+xml", "text/csv", "text/tab-separated-values",
                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                  "application/vnd.oasis.opendocument.spreadsheet"],
     "exec": ["@ARGONAUT_PREVIEW_EXTENSION_EXE@"]
