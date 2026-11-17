@@ -570,6 +570,7 @@ engine, so Ctrl+Z undoes them.
 | `id` | Required. Comes back with the answer. |
 | `folder` | Required. The folder the changes are about: an absolute path to a folder that exists. |
 | `moves` | Up to 500. Each has an `item` (a **name** in that folder, not a path), and a `folder` to move it into (relative, inside the plan's folder; it is made if it isn't there), or a `new_name`, or both; and a `reason`, one line. |
+| `action` in a move | What is done with the item. Left out, or `"move"`: as above. `"copy"`: the same, and the item stays where it is. `"trash"`: to the Trash. `"compress"`: into the archive `new_name` (`.zip`, `.tar.gz`, `.tar.xz` or `.7z`; in `folder` if given), together with every other move that names the same archive; the items stay. `"folder"`: a new, empty `folder` (no `item`). **These are all there are**: a move with any other `action` is left out of the plan, and there is no step that deletes for good or runs anything. Everything but moving and renaming is only done in the user's own folders and drives; an item has one step at most. |
 | `title`, `note` | The pane's title, and a line under the moves. |
 | `report` | Markdown shown above the moves: what you found. Nothing it names is loaded. |
 

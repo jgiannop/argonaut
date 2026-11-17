@@ -11,7 +11,8 @@ namespace PlanApply {
 
 struct Outcome
 {
-    int moving = 0;  // items the job that was started moves
+    int moving = 0;  // steps that were started (items moved, copied, compressed, trashed; folders made)
+    bool mixed = false; // not only moves and renames: several jobs, each with its own Undo
     int skipped = 0; // kept by the user, but no longer possible
     QString error;   // a folder couldn't be made: nothing was moved
 };

@@ -45,7 +45,8 @@ PlanView::PlanView(QWidget *parent)
     connect(m_moves, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem *item) {
         const int number = item->data(0, MoveRole).toInt();
         if (number >= 0 && number < m_plan.moves.size())
-            emit itemActivated(m_plan.folder + QLatin1Char('/') + m_plan.moves.at(number).item);
+            if (!m_plan.moves.at(number).item.isEmpty()) // (a new folder has no item to show yet)
+                emit itemActivated(m_plan.folder + QLatin1Char('/') + m_plan.moves.at(number).item);
     });
 
     auto *bottom = new QHBoxLayout;
@@ -87,11 +88,10 @@ void PlanView::setPlan(const Extensions::Plan &plan)
     const Theme theme = currentTheme();
     for (int i = 0; i < plan.moves.size(); ++i) {
         const Extensions::PlanMove &move = plan.moves.at(i);
-        // "name", then where it goes (and its new name) with why, then what is wrong with it.
-        QString where = move.folder.isEmpty() ? QString() : move.folder + QLatin1Char('/');
-        if (!move.newName.isEmpty())
-            where += move.newName;
-        QString text = move.item + QStringLiteral("\n    → ") + (where.isEmpty() ? tr("stays") : where);
+        // What it is done to, then what becomes of it (where it goes, its new name, the Trash, an archive)
+        // with why, then what is wrong with it.
+        const QString where = move.becomes();
+        QString text = move.what() + QStringLiteral("\n    → ") + (where.isEmpty() ? tr("stays") : where);
         if (!move.reason.isEmpty())
             text += QStringLiteral(" · ") + move.reason;
         auto *row = new QTreeWidgetItem(m_moves);

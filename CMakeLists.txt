@@ -431,6 +431,18 @@ if(UNIX)
     install(TARGETS argonaut-organize-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/organize-with-claude/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/organize-with-claude)
+    # Tell Claude What to Do: steps for the open folder from a sentence, shown as a plan.
+    qt_add_executable(argonaut-command-extension extensions/command/main.cpp)
+    target_link_libraries(argonaut-command-extension PRIVATE argonaut_core)
+    set(ARGONAUT_COMMAND_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-command-extension")
+    configure_file(extensions/command/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/tell-claude-what-to-do/extension.json @ONLY)
+    set(ARGONAUT_COMMAND_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-command-extension")
+    configure_file(extensions/command/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/tell-claude-what-to-do/extension.json @ONLY)
+    install(TARGETS argonaut-command-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/tell-claude-what-to-do/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/tell-claude-what-to-do)
 
     # Space Overview: the open folder's size and the biggest things inside it,
     # in the preview pane (measured with Analyze's DiskUsageModel).

@@ -1,4 +1,7 @@
 #include "Extensions.h"
+#include "Naming.h"
+#include "FileJob.h"
+#include "FileRules.h"
 #include "Organizer.h"
 
 #include <QCoreApplication>
@@ -726,22 +729,110 @@ void Host::checkPlan(const QString &folder, QList<PlanMove> *moves)
         item.name = name;
         items.append(item);
     }
+    // Moves and copies put something somewhere: the same rules for both
+    // (inside the folder, a good name, nothing already there, no two to one place).
     QList<Organizer::Move> checked;
-    for (const PlanMove &move : std::as_const(*moves)) {
+    QList<int> rows;
+    for (int i = 0; i < moves->size(); ++i) {
+        const PlanMove &move = moves->at(i);
+        if (!move.isMove() && move.action != QLatin1String("copy"))
+            continue;
         Organizer::Move m;
         m.item = move.item;
         m.folder = move.folder;
         m.newName = move.newName;
         m.reason = move.reason;
         checked.append(m);
+        rows.append(i);
     }
     Organizer::validate(folder, items, &checked);
-    for (int i = 0; i < moves->size(); ++i) {
-        // A name is a name: nothing with a path in it reaches the file engine.
-        const bool plain = !checked.at(i).item.contains(QLatin1Char('/')) && checked.at(i).item != QLatin1String("..");
-        (*moves)[i].folder = checked.at(i).folder;
-        (*moves)[i].newName = checked.at(i).newName;
-        (*moves)[i].problem = plain ? checked.at(i).problem : QObject::tr("“%1” isn't in this folder").arg(checked.at(i).item);
+    for (int n = 0; n < rows.size(); ++n) {
+        PlanMove &move = (*moves)[rows.at(n)];
+        move.folder = checked.at(n).folder;
+        move.newName = checked.at(n).newName;
+        move.problem = checked.at(n).problem;
+    }
+
+    // Anything but moving and renaming is only for the user's own places: not for a system's folder.
+    const bool ownPlace = FileRules::isUsersOwnPlace(folder);
+    auto insideProblem = [](const QString &relative) {
+        if (QDir::isAbsolutePath(relative) || relative.startsWith(QLatin1String("..")) || relative.contains(QLatin1String("/../"))
+            || relative.contains(QLatin1Char('\\')))
+            return QObject::tr("The folder must be inside this one");
+        for (const QString &part : relative.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+            if (const QString problem = Naming::nameProblem(part); !problem.isEmpty())
+                return problem;
+        }
+        return QString();
+    };
+    QSet<QString> used; // an item is spoken for by one step
+    for (const PlanMove &move : std::as_const(*moves)) {
+        if ((move.isMove() || move.action == QLatin1String("copy")) && move.problem.isEmpty())
+            used.insert(move.item);
+    }
+    QHash<QString, QString> archiveFolder; // an archive's name → where its first row puts it
+    QSet<QString> newFolders;
+    for (PlanMove &move : *moves) {
+        if (move.isMove() || move.action == QLatin1String("copy")) {
+            if (move.action == QLatin1String("copy") && move.problem.isEmpty() && !ownPlace)
+                move.problem = QObject::tr("Only in your own folders and drives");
+            continue;
+        }
+        move.problem.clear();
+        move.folder = QDir::cleanPath(move.folder.trimmed());
+        if (move.folder == QLatin1String("."))
+            move.folder.clear();
+        move.newName = move.newName.trimmed();
+        if (move.action != QLatin1String("trash") && move.action != QLatin1String("compress") && move.action != QLatin1String("folder")) {
+            move.problem = QObject::tr("Not something a plan can do"); // (whatever it is called: the steps there are, are these)
+            continue;
+        }
+        if (!ownPlace) {
+            move.problem = QObject::tr("Only in your own folders and drives");
+        } else if (move.action == QLatin1String("folder")) {
+            if (move.folder.isEmpty())
+                move.problem = QObject::tr("A new folder needs a name");
+            else if (const QString problem = insideProblem(move.folder); !problem.isEmpty())
+                move.problem = problem;
+            else if (QFileInfo::exists(folder + QLatin1Char('/') + move.folder))
+                move.problem = QObject::tr("“%1” is already there").arg(move.folder);
+            else if (newFolders.contains(move.folder))
+                move.problem = QObject::tr("Made by another step");
+            else
+                newFolders.insert(move.folder);
+            continue;
+        } else if (!names.contains(move.item)) {
+            move.problem = QObject::tr("“%1” isn't in this folder").arg(move.item);
+        } else if (used.contains(move.item)) {
+            move.problem = QObject::tr("Another step already does something with it");
+        } else if (move.action == QLatin1String("compress")) {
+            static const QStringList endings{QStringLiteral(".zip"), QStringLiteral(".tar.gz"), QStringLiteral(".tar.xz"), QStringLiteral(".7z")};
+            bool known = false;
+            for (const QString &ending : endings)
+                known = known || move.newName.endsWith(ending, Qt::CaseInsensitive);
+            const QString target = folder + QLatin1Char('/') + (move.folder.isEmpty() ? QString() : move.folder + QLatin1Char('/')) + move.newName;
+            if (!FileJob::archivesSupported())
+                move.problem = QObject::tr("Archives can't be made here");
+            else if (move.newName.isEmpty() || !known)
+                move.problem = QObject::tr("The archive needs a name ending in .zip, .tar.gz, .tar.xz or .7z");
+            else if (const QString problem = Naming::nameProblem(move.newName); !problem.isEmpty())
+                move.problem = problem;
+            else if (const QString outside = insideProblem(move.folder); !outside.isEmpty())
+                move.problem = outside;
+            else if (QFileInfo::exists(target) || QFileInfo(target).isSymLink())
+                move.problem = QObject::tr("“%1” already exists there").arg(move.newName);
+            else if (archiveFolder.value(move.newName, move.folder) != move.folder)
+                move.problem = QObject::tr("That archive is being made in another folder");
+            else
+                archiveFolder.insert(move.newName, move.folder);
+        }
+        if (move.problem.isEmpty())
+            used.insert(move.item);
+    }
+    // A name is a name: nothing with a path in it reaches the file engine.
+    for (PlanMove &move : *moves) {
+        if (move.item.contains(QLatin1Char('/')) || move.item == QLatin1String("..") || move.item == QLatin1String("."))
+            move.problem = QObject::tr("“%1” isn't in this folder").arg(move.item);
     }
 }
 
@@ -1532,6 +1623,26 @@ void Host::hearShow(Running *ext, const QJsonObject &message)
 }
 
 // "plan": changes it proposes for a folder: Argonaut shows, checks and does them
+QString PlanMove::what() const
+{
+    return action == QLatin1String("folder") ? QObject::tr("New folder") : item;
+}
+
+QString PlanMove::becomes() const
+{
+    QString where = folder.isEmpty() ? QString() : folder + QLatin1Char('/');
+    if (action == QLatin1String("trash"))
+        return QObject::tr("Trash");
+    if (action == QLatin1String("folder"))
+        return where;
+    if (action == QLatin1String("compress"))
+        return QObject::tr("into %1").arg(where + newName);
+    where += newName;
+    if (action == QLatin1String("copy"))
+        return QObject::tr("a copy: %1").arg(where.isEmpty() ? item : where);
+    return where;
+}
+
 void Host::hearPlan(Running *ext, const QJsonObject &message)
 {
     const QString id = message.value(QLatin1String("id")).toString().left(64);
@@ -1562,7 +1673,13 @@ void Host::hearPlan(Running *ext, const QJsonObject &message)
         move.folder = o.value(QLatin1String("folder")).toString().left(1000);
         move.newName = o.value(QLatin1String("new_name")).toString().left(255);
         move.reason = tidy(o.value(QLatin1String("reason")).toString(), MaxMessageChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
-        if (!move.item.isEmpty())
+        // What is done with it: one of a few things, and nothing else is taken (there is no deleting to ask for).
+        move.action = o.value(QLatin1String("action")).toString().toLower().left(20);
+        static const QStringList known{QString(), QStringLiteral("move"), QStringLiteral("copy"), QStringLiteral("trash"), QStringLiteral("compress"),
+                                       QStringLiteral("folder")};
+        if (!known.contains(move.action))
+            continue;
+        if (!move.item.isEmpty() || (move.action == QLatin1String("folder") && !move.folder.isEmpty()))
             plan.moves.append(move);
     }
     checkPlan(plan.folder, &plan.moves);

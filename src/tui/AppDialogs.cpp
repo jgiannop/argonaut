@@ -618,20 +618,18 @@ void App::drawPlan(Screen &screen)
             screen.setCursor(x + 3, y);
         }
         const Style main{bad ? Ink::Bad : Ink::Normal, paper, cursor};
-        // "[x] name → Folder/new name", then why (or why not), as far as there is room.
-        QString where = move.folder;
-        if (!move.newName.isEmpty())
-            where += (where.isEmpty() ? QString() : QStringLiteral("/")) + move.newName;
-        else if (!where.isEmpty())
-            where += QLatin1Char('/');
+        // "[x] name → Folder/new name" (or "→ Trash", "→ into Photos.zip"), then why (or why not), as far as there is room.
+        const QString where = move.becomes();
         const QString tick = bad ? QStringLiteral("[!] ") : m_planKept.value(at) ? QStringLiteral("[x] ") : QStringLiteral("[ ] ");
         int cx = x + 2;
         cx += screen.put(cx, y, tick, main);
         const int nameRoom = qMax(8, (inner - 4) * 2 / 5);
-        cx += screen.put(cx, y, Screen::elided(move.item, nameRoom), main);
+        cx += screen.put(cx, y, Screen::elided(move.what(), nameRoom), main);
         if (!where.isEmpty()) {
             cx += screen.put(cx, y, QStringLiteral(" → "), {bad ? Ink::Bad : Ink::Dim, paper, false});
-            cx += screen.put(cx, y, Screen::elided(where, qMax(8, (inner - 4) * 2 / 5)), {bad ? Ink::Bad : Ink::Folder, paper, cursor});
+            // What goes to the Trash is said in the colour of a warning: it is the one step that takes something away.
+            const Ink ink = bad ? Ink::Bad : move.action == QLatin1String("trash") ? Ink::Warning : Ink::Folder;
+            cx += screen.put(cx, y, Screen::elided(where, qMax(8, (inner - 4) * 2 / 5)), {ink, paper, cursor});
         }
         const QString why = bad ? move.problem : move.reason;
         const int left = x + 2 + inner - cx - 2;

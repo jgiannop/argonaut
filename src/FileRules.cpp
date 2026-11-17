@@ -5,6 +5,7 @@
 #include "Remote.h"
 #include "Trash.h"
 
+#include <QDir>
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QHash>
@@ -70,6 +71,23 @@ bool canChange(const QList<Item> &items, bool inTrash)
             return false;
     }
     return true;
+}
+
+bool isUsersOwnPlace(const QString &folder)
+{
+    const QString path = QFileInfo(folder).canonicalFilePath();
+    if (path.isEmpty() || DirectoryModel::isVirtualPath(folder) || Trash::isFilesDir(folder))
+        return false;
+    auto under = [&path](const QString &root) { return !root.isEmpty() && (path == root || path.startsWith(root + QLatin1Char('/'))); };
+    const QString home = QFileInfo(QDir::homePath()).canonicalFilePath();
+    if (home.size() > 1 && under(home))
+        return true;
+    // Drives the user plugged in or mounted.
+    for (const char *root : {"/media", "/run/media", "/mnt", "/Volumes"}) {
+        if (path.startsWith(QLatin1String(root) + QLatin1Char('/')))
+            return true;
+    }
+    return false;
 }
 
 bool isTransferTarget(const QString &folder)

@@ -31,6 +31,8 @@ public:
     // Moves (and renames) each item as given, as one undoable action named
     // `action` ("Organize" gives "Undo Organize").
     FileJob *moveItems(const QList<Transfer> &transfers, const QString &action);
+    // Copies, each to its own folder and name (a plan's): undoable like any copy.
+    FileJob *copyItems(const QList<Transfer> &transfers, const QString &action);
     FileJob *trash(const QStringList &paths);
     // Permanently, no undo (callers confirm first).
     FileJob *deletePermanently(const QStringList &paths);

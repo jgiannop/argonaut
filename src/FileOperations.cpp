@@ -59,6 +59,11 @@ FileJob *FileOperations::moveItems(const QList<Transfer> &transfers, const QStri
     return startJob(FileJob::Kind::Move, transfers, true, true, action);
 }
 
+FileJob *FileOperations::copyItems(const QList<Transfer> &transfers, const QString &action)
+{
+    return startJob(FileJob::Kind::Copy, transfers, true, true, action);
+}
+
 FileJob *FileOperations::trash(const QStringList &paths)
 {
     return startJob(FileJob::Kind::Trash, transfersInto(paths, QString()), true, true);

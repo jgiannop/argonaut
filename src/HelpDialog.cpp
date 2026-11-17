@@ -574,7 +574,8 @@ the button. A program's arguments are never sent. It is one request; what it cos
 Under the list of running processes it sends each process's name, ID, the ID of the process that started it, whose
 it is, its memory and the program that was started (the 400 biggest), and never its arguments. Under the System
 Journal it sends the messages themselves (the 150 most important kinds, with who wrote them, how often and when),
-which can name users, computers, addresses and files. <b>Ask Claude: What Is This About?</b> sends what it reads of
+which can name users, computers, addresses and files. <b>Tell Claude What to Do Here…</b> sends your sentence and the names, sizes, dates and types of the open folder's
+items, never their contents. <b>Ask Claude: What Is This About?</b> sends what it reads of
 the one file or folder you chose: the beginning of a text, a document's text, a small copy of a picture, or the names
 inside a folder or an archive.</p>
 )"));
@@ -616,7 +617,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
 <b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>,
-<b>What Is This About</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<b>What Is This About</b>, <b>Tell Claude What to Do</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
 Extensions window says which extensions use Claude and what each has cost so far.</p>
@@ -669,6 +670,23 @@ service doing", "tell me only about the bus service") and Claude answers that. <
 the ✕ on the report closes it. Ask again, with another question, and the new answer replaces it. It needs your Claude API key (Preferences → Claude) and is billed to your Anthropic account; the cost of
 each report is said under it. It is Claude's reading of names and paths, not a security scan, and nothing is ever
 started, stopped or changed.</p>
+<p><b>Tell Claude What to Do</b>: choose <b>File → Tell Claude What to Do Here…</b> (or right-click the folder's
+empty space) and say in your own words what should be done in the open folder: "move every PDF older than a year into
+Archive", "make a zip of the photos from August", "put the invoices in folders by year". Claude answers with the
+steps it proposes, and they appear in the preview pane as a checklist, as Organize's do: tick what you keep, press
+<b>Apply</b>, and [[Ctrl+Z]] undoes it (one kind of step at a time).</p>
+<p><b>Claude changes nothing itself</b>, and what it may propose is narrow, whatever is asked and whatever a file
+is called:</p>
+<ul>
+<li>A step is one of these and nothing else: <b>move</b>, <b>rename</b>, <b>copy</b>, <b>compress</b> into an
+archive, a <b>new folder</b>, or <b>move to the Trash</b>. Nothing is ever deleted for good, and nothing is run.</li>
+<li>A step is about an item of the open folder. Anything else (another folder, a system file) is refused by
+Argonaut, shown in red, and can't be ticked.</li>
+<li>It works only in your own folders and drives, not in the system's.</li>
+<li>Nothing happens before you press Apply, and no step replaces something that is already there.</li>
+</ul>
+<p>Claude is sent your sentence and the names, sizes, dates and types of the folder's items (500 at most), never what
+is in the files. It needs your Claude API key, and the plan's note says what it cost.</p>
 <p><b>What Is This About</b>: right-click a file or a folder and choose <b>Ask Claude: What Is This About?</b>
 Claude reads it and answers in a few lines in the preview pane: one sentence saying what it is, then the points
 that matter (for a bill who it is from, the date and the amount; for code what it does; for a picture what it

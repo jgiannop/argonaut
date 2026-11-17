@@ -208,6 +208,20 @@ struct PlanMove
     QString newName; // empty: it keeps its name
     QString reason;  // one line for the user
     QString problem; // why it can't be done; empty when it can (set by Host::checkPlan)
+    // What is done with the item. These are all a plan can ask for, and
+    // there is no deleting among them: the furthest it goes is the Trash.
+    //   ""/"move"  into `folder` and/or renamed to `newName` (as ever)
+    //   "copy"     a copy, in `folder` and/or named `newName`
+    //   "trash"    to the Trash
+    //   "compress" into the archive `newName` ("Photos.zip"; in `folder` if given),
+    //              with the other items that name the same archive
+    //   "folder"   a new, empty folder `folder` (no item)
+    QString action;
+
+    bool isMove() const { return action.isEmpty() || action == QLatin1String("move"); }
+    // What it is done to and what becomes of it, for a row of the checklist: "a.txt", "Trash".
+    QString what() const;
+    QString becomes() const;
 };
 
 struct Plan

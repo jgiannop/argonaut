@@ -41,6 +41,11 @@ struct Item
 };
 bool canChange(const QList<Item> &items, bool inTrash);
 
+// The folder is the user's own: in their home, or on a drive they mounted.
+// What a plan may do beyond moving and renaming (copy, compress, a new
+// folder, the Trash) is only done in such a place, never in a system's folder.
+bool isUsersOwnPlace(const QString &folder);
+
 // A folder that items can be copied or moved into: a real one (not Recent,
 // Starred or an extension's list, not the Trash) that can be written to.
 bool isTransferTarget(const QString &folder);

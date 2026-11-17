@@ -1,0 +1,15 @@
+{
+    "id": "tell-claude-what-to-do",
+    "name": "Tell Claude What to Do",
+    "description": "File → Tell Claude What to Do Here… (and a folder's right-click menu): say in your own words what should be done in the open folder (\"move every PDF older than a year into Archive\", \"make a zip of the photos from August\"). Claude proposes the steps; you see them as a checklist, tick what you keep and apply it, and Ctrl+Z undoes it. A step can move, rename, copy, compress, make a folder or move to the Trash: nothing is ever deleted for good, and nothing outside the open folder is touched. Sent to Anthropic: your sentence and the names, sizes, dates and types of the folder's items, never their contents.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "tell", "label": "Tell Claude What to Do Here…", "menu": "file",
+                  "ask": {"label": "What should be done in this folder?", "multiline": true}},
+                 {"id": "tell-here", "label": "Tell Claude What to Do Here…", "target": "folder",
+                  "ask": {"label": "What should be done in this folder?", "multiline": true}}],
+    "exec": ["@ARGONAUT_COMMAND_EXTENSION_EXE@"]
+}

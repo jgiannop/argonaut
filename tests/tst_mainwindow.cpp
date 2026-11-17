@@ -2437,9 +2437,35 @@ void TestMainWindow::waitingForClaudeIsShown()
     plan.extensionName = "Some Extension";
     plan.id = "p";
     plan.folder = m_dir;
-    plan.moves = {{"a.txt", "Texts", {}, "A text", {}}};
+    plan.moves = {{"a.txt", "Texts", {}, "A text", {}, {}}};
     QVERIFY(pane->showPlan(plan));
     QVERIFY(pane->hasPlan() && !pane->isWorking());
+    w->hideQuickLook();
+
+    // A plan's steps of every kind, as the checklist says them: what becomes of each is plain to read.
+    Extensions::Plan steps = plan;
+    steps.id = "q";
+    auto step = [](const char *action, const char *item, const char *folder, const char *newName, const char *problem = "") {
+        Extensions::PlanMove move;
+        move.action = action;
+        move.item = item;
+        move.folder = folder;
+        move.newName = newName;
+        move.problem = problem;
+        return move;
+    };
+    steps.moves = {step("trash", "a.txt", "", ""), step("copy", "a.txt", "Copies", ""), step("compress", "a.txt", "", "Texts.zip"),
+                   step("folder", "", "New/Deeper", ""), step("move", "a.txt", "", "b.txt"), step("trash", "/etc/passwd", "", "", "isn't in this folder")};
+    w->toggleQuickLook();
+    QVERIFY(pane->showPlan(steps));
+    PlanView *list = pane->planView();
+    QCOMPARE(list->moveCount(), 6);
+    QVERIFY2(list->moveText(0).startsWith("a.txt") && list->moveText(0).contains("→ Trash"), qPrintable(list->moveText(0)));
+    QVERIFY2(list->moveText(1).contains("→ a copy: Copies/"), qPrintable(list->moveText(1)));
+    QVERIFY2(list->moveText(2).contains("→ into Texts.zip"), qPrintable(list->moveText(2)));
+    QVERIFY2(list->moveText(3).startsWith("New folder") && list->moveText(3).contains("→ New/Deeper/"), qPrintable(list->moveText(3)));
+    QVERIFY2(list->moveText(4).contains("→ b.txt"), qPrintable(list->moveText(4)));
+    QVERIFY(list->isMoveTicked(0) && !list->canMoveBeTicked(5) && !list->isMoveTicked(5)); // what is refused can't be ticked
     w->hideQuickLook();
 }
 
