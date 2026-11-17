@@ -118,11 +118,13 @@ jobs:
           python .github/scripts/errors_as_notes.py tests-run.log "build: tests, running" "FAIL!|Loc: |QFATAL|ASSERT|Passed|Failed|Timeout|Not Run|Exception|Totals|tests passed|No tests|0xc0|cannot|not found"
           # One of those that stop at once, run by hand: what it prints and how it ends.
           $env:ARGONAUT_TRASH_HOME_ONLY = "1"; $env:ARGONAUT_KEYSTORE = "file"; $env:QT_DEBUG_PLUGINS = "1"
-          foreach ($platform in "offscreen", "windows") {
-            $env:QT_QPA_PLATFORM = $platform
-            "== tst_contenttype with $platform" | Tee-Object -FilePath tests-few.log -Append
-            cmd /c "build\windows-tests\tst_contenttype.exe 2>&1" | Select-Object -Last 25 | Tee-Object -FilePath tests-few.log -Append
-            "exit code: $LASTEXITCODE (hex $('{0:x}' -f $LASTEXITCODE))" | Tee-Object -FilePath tests-few.log -Append
+          $env:QT_QPA_PLATFORM = "offscreen"
+          # (Qt's test programs say what happened into a file: a Windows program without a console has nowhere else.)
+          foreach ($test in "contenttype", "places", "archives", "claude", "preview") {
+            "== tst_$test" | Tee-Object -FilePath tests-few.log -Append
+            $run = Start-Process -FilePath "build\windows-tests\tst_$test.exe" -ArgumentList "-o","said-$test.txt,txt" -Wait -PassThru -NoNewWindow
+            "exit code: $($run.ExitCode)" | Tee-Object -FilePath tests-few.log -Append
+            if (Test-Path "said-$test.txt") { Select-String -Path "said-$test.txt" -Pattern "FAIL!|Loc: |QFATAL|Totals|QWARN" | Select-Object -First 14 | ForEach-Object { $_.Line } | Tee-Object -FilePath tests-few.log -Append }
           }
           python .github/scripts/errors_as_notes.py tests-few.log "build: tests, one by hand" "."
           exit 0
