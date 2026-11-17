@@ -416,6 +416,18 @@ if(UNIX)
         install(TARGETS argonaut-journal-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-journal/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-journal)
+        # Network Connections: the interfaces, what listens and what is connected (ss, /proc/net).
+        qt_add_executable(argonaut-network-extension extensions/network/main.cpp)
+        target_link_libraries(argonaut-network-extension PRIVATE argonaut_core Qt6::Network)
+        set(ARGONAUT_NETWORK_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-network-extension")
+        configure_file(extensions/network/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/network-connections/extension.json @ONLY)
+        set(ARGONAUT_NETWORK_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-network-extension")
+        configure_file(extensions/network/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/network-connections/extension.json @ONLY)
+        install(TARGETS argonaut-network-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/network-connections/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/network-connections)
     endif()
 
     # Organize with Claude: asks Claude through Argonaut and proposes a plan
@@ -557,7 +569,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_INSTALL_PREFIX STREQUAL "/usr")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 endif()
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
-    "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git, xclip | wl-clipboard")
+    "qt6-wayland, gvfs-backends, gvfs-fuse, bubblewrap, poppler-utils, libimage-exiftool-perl, tracker, xdg-utils, git, iproute2, xclip | wl-clipboard")
 include(CPack)
 
 add_custom_target(uninstall

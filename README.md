@@ -79,6 +79,8 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 
 File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose folders, better names and a short report for a messy folder. The plan appears in the preview pane as a checklist; you apply what you keep, and Ctrl+Z puts everything back. It is an extension (switch it off in Edit → Extensions), and it never has your key: Argonaut asks Claude for it. See [Claude and your privacy](#claude-and-your-privacy).
 
+**Network connections.** View → **Network Connections**: the interfaces with their speed, the programs that listen for connections (a port other machines can reach is marked) and the programs that are connected, with where to. Searchable, updated every three seconds, with Analyze with Claude under it. It only shows; how much each program sends is something the system tells only the administrator.
+
 **Tell Claude what to do.** File → **Tell Claude What to Do Here…**: say in your own words what should be done in the open folder ("move every PDF older than a year into Archive", "make a zip of the photos from August"). Claude proposes steps; you see them as a checklist and apply what you keep, and Ctrl+Z undoes it. Claude changes nothing itself: a step can only move, rename, copy, compress, make a folder or move to the Trash, only for items of the open folder, only in your own folders and drives. Nothing is ever deleted for good.
 
 **What is this about?** Right-click any file or folder and choose **Ask Claude: What Is This About?** for a few lines saying what it is and what is in it: text and code, PDFs, office documents, pictures, archives, folders, music and video. It is an extension too, and uses the same key.
@@ -120,6 +122,8 @@ What is sent to Anthropic's API when you organize a folder: the names, sizes, da
 What is sent when you press **Analyze with Claude** under the list of running services: each service's name, description, memory, whether it is the system's or your session's, the path of the program it runs and of its unit file, and whatever you typed beside the button. A program's arguments are never sent (they can hold passwords). Under the list of running processes the same button sends, for the 400 biggest processes: the name, the process ID, the ID of the process that started it, whose it is, its memory and the program that was started; never how it was started (its arguments). **Tell Claude What to Do Here…** sends your sentence and the names, sizes, dates and types of the open folder's items (500 at most), never what is in the files.
 
 **Ask Claude: What Is This About?** (right-click a file or folder) sends what it reads of that one item: the first 24 kB of a text file, the words of a web page, the text of a PDF's first pages or of an office document (both read in a sandbox), a copy of a picture made smaller (1024 pixels at most), the names and sizes inside an archive or a folder, or a music or video file's details. A small PDF with no readable text is sent whole. Programs, and files that only look like documents, are never read or sent. The line under each answer says what was sent.
+
+Under Network Connections the button sends the ports that are open and the names of the programs behind them, this computer's network addresses, its gateway and DNS servers, and for each connected program the addresses and ports it is connected to (40 at most a program), as numbers: no names are looked up. That shows which services you use, so look at the list first. Never how a program was started, and never what is sent over a connection (Argonaut can't see that).
 
 Under the System Journal the button sends the messages themselves, as they are, for the 150 most important kinds of message, with who wrote each, how often and when: journal messages can name users, computers, network addresses and files, so look at the list first. Claude's report is its reading of what it was sent, not a security scan: it sees names, paths and messages, not what the programs do.
 
@@ -261,7 +265,7 @@ Open the folder in VS Code and install the recommended extensions when asked (C/
 ```
 src/               Application source code
 src/tui/           The terminal interface (argonaut --tui)
-extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, What Is This About, Tell Claude What to Do, Document Preview…)
+extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, Network Connections, What Is This About, Tell Claude What to Do, Document Preview…)
 docs/              The guide for writing extensions; the comparison with GNOME's file dialog
 tests/             Qt Test suites (run with ctest)
 CMakeLists.txt     Build definition

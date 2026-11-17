@@ -1,0 +1,12 @@
+{
+    "id": "network-connections",
+    "name": "Network Connections",
+    "description": "View → Network Connections (or the command palette): the network interfaces with their speed, the programs that listen for connections (those other machines can reach are marked), and the programs that are connected now with where to, in the preview pane. It updates every three seconds while it is shown, and only shows: nothing is closed or blocked. How much each program sends isn't shown (the system tells that only to the administrator); connections of the system's and other users' programs have no name. Under the list, Analyze with Claude asks Claude what the open ports and connections are and whether any looks out of place (the ports, the programs' names, this computer's addresses and the addresses it is connected to are sent to Anthropic, only when you press the button).",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "network", "label": "Network Connections", "menu": "view"}],
+    "exec": ["@ARGONAUT_NETWORK_EXTENSION_EXE@"]
+}
