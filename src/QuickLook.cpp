@@ -1,4 +1,5 @@
 #include "QuickLook.h"
+#include "TipPicture.h"
 
 #include "Format.h"
 #include "RichTextStyle.h"
@@ -169,7 +170,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scroll->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     m_scroll->viewport()->setAutoFillBackground(false);
-    m_scrollPicture = new QLabel;
+    m_scrollPicture = new TipPicture;
     m_scroll->setWidget(m_scrollPicture);
     m_text = new QPlainTextEdit(m_pages);
     m_text->setObjectName("qlText");
@@ -496,6 +497,7 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
             const int at = again ? m_scroll->verticalScrollBar()->value() : 0;
             m_scrollPicture->setPixmap(QPixmap::fromImage(image));
             m_scrollPicture->setFixedSize((QSizeF(image.size()) / devicePixelRatioF()).toSize());
+            m_scrollPicture->setTips(reply.tips, devicePixelRatioF());
             m_pages->setCurrentWidget(m_scroll);
             m_scroll->verticalScrollBar()->setValue(at);
             m_kind = Preview::Kind::Image;

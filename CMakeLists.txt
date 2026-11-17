@@ -165,6 +165,7 @@ qt_add_library(argonaut_app STATIC
     src/PropertiesDialog.h
     src/CompressDialog.cpp
     src/QuickLook.cpp
+    src/TipPicture.h
     src/QuickLook.h
     src/UsageDelegate.cpp
     src/UsageDelegate.h

@@ -279,6 +279,12 @@ QList<ListRow> rowsOf(const Services &s)
         row.name = service.name;
         row.mark = service.user ? QStringLiteral("user") : QString();
         row.about = service.description;
+        // The ⓘ beside the name: what the service is, in systemd's own words,
+        // then its unit and whose it is (the name may be cut short in the list).
+        row.tip = (service.description.isEmpty() ? QStringLiteral("systemd has no description of this service")
+                                                 : service.description)
+                  + QStringLiteral("\n%1.service · %2").arg(service.name, service.user ? QStringLiteral("a service of your session")
+                                                                                      : QStringLiteral("a system service"));
         row.size = sizeOf(service);
         row.share = service.bytes > 0 ? double(service.bytes) / double(biggest) : 0;
         row.faint = service.user;
@@ -288,12 +294,12 @@ QList<ListRow> rowsOf(const Services &s)
 }
 
 // A picture has a limit to its height; text has none.
-QImage draw(const Services &s, int width, const Look &look, const QString &search = {})
+QImage draw(const Services &s, int width, const Look &look, const QString &search = {}, QList<TipArea> *tips = nullptr)
 {
     ListHead head = headOf(s);
     QList<ListRow> rows = rowsOf(s);
     narrowList(&head, &rows, search, 250);
-    return drawList(head, rows, width, look);
+    return drawList(head, rows, width, look, tips);
 }
 
 QString drawAnsi(const Services &s, int columns, const QString &search = {})
@@ -344,10 +350,12 @@ int main(int argc, char **argv)
             message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
             message.insert(QStringLiteral("text"), drawAnsi(services, room.columns, search));
         } else {
-            if (!save(draw(services, room.width, room.look, search), picture))
+            QList<TipArea> tips;
+            if (!save(draw(services, room.width, room.look, search, &tips), picture))
                 return;
             message.insert(QStringLiteral("kind"), QStringLiteral("image"));
             message.insert(QStringLiteral("image"), picture);
+            message.insert(QStringLiteral("tips"), tipsJson(tips)); // the ⓘ beside each service: its description
             message.insert(QStringLiteral("scroll"), true); // longer than the pane: it scrolls
         }
         if (update)

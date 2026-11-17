@@ -82,6 +82,7 @@ private slots:
     void runningProcesses();
     void claudeThroughArgonaut();
     void plansAreProposedNotDone();
+    void pictureTipsAreData();
     void organizeWithClaude();
     void conversationWithAnExtensionProgram();
     void placesAndOpeningFolders();
@@ -1147,6 +1148,23 @@ fi
     QCOMPARE(content.extension, QStringLiteral("running-services"));
     QVERIFY(content.scroll); // as long as the list is: Argonaut scrolls it
     QVERIFY(!QImage(content.image).isNull());
+    // An ⓘ beside every service: its description, the unit and whose it is, where the sign is in the picture.
+    {
+        const QImage picture(content.image);
+        QCOMPARE(int(content.tips.size()), 5);
+        QStringList texts;
+        int lastY = -1;
+        for (const Extensions::Tip &tip : std::as_const(content.tips)) {
+            texts << tip.text;
+            QVERIFY2(picture.rect().contains(tip.area), qPrintable(tip.text));
+            QVERIFY(tip.area.width() >= 8 && tip.area.width() <= 60 && tip.area.height() >= 8);
+            QVERIFY(tip.area.y() > lastY); // a row each, from the top down
+            lastY = tip.area.y();
+        }
+        QCOMPARE(texts.first(), QStringLiteral("The <b>Database</b>\ndatabase.service · a system service")); // as text, as it is
+        QVERIFY2(texts.contains("A Music Player\nmusic.service · a service of your session"), qPrintable(texts.join(" | ")));
+        QVERIFY2(texts.contains("Nobody counts it\nuncounted.service · a service of your session"), qPrintable(texts.join(" | ")));
+    }
     Extensions::ResultLook look;
     look.window = "#fdf6e3";
     look.surface = "#eee8d5";
@@ -1489,6 +1507,49 @@ void TestExtensions::claudeThroughArgonaut()
     QTRY_VERIFY_WITH_TIMEOUT(heard("Asker", "claude said: Asked again"), 15000);
     host.setEnabled("asker", false);
     host.setEnabled("fake", false);
+}
+
+// A picture can have parts with a tooltip. They are the extension's, so
+// they are data: counted, cut, kept to sensible numbers, plain text.
+void TestExtensions::pictureTipsAreData()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    const QString picture = m_dir + "/tips.png";
+    QImage image(200, 400, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QVERIFY(image.save(picture));
+    Host host;
+    host.setEnabled("fake", true);
+    host.watch(m_dir);
+    const QList<Extensions::Item> one{{picture, "image/png", false}};
+    Extensions::Command hello;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.commands(m_dir, one)) {
+            if (c.extension == "fake" && c.id == "hello")
+                hello = c;
+        }
+        return !hello.id.isEmpty();
+    }(), 10000);
+    QSignalSpy shown(&host, &Host::showRequested);
+    host.invoke(hello, m_dir, {picture});
+    QTRY_VERIFY_WITH_TIMEOUT(!shown.isEmpty(), 10000);
+    const auto content = shown.first().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(content.kind, Extensions::PreviewReply::Image);
+    QCOMPARE(int(content.tips.size()), Host::MaxTips); // 2 good ones and as many of the 600 as there is room for
+    // Line breaks stay; other control characters (an escape sequence's) don't.
+    QCOMPARE(content.tips.at(0).area, QRect(10, 20, 30, 30));
+    QCOMPARE(content.tips.at(0).text, QStringLiteral("First <b>tip</b>\nsecond line [31m"));
+    // A long one is cut.
+    QCOMPARE(int(content.tips.at(1).text.size()), Host::MaxTipText);
+    // Outside the picture's possible size, without a size or without words: left out.
+    for (const Extensions::Tip &tip : content.tips) {
+        QVERIFY2(tip.area.x() >= 0 && tip.area.y() >= 0 && tip.area.width() >= 1 && tip.area.bottom() <= 65536, qPrintable(tip.text));
+        QVERIFY(!tip.text.trimmed().isEmpty());
+        QVERIFY2(!tip.text.contains("left of") && !tip.text.contains("no width") && !tip.text.contains("far below")
+                     && !tip.text.contains("not a number"), qPrintable(tip.text));
+    }
+    QCOMPARE(content.tips.at(2).text, QStringLiteral("many 0"));
 }
 
 // An extension proposes changes for a folder; Argonaut checks each move by

@@ -24,6 +24,7 @@ class Thumbnailer;
 // slow file never blocks; a newer request replaces an older one. It never
 // takes the keyboard: the file view keeps it, and the window sends the pane
 // each newly selected file.
+class TipPicture;
 class QuickLook : public QWidget
 {
     Q_OBJECT
@@ -76,6 +77,7 @@ public:
     // A picture that scrolls is shown (an extension's, with "scroll"): how far it can be
     // scrolled and where it is, in pixels; -1: none is shown (tests).
     int pictureScrollRange() const;
+    TipPicture *tipPicture() const { return m_scrollPicture; } // the long picture and its tooltips (tests)
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
     QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
@@ -126,7 +128,7 @@ private:
     void forgetWorking(); // the pane no longer says "working" (the waiting itself may go on)
     PdfView *m_pdf = nullptr;        // the PDF reader: every page, in the sandbox (PdfView)
     class QScrollArea *m_scroll = nullptr; // an extension's picture that is taller than the pane ("scroll")
-    QLabel *m_scrollPicture = nullptr;
+    TipPicture *m_scrollPicture = nullptr; // a long picture at its own size; parts of it may have tooltips
     QLabel *m_movieLabel = nullptr;
     QMovie *m_movie = nullptr;
     QPlainTextEdit *m_text = nullptr;

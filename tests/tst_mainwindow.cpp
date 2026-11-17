@@ -23,6 +23,7 @@
 #include "MountActions.h"
 #include "PathBar.h"
 #include "QuickLook.h"
+#include "TipPicture.h"
 #include "RichTextStyle.h"
 #include "Theme.h"
 #include "Sidebar.h"
@@ -125,6 +126,7 @@ private slots:
     void waitingForClaudeIsShown();
     void extensionResultStaysLive();
     void longPictureFromAnExtensionScrolls();
+    void pictureFromAnExtensionHasTooltips();
     void extensionResultCanBeSearched();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
@@ -1866,6 +1868,52 @@ void TestMainWindow::longPictureFromAnExtensionScrolls()
     content.scroll = false;
     w->showExtensionResult("fake", "Fits", content);
     QCOMPARE(w->m_quickLook->pictureScrollRange(), -1);
+}
+
+// A long picture from an extension can have parts with a tooltip (the ⓘ
+// beside a service): the mouse on one, or a press, shows its text.
+void TestMainWindow::pictureFromAnExtensionHasTooltips()
+{
+    open(m_dir);
+    QImage tall(300, 2000, QImage::Format_RGB32);
+    tall.fill(QColor("#336699"));
+    const QString file = m_dir + "/tipped.png";
+    QVERIFY(tall.save(file));
+    Extensions::PreviewReply content;
+    content.kind = Extensions::PreviewReply::Image;
+    content.image = file;
+    content.extension = "fake";
+    content.resultId = "tipped";
+    content.scroll = true;
+    content.tips = {{QRect(40, 50, 24, 24), "About the <b>first</b>\nsecond line"}, {QRect(40, 1500, 24, 24), "About the last"}};
+    w->showExtensionResult("fake", "Tipped", content);
+    QVERIFY(w->m_quickLook && w->m_quickLook->isVisible());
+    TipPicture *picture = w->m_quickLook->tipPicture();
+    QTRY_COMPARE(picture->tipCount(), 2);
+    const QPoint first = picture->tipArea(0).center();
+    QCOMPARE(picture->tipAt(first), QStringLiteral("About the <b>first</b>\nsecond line"));
+    QCOMPARE(picture->tipAt(picture->tipArea(1).center()), QStringLiteral("About the last"));
+    QCOMPARE(picture->tipAt(QPoint(200, 60)), QString()); // beside it: nothing
+    QCOMPARE(picture->tipAt(picture->tipArea(0).bottomRight() + QPoint(3, 3)), QString());
+    // The mouse resting on it (what the toolkit sends then), and a press, show it.
+    QHelpEvent rest(QEvent::ToolTip, first, picture->mapToGlobal(first));
+    QApplication::sendEvent(picture, &rest);
+    QCOMPARE(picture->shownTip(), QStringLiteral("About the <b>first</b>\nsecond line"));
+    QTest::mouseClick(picture, Qt::LeftButton, Qt::NoModifier, QPoint(200, 60));
+    QCOMPARE(picture->shownTip(), QString());
+    QTest::mouseClick(picture, Qt::LeftButton, Qt::NoModifier, picture->tipArea(1).center());
+    QCOMPARE(picture->shownTip(), QStringLiteral("About the last"));
+    // The pointer is a hand over a sign, and not beside it.
+    QTest::mouseMove(picture, first);
+    QTRY_COMPARE(picture->cursor().shape(), Qt::PointingHandCursor);
+    QTest::mouseMove(picture, QPoint(200, 60));
+    QTRY_VERIFY(picture->cursor().shape() != Qt::PointingHandCursor);
+    // The same result made again without them: none are left from before.
+    content.update = true;
+    content.tips.clear();
+    w->showExtensionResult("fake", "Tipped", content);
+    QCOMPARE(picture->tipCount(), 0);
+    QCOMPARE(picture->tipAt(first), QString());
 }
 
 // A result whose extension says it can be searched gets a field over it:

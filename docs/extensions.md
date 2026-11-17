@@ -657,8 +657,17 @@ the file really is. When the user previews such a file, you get:
 | `diff` | A unified diff (what `git diff` prints), in a fixed-width font with added lines on green and removed lines on red, in the theme's colours. The text is shown as it is. |
 | `text` | The text as it is; `monospace` for a fixed-width font without wrapping. |
 | `html` | Qt's rich-text subset: headings, lists, tables, bold, colours. No scripts, and nothing the HTML names is loaded (no pictures, no style sheets). Links are shown but don't open. |
-| `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. With `"scroll": true` beside it, the picture is not scaled: it is shown at its own size and scrolls where it is taller than the pane, for a list you drew (draw it as wide as the `width` a `result` message told you, and as long as the list is, at most 16384 pixels); made again while it is shown, it stays where it was scrolled to. |
+| `image` | A picture file you wrote (PNG, JPEG…), by full path. Argonaut reads it at once and scales it to fit, so you may reuse the file for the next request. With `"scroll": true` beside it, the picture is not scaled: it is shown at its own size and scrolls where it is taller than the pane, for a list you drew (draw it as wide as the `width` a `result` message told you, and as long as the list is, at most 16384 pixels); made again while it is shown, it stays where it was scrolled to. Such a picture can also have **parts with a tooltip** (`"tips"`, below). |
 | `none` | "Not from me": Argonaut shows its own preview for the file. |
+
+**Tooltips on a picture.** Beside `"scroll": true`, a `"tips"` list says which parts of the picture have something to say when the mouse rests on them or presses them (the ⓘ beside each service in Running Services):
+
+```json
+{"type": "show", "id": "services", "kind": "image", "image": "/run/user/1000/services.png", "scroll": true,
+ "tips": [{"x": 148, "y": 214, "width": 26, "height": 26, "text": "D-Bus User Message Bus\ndbus.service · a service of your session"}]}
+```
+
+`x`, `y`, `width` and `height` are in the picture's own pixels; `text` is plain text (line breaks are kept, nothing in it is formatting). Argonaut shows it as a tooltip and makes the pointer a hand over the part; you draw the sign yourself. At most 400 parts, 600 characters each; a part without a size or without text is left out. The terminal interface has no tooltips: put there what must be read into the text itself.
 
 `text` may be up to a million characters; `note` is one line under the
 preview. You always answer with text or a picture; an extension never draws

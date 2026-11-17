@@ -203,6 +203,7 @@ struct ListRow
     QString size;    // at the right ("1.1 GB")
     double share = 0; // its bar, 0…1
     bool faint = false; // drawn lighter (not the system's, not yours)
+    QString tip;     // more about it, shown when the mouse is on the ⓘ beside its name (none: no sign)
 };
 
 struct ListHead
@@ -272,8 +273,29 @@ inline void narrowList(ListHead *head, QList<ListRow> *rows, const QString &sear
 
 // The picture, for a pane `width` pixels wide: as long as the rows make it
 // (sent with "scroll": true, Argonaut scrolls it).
-inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int width, const Look &look)
+// A part of the picture with a tooltip, as it goes into a "show" message.
+struct TipArea
 {
+    QRect area;
+    QString text;
+};
+
+inline QJsonArray tipsJson(const QList<TipArea> &tips)
+{
+    QJsonArray out;
+    for (const TipArea &tip : tips) {
+        out.append(QJsonObject{{QStringLiteral("x"), tip.area.x()}, {QStringLiteral("y"), tip.area.y()},
+                               {QStringLiteral("width"), tip.area.width()}, {QStringLiteral("height"), tip.area.height()},
+                               {QStringLiteral("text"), tip.text}});
+    }
+    return out;
+}
+
+// `tips`: where the ⓘ of each row that has a `tip` was drawn, with its text.
+inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int width, const Look &look, QList<TipArea> *tips = nullptr)
+{
+    if (tips)
+        tips->clear();
     const QList<ListRow> rows = plainRows(given);
     width = qBound(240, width, 4000);
     g_font = look.font;
@@ -349,7 +371,21 @@ inline QImage drawList(const ListHead &head, const QList<ListRow> &given, int wi
         const QString name = p.fontMetrics().elidedText(row.name, Qt::ElideMiddle, qMax(10, int(nameRoom)));
         p.setPen(look.text);
         p.drawText(QRectF(left, y, nameRoom, u * 1.6), Qt::AlignLeft | Qt::AlignVCenter, name);
-        const double used = p.fontMetrics().horizontalAdvance(name) + u * 0.8;
+        double used = p.fontMetrics().horizontalAdvance(name) + u * 0.8;
+        if (!row.tip.isEmpty() && nameRoom - used > u * 1.4) {
+            // ⓘ: a ring with an "i", right after the name. Its tooltip is the window's to show.
+            const double d = u * 1.15;
+            const QRectF ring(left + used, y + (u * 1.6 - d) / 2, d, d);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(look.dim, qMax(1.0, u * 0.09)));
+            p.drawEllipse(ring);
+            p.setFont(fontOf(u * 0.78, true));
+            p.drawText(ring, Qt::AlignCenter, QStringLiteral("i"));
+            p.setFont(fontOf(u));
+            if (tips) // a little more than the ring, so it is easy to hit
+                tips->append({ring.adjusted(-u * 0.35, -u * 0.35, u * 0.35, u * 0.35).toAlignedRect(), row.tip});
+            used += d + u * 0.8;
+        }
         const QString about = row.mark.isEmpty() ? row.about : row.about.isEmpty() ? row.mark : row.mark + QStringLiteral(" · ") + row.about;
         if (!about.isEmpty() && nameRoom - used > u * 5) {
             p.setPen(look.dim);

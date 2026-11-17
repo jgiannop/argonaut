@@ -2,6 +2,7 @@
 
 #include "Claude.h"
 
+#include <QRect>
 #include <QHash>
 #include <QList>
 #include <QMetaType>
@@ -78,6 +79,14 @@ struct Command
 
 // What an extension shows for a file in the preview pane (Space). Always
 // text or a picture for Argonaut to show; an extension never draws itself.
+// A part of a picture that has something to say when the mouse rests on it
+// or presses it (the ⓘ beside a service): in the picture's own pixels.
+struct Tip
+{
+    QRect area;
+    QString text; // plain text; line breaks are kept
+};
+
 struct PreviewReply
 {
     // None: "not from me", the built-in preview is used. Ansi: text with
@@ -88,6 +97,7 @@ struct PreviewReply
     bool monospace = false; // Text: in a fixed-width font
     QString image;         // Image: a picture file the extension wrote
     bool scroll = false;   // Image: shown at its own size and scrolled where it is taller than the pane (a long list), not scaled to fit
+    QList<Tip> tips;       // Image shown at its own size (scroll): parts of it with a tooltip
     QString note;          // one line under the preview ("3 sheets")
     // A result ("show") can have a name, so the extension can replace it
     // while it is shown (a dashboard that updates) and is told when it is
@@ -304,6 +314,8 @@ public:
     // none. Also called again when the user presses Apply.
     static void checkPlan(const QString &folder, QList<PlanMove> *moves);
     static constexpr int MaxPlanMoves = 500;
+    static constexpr int MaxTips = 400;     // parts of a picture with a tooltip
+    static constexpr int MaxTipText = 600;  // characters of one
 
     // The user doesn't want to wait for Claude's answer any longer: the
     // extension is told its questions failed, and the answers are dropped

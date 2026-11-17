@@ -181,6 +181,18 @@ for line in sys.stdin:
                  "files": [folder + "/a.txt", folder + "/missing.txt", "relative.txt", folder + "/sub/../b.txt"]})
             say({"type": "show", "kind": "listing", "listing": "my list/1"})
             say({"type": "show", "kind": "listing", "listing": "no such list"})
+        if any(os.path.basename(p) == "tips.png" for p in sel):  # a picture with parts that have tooltips
+            picture = [p for p in sel if os.path.basename(p) == "tips.png"][0]
+            say({"type": "show", "id": "tipped", "title": "Tipped", "kind": "image", "image": picture, "scroll": True,
+                 "tips": [
+                     {"x": 10, "y": 20, "width": 30, "height": 30, "text": "First <b>tip</b>\nsecond line\x1b[31m"},
+                     {"x": 10, "y": 200, "width": 30, "height": 30, "text": "x" * 5000},
+                     {"x": -5, "y": 20, "width": 30, "height": 30, "text": "left of the picture"},
+                     {"x": 10, "y": 20, "width": 0, "height": 30, "text": "no width"},
+                     {"x": 10, "y": 20, "width": 30, "height": 30, "text": "   "},
+                     {"x": 10, "y": 900000, "width": 30, "height": 30, "text": "far below"},
+                     {"x": "ten", "y": 20, "width": 30, "height": 30, "text": "not a number"},
+                     "not an object"] + [{"x": 100, "y": n, "width": 5, "height": 1, "text": "many %d" % n} for n in range(600)]})
         if m.get("command") == "showme":
             say({"type": "show", "title": "A result\nfrom the fake", "kind": "diff", "note": "2 lines",
                  "text": "diff --git a/x b/x\n@@ -1 +1 @@\n-old <b>line</b>\n+new line"})

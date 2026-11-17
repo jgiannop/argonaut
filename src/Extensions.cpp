@@ -462,6 +462,27 @@ PreviewReply Host::readContent(const QJsonObject &message)
             reply.kind = PreviewReply::Image;
             reply.image = image;
             reply.scroll = message.value(QLatin1String("scroll")).toBool();
+            // Parts of it with a tooltip: each a rectangle in the picture's
+            // pixels and a plain text. As everything from an extension, it
+            // is data: counted, cut, and kept to sensible numbers.
+            const QJsonArray tips = message.value(QLatin1String("tips")).toArray();
+            for (const QJsonValue &value : tips) {
+                if (reply.tips.size() >= MaxTips)
+                    break;
+                const QJsonObject one = value.toObject();
+                const QRect area(one.value(QLatin1String("x")).toInt(-1), one.value(QLatin1String("y")).toInt(-1),
+                                 one.value(QLatin1String("width")).toInt(), one.value(QLatin1String("height")).toInt());
+                QString text = one.value(QLatin1String("text")).toString().left(MaxTipText);
+                for (QChar &c : text) {
+                    if (c != QLatin1Char('\n') && (c.unicode() < 0x20 || c.unicode() == 0x7f))
+                        c = QLatin1Char(' ');
+                }
+                text = text.trimmed();
+                if (area.x() < 0 || area.y() < 0 || area.width() < 1 || area.height() < 1 || area.right() > 16384 || area.bottom() > 65536
+                    || text.isEmpty())
+                    continue;
+                reply.tips.append({area, text});
+            }
         }
     }
     return reply;

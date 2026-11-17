@@ -20,6 +20,7 @@ private slots:
     void barsGrowByEighths();
     void textNeverWiderThanThePane();
     void pictureIsAsLongAsTheList();
+    void signBesideARowThatHasMoreToSay();
     void roomIsReadFromTheMessage();
     void pictureFileIsThisProgramsOwn();
 
@@ -31,9 +32,9 @@ private:
     }
     static QList<ListRow> rows()
     {
-        return {{"database", {}, "The Database", "200", "3.0 GB", 1.0, false},
-                {"Music Player", "user", "plays music", "17", "1.5 GB", 0.5, true},
-                {"tiny", {}, "A small one", "2001", "1.0 MB", 0.01, false}};
+        return {{"database", {}, "The Database", "200", "3.0 GB", 1.0, false, {}},
+                {"Music Player", "user", "plays music", "17", "1.5 GB", 0.5, true, {}},
+                {"tiny", {}, "A small one", "2001", "1.0 MB", 0.01, false, {}}};
     }
 };
 
@@ -49,7 +50,7 @@ void TestResultDrawing::namesAreData()
     QCOMPARE(plainText(QString(QChar(0x9b)) + "31m"), QStringLiteral("?31m")); // the one-character form of ESC [
     QCOMPARE(plainText(QString()), QString());
 
-    QList<ListRow> list{{"a\x1b[1m", "m\nk", "ab\tout", "t\x07g", "1 B", 1.0, false}};
+    QList<ListRow> list{{"a\x1b[1m", "m\nk", "ab\tout", "t\x07g", "1 B", 1.0, false, {}}};
     const QString text = drawListAnsi(ListHead(), list, 60);
     // The only escape sequences in it are the drawing's own colour codes.
     QVERIFY(!plain(text).contains(QChar(0x1b)));
@@ -151,7 +152,7 @@ void TestResultDrawing::textNeverWiderThanThePane()
     head.line = "Together they use\n4.5 GB of 16.0 GB memory";
     head.listTitle = "BY MEMORY";
     QList<ListRow> list = rows();
-    list.append({"a-name-that-is-much-longer-than-any-pane-is-wide-enough-to-hold", "somebody", {}, {}, "999.9 MB", 0.3, false});
+    list.append({"a-name-that-is-much-longer-than-any-pane-is-wide-enough-to-hold", "somebody", {}, {}, "999.9 MB", 0.3, false, {}});
     for (int columns : {10, 24, 30, 44, 80, 200, 5000}) {
         const QString text = plain(drawListAnsi(head, list, columns));
         const int most = qBound(24, columns, 200); // what it is drawn for
@@ -183,7 +184,7 @@ void TestResultDrawing::pictureIsAsLongAsTheList()
     QCOMPARE(few.pixelColor(1, 1), QColor("#fdf6e3"));
     QList<ListRow> many;
     for (int i = 0; i < 60; ++i)
-        many.append({QStringLiteral("row %1").arg(i), {}, {}, QString::number(i), "1 MB", 0.5, false});
+        many.append({QStringLiteral("row %1").arg(i), {}, {}, QString::number(i), "1 MB", 0.5, false, {}});
     const QImage long60 = drawList(head, many, 500, look);
     QVERIFY2(long60.height() > few.height() * 5, qPrintable(QStringLiteral("%1 against %2").arg(long60.height()).arg(few.height())));
     // Never narrower than can be read, never absurdly wide.
@@ -238,6 +239,49 @@ void TestResultDrawing::pictureFileIsThisProgramsOwn()
     QVERIFY(pictureFile("things").startsWith(QDir::tempPath() + "/"));
     qunsetenv("XDG_RUNTIME_DIR");
     QVERIFY(pictureFile("things").startsWith(QDir::tempPath() + "/"));
+}
+
+// A row with a `tip` gets an ⓘ after its name; where it was drawn comes
+// back with the text, for the window to show as a tooltip.
+void TestResultDrawing::signBesideARowThatHasMoreToSay()
+{
+    const Look look = lookFor(false, {});
+    ListHead head;
+    head.title = "LIST";
+    QList<ListRow> list = rows();
+    list[0].tip = "The first\nrow";
+    list[2].tip = "The third";
+    QList<TipArea> tips{{QRect(1, 1, 1, 1), "stale"}};
+    const QImage with = drawList(head, list, 500, look, &tips);
+    QCOMPARE(int(tips.size()), 2); // only the rows that have one, and nothing left from before
+    QCOMPARE(tips.at(0).text, QStringLiteral("The first\nrow"));
+    QCOMPARE(tips.at(1).text, QStringLiteral("The third"));
+    for (const TipArea &tip : std::as_const(tips)) {
+        QVERIFY(with.rect().contains(tip.area));
+        QVERIFY(tip.area.width() >= 10 && tip.area.width() <= 40 && tip.area.height() >= 10);
+    }
+    QVERIFY(tips.at(1).area.y() > tips.at(0).area.bottom() + 20); // two rows apart
+    // The sign is really there: the picture differs from one without tips, inside the area.
+    const QImage without = drawList(head, rows(), 500, look);
+    QCOMPARE(with.size(), without.size());
+    auto differs = [&](const QRect &area) {
+        for (int y = area.top(); y <= area.bottom(); ++y) {
+            for (int x = area.left(); x <= area.right(); ++x) {
+                if (with.pixel(x, y) != without.pixel(x, y))
+                    return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(differs(tips.at(0).area) && differs(tips.at(1).area));
+    // Nobody asked where they are: it is drawn all the same.
+    QCOMPARE(drawList(head, list, 500, look), with);
+    // As a message's "tips".
+    const QJsonArray json = tipsJson(tips);
+    QCOMPARE(int(json.size()), 2);
+    QCOMPARE(json.at(0).toObject().value("text").toString(), QStringLiteral("The first\nrow"));
+    QCOMPARE(json.at(0).toObject().value("x").toInt(), tips.at(0).area.x());
+    QCOMPARE(json.at(0).toObject().value("height").toInt(), tips.at(0).area.height());
 }
 
 int main(int argc, char **argv)

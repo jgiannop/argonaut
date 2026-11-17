@@ -616,7 +616,10 @@ again to measure again), and to open folders in the tree or delete from it you u
 pane shows the services that are running now, the one using the most memory first: the system's and those of your
 own session (marked <i>user</i>), with what each is and a bar against the biggest. It updates every three
 seconds until you select a file or close the pane. It only shows: nothing is started or stopped. A service's memory
-is that of all its programs together, as systemd counts it.</p>
+is that of all its programs together, as systemd counts it. Beside each name is an <b>ⓘ</b>: rest the mouse on it,
+or click it, and a tooltip says what the service is (its description, in systemd's own words), its full unit name
+and whether it is the system's or your session's. That is where to look when the pane is too narrow to show the
+description after the name.</p>
 <p><b>Running Processes</b>: choose <b>View → Running Processes</b>, or find it in the command palette. The preview
 pane lists every process that is running now, the one using the most memory first, with how it was
 started, its process ID in a column of its own and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
