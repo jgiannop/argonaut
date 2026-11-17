@@ -40,8 +40,69 @@ bool isUnsafePath(const QString &path)
     return parts.contains(QStringLiteral(".."));
 }
 
+// Paths to and from libarchive. Its plain functions take a path in the
+// system's own encoding: on Unix that is what file names are in; on Windows
+// it is a code page that can't spell every name, so the wide ones are used.
+#if defined(Q_OS_WIN)
+int openForReading(struct archive *a, const QString &path, size_t block)
+{
+    return archive_read_open_filename_w(a, QDir::toNativeSeparators(path).toStdWString().c_str(), block);
+}
+int openForWriting(struct archive *a, const QString &path)
+{
+    return archive_write_open_filename_w(a, QDir::toNativeSeparators(path).toStdWString().c_str());
+}
+void setEntryPath(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_copy_pathname_w(entry, QDir::toNativeSeparators(path).toStdWString().c_str());
+}
+void setEntryHardlink(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_copy_hardlink_w(entry, QDir::toNativeSeparators(path).toStdWString().c_str());
+}
+void setEntrySource(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_copy_sourcepath_w(entry, QDir::toNativeSeparators(path).toStdWString().c_str());
+}
+QString entryHardlink(struct archive_entry *entry)
+{
+    const wchar_t *wide = archive_entry_hardlink_w(entry);
+    return wide ? QString::fromWCharArray(wide) : QString();
+}
+#else
+int openForReading(struct archive *a, const QString &path, size_t block)
+{
+    return archive_read_open_filename(a, QFile::encodeName(path).constData(), block);
+}
+int openForWriting(struct archive *a, const QString &path)
+{
+    return archive_write_open_filename(a, QFile::encodeName(path).constData());
+}
+void setEntryPath(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_set_pathname(entry, QFile::encodeName(path).constData());
+}
+void setEntryHardlink(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_set_hardlink(entry, QFile::encodeName(path).constData());
+}
+void setEntrySource(struct archive_entry *entry, const QString &path)
+{
+    archive_entry_copy_sourcepath(entry, QFile::encodeName(path).constData());
+}
+QString entryHardlink(struct archive_entry *entry)
+{
+    const char *link = archive_entry_hardlink(entry);
+    return link ? QString::fromLocal8Bit(link) : QString();
+}
+#endif
+
 QString entryPath(struct archive_entry *entry)
 {
+#if defined(Q_OS_WIN)
+    if (const wchar_t *wide = archive_entry_pathname_w(entry))
+        return QString::fromWCharArray(wide);
+#endif
     if (const char *utf8 = archive_entry_pathname_utf8(entry))
         return QString::fromUtf8(utf8);
     if (const char *local = archive_entry_pathname(entry))
@@ -76,7 +137,7 @@ bool FileJob::listArchive(const QString &archive, int max, QList<ArchiveEntry> *
     archive_read_support_filter_all(in);
     archive_read_support_format_all(in);
     archive_read_support_format_raw(in);
-    if (archive_read_open_filename(in, QFile::encodeName(archive).constData(), Chunk) != ARCHIVE_OK) {
+    if (openForReading(in, archive, Chunk) != ARCHIVE_OK) {
         if (error)
             *error = QString::fromLocal8Bit(archive_error_string(in));
         archive_read_free(in);
@@ -184,7 +245,7 @@ void FileJob::runExtract()
         bool failed = false;
         int skipped = 0;
         qint64 lastPosition = 0;
-        if (archive_read_open_filename(in, QFile::encodeName(t.source).constData(), Chunk) != ARCHIVE_OK) {
+        if (openForReading(in, t.source, Chunk) != ARCHIVE_OK) {
             addError(tr("“%1” isn't an archive Argonaut can open.").arg(archiveInfo.fileName()));
             failed = true;
         }
@@ -207,15 +268,15 @@ void FileJob::runExtract()
                 archive_read_data_skip(in);
                 continue;
             }
-            archive_entry_set_pathname(entry, QFile::encodeName(temp + QLatin1Char('/') + path).constData());
-            if (const char *link = archive_entry_hardlink(entry)) {
-                const QString target = QString::fromLocal8Bit(link);
+            const QString target = entryHardlink(entry); // read before the entry's paths are written
+            setEntryPath(entry, temp + QLatin1Char('/') + path);
+            if (!target.isEmpty()) {
                 if (isUnsafePath(target)) {
                     ++skipped;
                     archive_read_data_skip(in);
                     continue;
                 }
-                archive_entry_set_hardlink(entry, QFile::encodeName(temp + QLatin1Char('/') + target).constData());
+                setEntryHardlink(entry, temp + QLatin1Char('/') + target);
             }
             if (archive_write_header(out, entry) < ARCHIVE_WARN) {
                 ++skipped;
@@ -337,7 +398,7 @@ void FileJob::runCompress()
         archive_write_set_format_7zip(out);
         break;
     }
-    if (archive_write_open_filename(out, QFile::encodeName(part).constData()) != ARCHIVE_OK) {
+    if (openForWriting(out, part) != ARCHIVE_OK) {
         addError(tr("Couldn't create “%1”: %2")
                      .arg(QFileInfo(target).fileName(), QString::fromLocal8Bit(archive_error_string(out))));
         archive_write_free(out);
@@ -354,7 +415,7 @@ void FileJob::runCompress()
         if (!ok || isCanceled())
             return;
         struct archive_entry *entry = archive_entry_new();
-        archive_entry_copy_sourcepath(entry, QFile::encodeName(path).constData());
+        setEntrySource(entry, path);
         archive_read_disk_entry_from_file(disk, entry, -1, nullptr);
         archive_entry_update_pathname_utf8(entry, inside.toUtf8().constData());
         if (archive_write_header(out, entry) < ARCHIVE_WARN) {

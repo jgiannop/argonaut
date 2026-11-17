@@ -24,8 +24,28 @@ jobs:
       - name: The compiler's environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      # libarchive, for Compress / Extract: built by vcpkg (which the machine
+      # has) and kept between runs, since building it takes minutes.
+      - name: Keep vcpkg's built libraries
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libarchive-x64-windows-v1
+
+      - name: Install libarchive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
+          $env:VCPKG_DEFAULT_BINARY_CACHE = "$PWD\vcpkg-cache"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libarchive[core,bzip2,lzma,lz4,zstd]:x64-windows"
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error title=build: libarchive::vcpkg could not install libarchive"; exit 1 }
+
       - name: Configure
-        run: cmake --preset windows
+        shell: pwsh
+        run: |
+          cmake --preset windows "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | Tee-Object -FilePath configure.log
+          python .github/scripts/errors_as_notes.py configure.log "build: configuring" "CMake Error|Compress / Extract"
+          exit 0
 
       # Everything is built even after an error, so one run shows all there is to fix.
       - name: Build
@@ -43,6 +63,7 @@ jobs:
         run: |
           mkdir dist
           copy build\windows\argonaut.exe dist\
+          copy build\windows\*.dll dist\
           windeployqt --release --no-translations --no-compiler-runtime dist\argonaut.exe
 
       # Microsoft's C++ runtime (VCRUNTIME140.dll and the others), beside the
@@ -68,7 +89,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON 2>&1 | Tee-Object -FilePath tests-configure.log
+          cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | Tee-Object -FilePath tests-configure.log
           cmake --build build/windows-tests -- -k 0 2>&1 | Tee-Object -FilePath tests-build.log
           ctest --test-dir build/windows-tests --timeout 300 --output-on-failure 2>&1 | Tee-Object -FilePath tests-run.log
           python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"
