@@ -1241,6 +1241,20 @@ void Host::searchResult(const QString &extension, const QString &id, const QStri
     }
 }
 
+void Host::resultAction(const QString &extension, const QString &id, const QString &action, const QString &text)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension || !ext->resultsShown.contains(id))
+            continue; // only for what is on screen
+        ext->userActed = QDateTime::currentMSecsSinceEpoch();
+        ext->lastActive = ext->userActed;
+        send(ext, {{QStringLiteral("type"), QStringLiteral("action")},
+                   {QStringLiteral("id"), id},
+                   {QStringLiteral("action"), action.left(64)},
+                   {QStringLiteral("text"), text.left(MaxActionText)}});
+    }
+}
+
 void Host::send(Running *ext, const QJsonObject &message)
 {
     if (!ext->process)
@@ -1493,6 +1507,19 @@ void Host::hearShow(Running *ext, const QJsonObject &message)
     if (!content.resultId.isEmpty() && message.contains(QLatin1String("search"))) {
         content.searchable = true;
         content.searchHint = tidy(message.value(QLatin1String("search")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+    }
+    content.under = message.value(QLatin1String("under")).toString().left(64);
+    // One thing to do with the result: a button under it, with a line to type beside it if it wants one.
+    if (!content.resultId.isEmpty() && message.value(QLatin1String("action")).isObject()) {
+        const QJsonObject action = message.value(QLatin1String("action")).toObject();
+        const QString id = action.value(QLatin1String("id")).toString().left(64);
+        const QString label = tidy(action.value(QLatin1String("label")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' ')).trimmed();
+        if (!id.isEmpty() && !label.isEmpty()) {
+            content.actionId = id;
+            content.actionLabel = label;
+            content.actionInput = action.contains(QLatin1String("input"));
+            content.actionHint = tidy(action.value(QLatin1String("input")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        }
     }
     if (content.kind != PreviewReply::None)
         emit showRequested(ext->manifest.name,

@@ -1354,6 +1354,13 @@ void App::mouseInPreview(const Mouse &mouse)
         const int most = qMax(0, m_previewTotal - m_previewShown);
         if (mouse.x == m_previewX + m_previewWidth - 1 && most > 0 && mouse.y >= m_previewY && mouse.y < m_previewY + m_previewShown) {
             scrollPreview(m_previewShown > 1 ? int(qint64(mouse.y - m_previewY) * most / (m_previewShown - 1)) : 0);
+        } else if (mouse.y == m_previewActionY && m_previewActionY >= 0) {
+            // The line that offers what can be done with the result: a click does it.
+            m_inShell = false;
+            m_inSidebar = false;
+            m_inPreview = true;
+            runResultAction();
+            emit changed();
         } else {
             m_inShell = false;
             m_inSidebar = false;
@@ -3100,7 +3107,9 @@ void App::drawHelp(Screen &screen)
         "  Enter, Right                      open the folder, or the file with its app",
         "  F3                                the preview at the right: what is in the file under the cursor",
         "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
-        "                                    in a list of services or processes, / searches it)",
+        "                                    in a list of services or processes, / searches it; where the preview",
+        "                                    offers something more, such as Analyze with Claude under the services,",
+        "                                    a lit line at its bottom says so: Enter there, or a click on it)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
         "                                    (from the files, F12 also brings the shell to the folder you are in;",
         "                                    in it: Ctrl+Up brings the files to its folder, exit closes it;",

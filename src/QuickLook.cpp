@@ -6,6 +6,8 @@
 #include "Theme.h"
 #include "Thumbnailer.h"
 
+#include <QSettings>
+#include <QSplitter>
 #include <QApplication>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -222,7 +224,91 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll), static_cast<QWidget *>(m_pdf), static_cast<QWidget *>(m_plan),
                           static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
-    layout->addWidget(m_pages, 1);
+    // Under the pages, a second part for what belongs to the result above
+    // it; only there when it has something to show.
+    m_split = new QSplitter(Qt::Vertical, this);
+    m_split->setChildrenCollapsible(false);
+    m_split->setHandleWidth(7);
+    m_split->addWidget(m_pages);
+    m_under = new QWidget(m_split);
+    auto *under = new QVBoxLayout(m_under);
+    under->setContentsMargins(0, 4, 0, 0);
+    under->setSpacing(6);
+    auto *underTop = new QHBoxLayout;
+    m_underTitle = new QLabel(m_under);
+    m_underTitle->setObjectName("qlTitle");
+    m_underTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *underClose = new QToolButton(m_under);
+    underClose->setObjectName("headerButton");
+    underClose->setText(QStringLiteral("✕"));
+    underClose->setAutoRaise(true);
+    underClose->setFocusPolicy(Qt::NoFocus);
+    underClose->setToolTip(tr("Close this part"));
+    connect(underClose, &QToolButton::clicked, this, &QuickLook::closeUnder);
+    underTop->addWidget(m_underTitle, 1);
+    underTop->addWidget(underClose);
+    under->addLayout(underTop);
+    m_underText = new RichView(m_under);
+    m_underText->setObjectName("qlText");
+    m_underText->setFocusPolicy(Qt::NoFocus);
+    m_underText->setOpenLinks(false);
+    m_underText->setOpenExternalLinks(false);
+    m_underText->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    under->addWidget(m_underText, 1);
+    m_underWait = new QWidget(m_under);
+    auto *wait = new QVBoxLayout(m_underWait);
+    wait->addStretch();
+    m_underWaitText = new QLabel(m_underWait);
+    m_underWaitText->setObjectName("qlDetails");
+    m_underWaitText->setAlignment(Qt::AlignCenter);
+    m_underWaitText->setWordWrap(true);
+    wait->addWidget(m_underWaitText);
+    m_underStop = new QPushButton(tr("Stop Waiting"), m_underWait);
+    m_underStop->setObjectName("prefButton");
+    m_underStop->setFocusPolicy(Qt::NoFocus);
+    wait->addSpacing(10);
+    wait->addWidget(m_underStop, 0, Qt::AlignHCenter);
+    wait->addStretch();
+    connect(m_underStop, &QPushButton::clicked, this, [this] {
+        if (!m_underWaitFor.isEmpty())
+            emit workingStopRequested(m_underWaitFor);
+    });
+    under->addWidget(m_underWait, 1);
+    m_underNote = new QLabel(m_under);
+    m_underNote->setObjectName("qlDetails");
+    m_underNote->setWordWrap(true);
+    under->addWidget(m_underNote);
+    m_split->addWidget(m_under);
+    m_split->setStretchFactor(0, 1);
+    m_split->setStretchFactor(1, 1);
+    m_under->hide();
+    // Where the divider was left is remembered, as a share of the height.
+    connect(m_split, &QSplitter::splitterMoved, this, [this] {
+        const QList<int> sizes = m_split->sizes();
+        if (sizes.size() == 2 && sizes.at(0) + sizes.at(1) > 0 && !m_under->isHidden())
+            QSettings().setValue(QStringLiteral("window/previewUnderShare"), double(sizes.at(1)) / (sizes.at(0) + sizes.at(1)));
+    });
+    layout->addWidget(m_split, 1);
+
+    // What can be done with a result an extension shows: its button, at the
+    // right, and what is typed for it at its left.
+    m_actionRow = new QWidget(this);
+    auto *action = new QHBoxLayout(m_actionRow);
+    action->setContentsMargins(0, 0, 0, 0);
+    m_actionInput = new QLineEdit(m_actionRow);
+    m_actionInput->setObjectName("searchEdit");
+    m_actionInput->setFocusPolicy(Qt::ClickFocus); // the pane itself never takes the keys
+    m_actionInput->setMaxLength(Extensions::Host::MaxActionText);
+    m_actionInput->setFixedHeight(32);
+    m_actionInput->installEventFilter(this);
+    m_actionButton = new QPushButton(m_actionRow);
+    m_actionButton->setObjectName("prefButton");
+    m_actionButton->setFocusPolicy(Qt::NoFocus);
+    connect(m_actionButton, &QPushButton::clicked, this, &QuickLook::runAction);
+    action->addWidget(m_actionInput, 1);
+    action->addWidget(m_actionButton);
+    m_actionRow->hide();
+    layout->addWidget(m_actionRow);
 
     auto *bottom = new QHBoxLayout;
     m_note = new QLabel(this);
@@ -259,10 +345,105 @@ QSize QuickLook::pictureBox() const
 
 // Something an extension waits for (Claude's answer): the pane says so,
 // with dots that move and the seconds, so the wait is seen to go on.
+// The lower part comes into view, at the share of the height it had last (half, the first time).
+void QuickLook::openUnder()
+{
+    if (!m_under->isHidden())
+        return;
+    m_under->show();
+    const double share = qBound(0.15, QSettings().value(QStringLiteral("window/previewUnderShare"), 0.5).toDouble(), 0.85);
+    const int total = qMax(200, m_split->height());
+    m_split->setSizes({int(total * (1 - share)), int(total * share)});
+}
+
+// Text that belongs to the named result on screen (content.under is its
+// id): shown under it, and the result stays. False: that result isn't on
+// screen (or it isn't text), so it is shown as a result of its own.
+bool QuickLook::showUnder(const QString &title, const Extensions::PreviewReply &content)
+{
+    using Extensions::PreviewReply;
+    if (content.under.isEmpty() || m_resultId.isEmpty() || !isVisible() || content.under != m_resultId || content.extension != m_resultExtension
+        || isHeld())
+        return false;
+    switch (content.kind) {
+    case PreviewReply::Markdown: m_underText->setMarkdown(content.text); break;
+    case PreviewReply::Html: m_underText->setHtml(content.text); break;
+    case PreviewReply::Text: m_underText->setPlainText(content.text); break;
+    default: return false;
+    }
+    if (content.kind != PreviewReply::Text)
+        RichTextStyle::apply(m_underText->document(), currentTheme());
+    m_underText->moveCursor(QTextCursor::Start);
+    // What was waited for is here.
+    m_underWaitFor.clear();
+    if (m_workingFor.isEmpty())
+        m_workingTimer->stop();
+    m_underWait->hide();
+    m_underText->show();
+    m_underHasText = true;
+    m_underTitle->setText(title);
+    m_underNote->setText(content.note);
+    m_underNote->setVisible(!content.note.isEmpty());
+    openUnder();
+    return true;
+}
+
+void QuickLook::closeUnder()
+{
+    m_underWaitFor.clear();
+    if (m_workingFor.isEmpty())
+        m_workingTimer->stop();
+    m_underHasText = false;
+    m_underText->clear();
+    m_underNote->clear();
+    m_under->hide();
+}
+
+bool QuickLook::isUnderShown() const
+{
+    return !m_under->isHidden();
+}
+
+QString QuickLook::underTitle() const
+{
+    return isUnderShown() ? m_underTitle->text() : QString();
+}
+
+QString QuickLook::underText() const
+{
+    return isUnderShown() && m_underHasText && m_underWaitFor.isEmpty() ? m_underText->toPlainText() : QString(); // what is in sight
+}
+
+QString QuickLook::underNote() const
+{
+    return isUnderShown() ? m_underNote->text() : QString();
+}
+
+QString QuickLook::underWaitingText() const
+{
+    return isUnderShown() && !m_underWaitFor.isEmpty() ? m_underWaitText->text() : QString();
+}
+
 void QuickLook::showWorking(const QString &extension, const QString &title, const QString &text)
 {
     if (hasPlan())
         return;
+    // The extension's own result is on screen (the list Claude is asked
+    // about): it stays, and the waiting is said in the part under it.
+    if (!m_resultId.isEmpty() && m_resultExtension == extension && isVisible() && m_workingFor.isEmpty()) {
+        if (m_underWaitFor != extension)
+            m_workingSince.start();
+        m_underWaitFor = extension;
+        m_workingText = text;
+        m_underTitle->setText(title);
+        m_underText->hide();
+        m_underNote->hide();
+        m_underWait->show();
+        openUnder();
+        m_workingTimer->start();
+        updateWorking();
+        return;
+    }
     if (m_workingFor != extension) {
         endWorking(m_workingFor);
         clear();
@@ -284,6 +465,20 @@ void QuickLook::showWorking(const QString &extension, const QString &title, cons
 
 void QuickLook::endWorking(const QString &extension)
 {
+    if (!m_underWaitFor.isEmpty() && m_underWaitFor == extension) {
+        // Said under a result: that line goes; an answer shown before it comes back, else the part closes.
+        m_underWaitFor.clear();
+        if (m_workingFor.isEmpty())
+            m_workingTimer->stop();
+        m_underWait->hide();
+        if (m_underHasText) {
+            m_underText->show();
+            m_underNote->setVisible(!m_underNote->text().isEmpty());
+        } else {
+            m_under->hide();
+        }
+        return;
+    }
     if (m_workingFor.isEmpty() || m_workingFor != extension)
         return;
     forgetWorking();
@@ -299,6 +494,14 @@ void QuickLook::forgetWorking()
 
 void QuickLook::updateWorking()
 {
+    if (!m_underWaitFor.isEmpty()) {
+        const qint64 waited = m_workingSince.elapsed() / 1000;
+        QString line = m_workingText + QString(1 + int(m_workingSince.elapsed() / 400) % 3, QLatin1Char('.'));
+        if (waited >= 3)
+            line += QLatin1Char('\n') + tr("%1 seconds so far. It can take a minute.").arg(waited);
+        m_underWaitText->setText(line);
+        return;
+    }
     if (m_workingFor.isEmpty())
         return;
     const qint64 seconds = m_workingSince.elapsed() / 1000;
@@ -517,6 +720,8 @@ bool QuickLook::applyExtension(const Extensions::PreviewReply &reply)
 
 bool QuickLook::showResult(const QString &title, const QString &details, const Extensions::PreviewReply &content)
 {
+    if (showUnder(title, content))
+        return true; // it belongs to the result on screen: under it, and that one stays
     if (isHeld())
         return false; // not over a plan that waits for its answer, or over "working"
     const bool same = !content.resultId.isEmpty() && isVisible() && content.resultId == m_resultId
@@ -524,7 +729,7 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
     if (same) {
         // The result on screen, made again: replaced where it is.
         m_title->setText(title);
-        applyExtension(content);
+        applyExtension(content); // (its search field and its button stay as they are: said when it came)
         return true;
     }
     if (content.update)
@@ -543,6 +748,7 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
         reportResult();
         if (content.searchable)
             setSearchShown(true, content.searchHint);
+        setActionShown(content);
     }
     return true;
 }
@@ -590,8 +796,58 @@ void QuickLook::setSearchShown(bool on, const QString &hint)
     m_search->show();
 }
 
+// A result can offer one thing to do with it: its button is shown under
+// it, with a field for what goes with it. Made again (an update), what is
+// being typed stays.
+void QuickLook::setActionShown(const Extensions::PreviewReply &content)
+{
+    if (content.actionId.isEmpty() || content.resultId.isEmpty()) {
+        const bool had = m_actionInput->hasFocus();
+        m_actionId.clear();
+        m_actionInput->clear();
+        m_actionRow->hide();
+        if (had)
+            emit keysBackRequested();
+        return;
+    }
+    if (m_actionId != content.actionId || m_actionRow->isHidden())
+        m_actionInput->clear();
+    m_actionId = content.actionId;
+    m_actionButton->setText(content.actionLabel);
+    m_actionInput->setVisible(content.actionInput);
+    m_actionInput->setPlaceholderText(content.actionHint);
+    m_actionRow->show();
+}
+
+bool QuickLook::hasAction() const
+{
+    return !m_actionId.isEmpty() && !m_actionRow->isHidden();
+}
+
+// The button (or Enter in its field): the result's extension is told, with what was typed.
+void QuickLook::runAction()
+{
+    if (m_actionId.isEmpty() || m_resultId.isEmpty())
+        return;
+    const QString text = m_actionInput->isVisibleTo(this) ? m_actionInput->text().trimmed() : QString();
+    if (m_actionInput->hasFocus())
+        emit keysBackRequested();
+    Extensions::Host::instance()->resultAction(m_resultExtension, m_resultId, m_actionId, text);
+}
+
 bool QuickLook::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_actionInput && event->type() == QEvent::KeyPress) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+            runAction();
+            return true;
+        }
+        if (key == Qt::Key_Escape) {
+            emit keysBackRequested();
+            return true;
+        }
+    }
     if (watched == m_search && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Escape && !m_search->text().isEmpty()) {
@@ -609,6 +865,8 @@ bool QuickLook::eventFilter(QObject *watched, QEvent *event)
 void QuickLook::closeResult()
 {
     setSearchShown(false);
+    setActionShown({});
+    closeUnder(); // what was said about it goes with it
     if (m_resultId.isEmpty())
         return;
     m_resultTimer->stop();

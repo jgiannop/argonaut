@@ -386,6 +386,11 @@ private:
     bool m_resultShown = false;  // a result (named or not) has the pane
     bool m_resultSearchable = false; // its extension said it can be searched: "/" in the preview asks for the text
     QString m_resultSearch, m_resultSearchHint; // what was last searched for, and what the question says
+    // What its extension offers to do with it ("Analyze with Claude"): Enter in the preview.
+    QString m_resultActionId, m_resultActionLabel, m_resultActionHint;
+    bool m_resultActionInput = false;
+    int m_previewActionY = -1;   // the screen line that offers it, from the last frame (-1: none)
+    void runResultAction();
     QSize m_resultRoom;          // the room its extension was last told of
     QStringList m_previewWrapped; // m_previewLines cut to the pane's width…
     int m_previewWrapWidth = -1;  // …which was this

@@ -128,6 +128,7 @@ private slots:
     void longPictureFromAnExtensionScrolls();
     void pictureFromAnExtensionHasTooltips();
     void htmlPageInThePreview();
+    void answerUnderAResult();
     void extensionResultCanBeSearched();
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
@@ -1951,6 +1952,117 @@ void TestMainWindow::htmlPageInThePreview()
     QVERIFY2(!shown.contains("<h1>") && !shown.contains("<b>"), qPrintable(shown)); // a page, not its source
 }
 
+// What an extension has to say about its result on screen (Claude's report
+// on the list of services) is shown in a part of the pane under it: the
+// result stays where it is. Waiting for Claude is said there too.
+void TestMainWindow::answerUnderAResult()
+{
+    const QString a = make("a.txt");
+    open(m_dir);
+    Extensions::PreviewReply list;
+    list.kind = Extensions::PreviewReply::Text;
+    list.text = "the list";
+    list.extension = "fake";
+    list.resultId = "list1";
+    list.actionId = "analyze";
+    list.actionLabel = "Analyze";
+    list.actionInput = true;
+    w->showExtensionResult("fake", "The List", list);
+    QVERIFY(w->m_quickLook && w->m_quickLook->isVisible());
+    QuickLook *pane = w->m_quickLook;
+    QCOMPARE(pane->resultId(), QStringLiteral("list1"));
+    QVERIFY(!pane->isUnderShown());
+
+    // Claude is asked for this extension: the list stays, and under it the pane says it is waiting.
+    w->showClaudeWaiting("fake", "Fake", 1);
+    QVERIFY(pane->isUnderShown());
+    QVERIFY(!pane->isWorking() && !pane->isHeld()); // the pane isn't taken
+    QCOMPARE(pane->shownText(), QStringLiteral("the list"));
+    QCOMPARE(pane->resultId(), QStringLiteral("list1"));
+    QVERIFY2(pane->underWaitingText().startsWith("Waiting for Claude's answer."), qPrintable(pane->underWaitingText()));
+    QVERIFY(pane->underText().isEmpty());
+    QVERIFY(pane->underStopButton()->isVisibleTo(pane));
+    QVERIFY(pane->hasAction()); // the button and its field are still there
+    QTRY_VERIFY_WITH_TIMEOUT(pane->underWaitingText().contains("seconds so far"), 6000);
+    // The list is made again meanwhile (it does that every few seconds): nothing changes below.
+    Extensions::PreviewReply again = list;
+    again.update = true;
+    again.text = "the list, again";
+    w->showExtensionResult("fake", "The List", again);
+    QCOMPARE(pane->shownText(), QStringLiteral("the list, again"));
+    QVERIFY(!pane->underWaitingText().isEmpty());
+    // Stop Waiting asks for that.
+    QSignalSpy stop(pane, &QuickLook::workingStopRequested);
+    pane->underStopButton()->click();
+    QCOMPARE(stop.size(), 1);
+    QCOMPARE(stop.first().at(0).toString(), QStringLiteral("fake"));
+    // Nothing came: the lower part closes, the list is as it was.
+    w->showClaudeWaiting("fake", "Fake", 0);
+    QVERIFY(!pane->isUnderShown());
+    QCOMPARE(pane->shownText(), QStringLiteral("the list, again"));
+
+    // The answer: under the list, as a page; the list stays.
+    w->showClaudeWaiting("fake", "Fake", 1);
+    w->showClaudeWaiting("fake", "Fake", 0);
+    Extensions::PreviewReply report;
+    report.kind = Extensions::PreviewReply::Markdown;
+    report.text = "# Report\n\nAll **fine**. ![x](file:///etc/passwd)";
+    report.extension = "fake";
+    report.resultId = "report1";
+    report.under = "list1";
+    report.note = "this cost about $0.020";
+    report.actionId = "back"; // only for where it is shown on its own
+    report.actionLabel = "Back";
+    w->showExtensionResult("fake", "Claude's Report", report);
+    QVERIFY(pane->isUnderShown());
+    QCOMPARE(pane->underTitle(), QStringLiteral("Claude's Report"));
+    QVERIFY2(pane->underText().contains("Report") && pane->underText().contains("All fine."), qPrintable(pane->underText()));
+    QVERIFY(!pane->underText().contains("**") && !pane->underText().contains("# "));
+    QCOMPARE(pane->underNote(), QStringLiteral("this cost about $0.020"));
+    QVERIFY(pane->underWaitingText().isEmpty());
+    QCOMPARE(pane->resultId(), QStringLiteral("list1")); // the list is still the result
+    QCOMPARE(pane->shownText(), QStringLiteral("the list, again"));
+    QCOMPARE(pane->actionButton()->text(), QStringLiteral("Analyze")); // and its button, not the report's
+    if (qEnvironmentVariableIsSet("ARGONAUT_TEST_GRAB")) { // to look at it
+        w->resize(1000, 760);
+        QTest::qWait(300);
+        w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
+    }
+    // Asked again: the waiting line takes the lower part; an error brings the earlier answer back.
+    w->showClaudeWaiting("fake", "Fake", 1);
+    QVERIFY(!pane->underWaitingText().isEmpty() && pane->underText().isEmpty());
+    w->showClaudeWaiting("fake", "Fake", 0);
+    QVERIFY2(pane->underText().contains("All fine."), qPrintable(pane->underText()));
+    // Its ✕ closes that part only.
+    pane->closeUnder();
+    QVERIFY(!pane->isUnderShown());
+    QCOMPARE(pane->resultId(), QStringLiteral("list1"));
+
+    // Another extension's waiting isn't about this list: it takes the pane, as before.
+    w->showClaudeWaiting("another", "Another", 1);
+    QVERIFY(pane->isWorking() && !pane->isUnderShown());
+    w->showClaudeWaiting("another", "Another", 0);
+
+    // What is meant for a result that isn't on screen is a result of its own.
+    w->showExtensionResult("fake", "The List", list);
+    report.under = "some-other-list";
+    w->showExtensionResult("fake", "Claude's Report", report);
+    QVERIFY(!pane->isUnderShown());
+    QCOMPARE(pane->resultId(), QStringLiteral("report1"));
+    QVERIFY(pane->shownText().contains("All fine."));
+    QCOMPARE(pane->actionButton()->text(), QStringLiteral("Back")); // with its own way back
+    // Going to a file takes everything along.
+    w->showExtensionResult("fake", "The List", list);
+    report.under = "list1";
+    w->showExtensionResult("fake", "Claude's Report", report);
+    QVERIFY(pane->isUnderShown());
+    w->m_pane->view->setCurrentIndex(QModelIndex());
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTRY_VERIFY(pane->resultId().isEmpty());
+    QVERIFY(!pane->isUnderShown() && pane->underText().isEmpty());
+    w->hideQuickLook();
+}
+
 // A result whose extension says it can be searched gets a field over it:
 // what is typed there goes to the extension (which makes the result again),
 // Esc empties it and then gives the keys back, and it goes with the result.
@@ -1988,10 +2100,46 @@ void TestMainWindow::extensionResultCanBeSearched()
         QTest::qWait(200);
         w->grab().save(qEnvironmentVariable("ARGONAUT_TEST_GRAB"));
     }
+    // Under it, what the extension offers to do with it: a button, and a line to type beside it.
+    // They stay while the result is made again (the search just did that).
+    {
+        QuickLook *pane = w->m_quickLook;
+        QVERIFY(pane->hasAction());
+        QCOMPARE(pane->actionButton()->text(), QStringLiteral("Do It")); // its texts are data: one line
+        QVERIFY(pane->actionInput()->isVisibleTo(pane));
+        QCOMPARE(pane->actionInput()->placeholderText(), QStringLiteral("Say what"));
+        QSignalSpy said(host, &Extensions::Host::message);
+        auto heard = [&](const QString &part) {
+            for (const QList<QVariant> &one : said) {
+                if (one.at(1).toString().contains(part))
+                    return true;
+            }
+            return false;
+        };
+        // The button with nothing typed, then with something; Enter in the field is the button too.
+        pane->actionButton()->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty() && said.last().at(1).toString() == "action act on live1:", 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(pane->shownText(), QStringLiteral("acted: "), 10000);
+        QTest::keyClicks(pane->actionInput(), "  only the bus  ");
+        pane->actionButton()->click();
+        QTRY_VERIFY_WITH_TIMEOUT(heard("action act on live1: only the bus"), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(pane->shownText(), QStringLiteral("acted: only the bus"), 10000);
+        QVERIFY(pane->hasAction()); // made again: still there, with what was typed
+        QCOMPARE(pane->actionInput()->text(), QStringLiteral("  only the bus  "));
+        pane->actionInput()->clear();
+        QSignalSpy keysBack(pane, &QuickLook::keysBackRequested);
+        QTest::keyClicks(pane->actionInput(), "by enter");
+        QTest::keyClick(pane->actionInput(), Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(heard("action act on live1: by enter"), 10000);
+        QTest::keyClick(pane->actionInput(), Qt::Key_Escape); // the keys go back to the files
+        QVERIFY(keysBack.size() >= 1);
+    }
     // Going to a file takes the pane: the field goes with the result.
     w->m_pane->view->setCurrentIndex(QModelIndex());
     w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
     QTRY_VERIFY(w->m_quickLook->resultId().isEmpty());
+    QVERIFY(!w->m_quickLook->hasAction()); // and so does the button
+    QVERIFY(w->m_quickLook->actionInput()->text().isEmpty());
     QVERIFY(w->m_quickLook->hasOpenButton()); // a file again: it can be opened
     QVERIFY(!field->isVisibleTo(w->m_quickLook));
     QVERIFY(field->text().isEmpty());

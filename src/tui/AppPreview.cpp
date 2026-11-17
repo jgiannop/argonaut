@@ -369,6 +369,11 @@ void App::showResult(const QString &title, const Extensions::PreviewReply &conte
     if (!same) { // said when the result comes; making it again doesn't take the search away
         m_resultSearchable = content.searchable && !content.resultId.isEmpty();
         m_resultSearchHint = content.searchHint;
+        // What can be done with it (the window's button under the result): Enter here.
+        m_resultActionId = content.resultId.isEmpty() ? QString() : content.actionId;
+        m_resultActionLabel = content.actionLabel;
+        m_resultActionHint = content.actionHint;
+        m_resultActionInput = content.actionInput;
     }
     emit changed();
 }
@@ -387,6 +392,28 @@ void App::closeResult()
     m_resultRoom = QSize();
     m_resultSearchable = false;
     m_resultSearch.clear();
+    m_resultActionId.clear();
+}
+
+// Enter in the preview of a result that offers something to do with it: a
+// line may be typed to go with it (nothing typed is an answer too), then its
+// extension is told, as the window's button does.
+void App::runResultAction()
+{
+    if (!m_resultShown || m_resultActionId.isEmpty())
+        return;
+    const QString extension = m_resultExtension, id = m_resultId, action = m_resultActionId;
+    auto run = [this, extension, id, action](const QString &text) {
+        if (!m_resultShown || m_resultExtension != extension || m_resultId != id)
+            return; // it went while the text was typed
+        Extensions::Host::instance()->resultAction(extension, id, action, text.trimmed());
+    };
+    if (!m_resultActionInput) {
+        run(QString());
+        return;
+    }
+    prompt(QStringLiteral("%1 — %2").arg(m_resultActionLabel, m_resultActionHint.isEmpty() ? QStringLiteral("anything to add?") : m_resultActionHint) + QLatin1Char(':'),
+           QString(), -1, run, true);
 }
 
 // The named result's extension is told the room there is, in characters
@@ -444,7 +471,22 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
     const Style heading{m_inPreview ? Ink::Accent : Ink::Normal, Paper::Normal, true};
     screen.put(x + 2, top, Screen::elided(m_previewTitle, inner), heading);
     screen.put(x + 2, top + 1, Screen::elided(m_previewLoading ? QStringLiteral("Loading…") : m_previewInfo, inner, false), kDim);
-    const int rows = qMax(1, height - 4); // name, details, a gap; a line at the bottom
+    // A result that offers something to do with it (Analyze with Claude):
+    // a line of its own says so, above the last line, where it can't be
+    // missed or cut off. With the keys here it is lit and says "Enter";
+    // from the files it says how to get here. A click on it does it.
+    const bool offer = m_resultShown && !m_resultActionId.isEmpty() && height >= 9;
+    m_previewActionY = -1;
+    if (offer) {
+        m_previewActionY = top + height - 2;
+        const Style chip{Ink::Normal, m_inPreview ? Paper::Cursor : Paper::Bar, true};
+        const QString key = m_inPreview ? QStringLiteral(" Enter ") : QStringLiteral(" Tab, then Enter ");
+        int at = x + 2;
+        at += screen.put(at, m_previewActionY, key, chip, inner);
+        screen.put(at + 1, m_previewActionY, m_resultActionLabel, {m_inPreview ? Ink::Accent : Ink::Dim, Paper::Normal, m_inPreview},
+                   qMax(0, inner - (at + 1 - (x + 2))));
+    }
+    const int rows = qMax(1, height - 4 - (offer ? 2 : 0)); // name, details, a gap; a line at the bottom (and the offer's, with a gap)
     const int contentY = top + 3;
     m_previewY = contentY;
     m_previewShown = rows;
@@ -527,10 +569,16 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
                        {on ? (m_inPreview ? Ink::Accent : Ink::Normal) : Ink::Dim, Paper::Normal, false});
         }
         screen.put(x + 2, top + height - 1, QStringLiteral("lines %1–%2 of %3").arg(m_previewTop + 1).arg(qMin(count, m_previewTop + rows)).arg(count)
-                                                + (m_resultShown && m_resultSearchable ? QStringLiteral(" · / search") : QString()),
+                                                + (m_resultShown && m_resultSearchable ? QStringLiteral(" · / search") : QString())
+                                                + (m_resultShown && !m_resultActionId.isEmpty() && !offer ? QStringLiteral(" · Enter: ") + m_resultActionLabel : QString()),
                    kDim, inner);
-    } else if (m_resultShown && m_resultSearchable) {
-        screen.put(x + 2, top + height - 1, QStringLiteral("/ search"), kDim, inner);
+    } else if (m_resultShown && (m_resultSearchable || (!m_resultActionId.isEmpty() && !offer))) {
+        QStringList hints;
+        if (m_resultSearchable)
+            hints << QStringLiteral("/ search");
+        if (!m_resultActionId.isEmpty() && !offer) // (a pane too low for the line of its own)
+            hints << QStringLiteral("Enter: ") + m_resultActionLabel;
+        screen.put(x + 2, top + height - 1, hints.join(QStringLiteral(" · ")), kDim, inner);
     }
 }
 
@@ -543,6 +591,12 @@ bool App::previewKey(const Key &key)
         return true;
     }
     switch (key.code) {
+    case Key::Enter:
+        if (m_resultShown && !m_resultActionId.isEmpty()) {
+            runResultAction();
+            return true;
+        }
+        break;
     case Key::Left:
     case Key::Escape:
     case Key::Backspace:
@@ -580,6 +634,7 @@ bool App::previewKey(const Key &key)
     default:
         return true;
     }
+    return true; // (Enter with nothing to do)
 }
 
 } // namespace Tui

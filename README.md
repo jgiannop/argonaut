@@ -107,9 +107,11 @@ File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose fol
 
 ## Claude and your privacy
 
-The Claude features are off until you add an API key in **Preferences → Claude** (it is stored in your desktop keyring, or read from `ANTHROPIC_API_KEY`). Nothing is sent until you start a task yourself, and you see the estimated cost first.
+The Claude features are off until you add an API key in **Preferences → Claude** (it is stored in your desktop keyring, or read from `ANTHROPIC_API_KEY`). Nothing is sent until you start a task yourself. Organize shows the estimated cost before it starts; the report on running services is a single request, and says what it cost under the report.
 
 What is sent to Anthropic's API when you organize a folder: the names, sizes, dates and types of its items (up to 500), and, only if you allow it, the beginning of some files (some text, the first two pages of a PDF, a small preview of an image). Programs are never read. **Preferences → Claude** sets the default: names only, ask before reading files (the default), or read files when needed. Requests are billed to your own Anthropic account.
+
+What is sent when you press **Analyze with Claude** under the list of running services: each service's name, description, memory, whether it is the system's or your session's, the path of the program it runs and of its unit file, and whatever you typed beside the button. A program's arguments are never sent (they can hold passwords). Claude's report is its reading of that list, not a security scan: it sees names and paths, not what the programs do.
 
 ## Building
 

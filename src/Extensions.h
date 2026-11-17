@@ -107,6 +107,19 @@ struct PreviewReply
     bool update = false;   // show: only replaces that result while it is shown; never opens the pane
     bool searchable = false; // show: a named result the user can search ("search": a field over it; what is typed goes back with searchResult)
     QString searchHint;      // show: what the empty field says ("Search services")
+    // show: a named result can offer one thing to do with it, a button under
+    // it ("Analyze with Claude"), with a line of text to go with it when
+    // `actionInput` (what the empty field says: `actionHint`). Pressed, the
+    // extension hears it (resultAction), and that counts as the user's choice.
+    // show: text that belongs to a named result of the same extension which
+    // is on screen (its id here): shown in a part of the pane under that
+    // result, which stays (Claude's report under the list of services).
+    // Where that result isn't shown, it is an ordinary result of its own.
+    QString under;
+    QString actionId;
+    QString actionLabel;
+    QString actionHint;
+    bool actionInput = false;
 };
 
 // How the window looks where a named result is shown, so a picture an
@@ -316,11 +329,16 @@ public:
     static constexpr int MaxPlanMoves = 500;
     static constexpr int MaxTips = 400;     // parts of a picture with a tooltip
     static constexpr int MaxTipText = 600;  // characters of one
+    static constexpr int MaxActionText = 1000; // characters typed beside a result's button
 
     // The user doesn't want to wait for Claude's answer any longer: the
     // extension is told its questions failed, and the answers are dropped
     // when they come. (What was already asked is still paid for.)
     void stopWaitingForClaude(const QString &extension);
+    // The button under a named result was pressed (with what was typed
+    // beside it): told to its extension, only for a result that is on screen.
+    // It is something the user chose, as a command is.
+    void resultAction(const QString &extension, const QString &id, const QString &action, const QString &text);
 
     // What Argonaut has paid for an extension's questions to Claude, in
     // dollars (kept in the settings; the Extensions window shows it).

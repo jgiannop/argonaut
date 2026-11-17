@@ -77,6 +77,19 @@ public:
     // A picture that scrolls is shown (an extension's, with "scroll"): how far it can be
     // scrolled and where it is, in pixels; -1: none is shown (tests).
     int pictureScrollRange() const;
+    // The part under a result that stays on screen (tests): whether it is
+    // there, what it says, and its waiting line and Stop Waiting button.
+    bool isUnderShown() const;
+    QString underTitle() const;
+    QString underText() const;
+    QString underNote() const;
+    QString underWaitingText() const;
+    QPushButton *underStopButton() const { return m_underStop; }
+    void closeUnder();
+    // The button under a result and the text beside it (tests).
+    QPushButton *actionButton() const { return m_actionButton; }
+    class QLineEdit *actionInput() const { return m_actionInput; }
+    bool hasAction() const;
     TipPicture *tipPicture() const { return m_scrollPicture; } // the long picture and its tooltips (tests)
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
@@ -124,6 +137,22 @@ private:
     QElapsedTimer m_workingSince;
     QTimer *m_workingTimer = nullptr;      // moves the dots and counts the seconds
     QPushButton *m_stopWaiting = nullptr;
+    // The lower part of the pane, under a named result that stays on
+    // screen: what its extension has to say about it (Claude's report on
+    // the list above), or that Claude is being asked. A divider between the
+    // two can be dragged.
+    class QSplitter *m_split = nullptr;
+    QWidget *m_under = nullptr;
+    QLabel *m_underTitle = nullptr;
+    class RichView *m_underText = nullptr;
+    QWidget *m_underWait = nullptr;
+    QLabel *m_underWaitText = nullptr;
+    QPushButton *m_underStop = nullptr;
+    QLabel *m_underNote = nullptr;
+    QString m_underWaitFor;                // the extension Claude is being asked for, said down there
+    bool m_underHasText = false;
+    bool showUnder(const QString &title, const Extensions::PreviewReply &content);
+    void openUnder();
     void updateWorking();
     void forgetWorking(); // the pane no longer says "working" (the waiting itself may go on)
     PdfView *m_pdf = nullptr;        // the PDF reader: every page, in the sandbox (PdfView)
@@ -143,6 +172,14 @@ private:
     QTimer *m_resultTimer = nullptr; // a resize is told once it has settled
     class QLineEdit *m_search = nullptr; // over a result that can be searched; what is typed goes to its extension
     QTimer *m_searchTimer = nullptr;     // …once the typing pauses
+    // Under a result that offers something to do with it ("Analyze with
+    // Claude"): a button, and a line of text to go with it when it wants one.
+    QWidget *m_actionRow = nullptr;
+    class QLineEdit *m_actionInput = nullptr;
+    QPushButton *m_actionButton = nullptr;
+    QString m_actionId;
+    void setActionShown(const Extensions::PreviewReply &content);
+    void runAction();
     void setSearchShown(bool on, const QString &hint = QString());
     QTreeWidget *m_archive = nullptr;
     QWidget *m_infoPage = nullptr;

@@ -369,6 +369,27 @@ field goes when the result goes (`"shown": false`): forget the text then.
 In the terminal interface the field is a question at the bottom, asked
 when the user presses `/` in the preview.
 
+**A button under a result.** A named result can also offer one thing to do with it: add `"action"` to the `show`, and Argonaut puts a button under the result, with a text field at its left when you give `"input"` (what the empty field says):
+
+```json
+{"type": "show", "id": "services", "title": "Running Services", "kind": "image", "image": "…", "scroll": true,
+ "action": {"id": "analyze", "label": "Analyze with Claude", "input": "Anything in particular? (optional)"}}
+```
+
+When it is pressed (or Enter is pressed in its field) you get:
+
+```json
+{"type": "action", "id": "services", "action": "analyze", "text": "only the bus service"}
+```
+
+**Text under a result.** What you have to say about a result that is on screen (a report on the list above) doesn't have to replace it: send a `show` of kind `text`, `markdown` or `html` with `"under"` set to that result's id, and Argonaut splits the pane and shows it below the result, which stays (and keeps taking your updates). Its `note` is shown under it, and the user can close that part or drag the divider. Where that result is no longer on screen, and in the terminal interface, it is shown as an ordinary result of its own, so give it an `id` and, if it helps, an `action` that leads back. While Claude is being asked for you and your result is on screen, the waiting is said in that lower part too.
+
+```json
+{"type": "show", "id": "services-report", "under": "services", "title": "Claude's Report", "kind": "markdown", "text": "…"}
+```
+
+`text` is what was typed (at most 1000 characters; empty when there is no field or nothing was typed). Like the search field, the button is said when the result first comes and stays while you send updates. Pressing it is the user's choice, as choosing a command is: it is what lets you then ask Claude, show a form or propose a plan. In the terminal interface the button is Enter in the preview, with a line to type first.
+
 ### Lists of files
 
 When your result is a set of files (the changed files of a repository,

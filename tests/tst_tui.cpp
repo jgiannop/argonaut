@@ -1720,6 +1720,55 @@ void TestTui::extensionResultInThePreview()
     QTRY_VERIFY2_WITH_TIMEOUT(!screen(120, 30).contains("searched: abc") && screen(120, 30).contains("searched:"), qPrintable(screen(120, 30)), 3000);
     keys({Key::character('/'), Key::of(Key::Escape)}); // Esc: nothing is asked
     QVERIFY(!app->isAsking());
+    // What the extension offers to do with the result (the window's button
+    // under it) is Enter in the preview: a line may be typed to go with it.
+    // A line of its own says so, lit while the keys are in the preview; from the files it says how to get there.
+    {
+        app->render(s);
+        int y = -1;
+        for (int row = 0; row < s.height(); ++row) {
+            if (s.line(row).contains(" Enter  Do It"))
+                y = row;
+        }
+        QVERIFY2(y > 0, qPrintable(s.text()));
+        const int x = int(s.line(y).indexOf(" Enter  Do It"));
+        QCOMPARE(s.at(x + 1, y).style.paper, Tui::Paper::Cursor);
+        QVERIFY(s.at(x + 1, y).style.bold);
+        QCOMPARE(s.at(x + 9, y).style.ink, Tui::Ink::Accent);
+        QVERIFY(!s.text().contains("Enter: Do It")); // said once, not also in the small print
+        keys({Key::of(Key::Escape)}); // to the files
+        QVERIFY(!app->isInPreview());
+        app->render(s);
+        QVERIFY2(s.line(y).contains(" Tab, then Enter  Do It"), qPrintable(s.line(y)));
+        QCOMPARE(s.at(int(s.line(y).indexOf("Tab,")), y).style.paper, Tui::Paper::Bar);
+        // A click on the line does it, from wherever the keys were.
+        app->mouse({Tui::Mouse::Press, int(s.line(y).indexOf("Do It")) + 2, y});
+        QVERIFY(app->isInPreview() && app->isAsking());
+        QVERIFY(screen(120, 30).contains("Do It — Say what:"));
+        keys({Key::of(Key::Escape)});
+        QVERIFY(!app->isAsking());
+    }
+    QSignalSpy said(host, &Extensions::Host::message);
+    auto heard = [&](const QString &part) {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains(part))
+                return true;
+        }
+        return false;
+    };
+    keys({Key::of(Key::Enter)});
+    QVERIFY(app->isAsking());
+    QVERIFY2(screen(120, 30).contains("Do It — Say what:"), qPrintable(screen(120, 30)));
+    type("only the bus");
+    keys({Key::of(Key::Enter)});
+    QTRY_VERIFY_WITH_TIMEOUT(heard("action act on live1: only the bus"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(screen(120, 30).contains("acted: only the bus"), 10000);
+    keys({Key::of(Key::Enter), Key::of(Key::Enter)}); // nothing typed is an answer too
+    QTRY_VERIFY_WITH_TIMEOUT(said.last().at(1).toString() == "action act on live1:", 10000);
+    said.clear();
+    keys({Key::of(Key::Enter), Key::of(Key::Escape)}); // Esc: nothing is done
+    QTest::qWait(300);
+    QVERIFY(said.isEmpty());
     host->setEnabled("fake", false);
 }
 

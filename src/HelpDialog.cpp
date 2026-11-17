@@ -557,6 +557,9 @@ off there if you don't want it. It never has your key: it tells Argonaut what to
 <p>What is sent: the names, sizes, dates and types of the folder's items (up to 500), and only if allowed, the beginning
 of some files (some text, the first pages of a PDF, a small preview of an image). <b>Preferences → Claude</b> sets the
 default (names only, ask, or read when needed) and the model, and shows what you've spent.</p>
+<p><b>Analyze with Claude</b> under the list of <a href="topic:extensions">running services</a> sends each service's
+name, description, memory, whose it is, and the path of its program and of its unit file, with what you typed beside
+the button. A program's arguments are never sent. It is one request; what it cost is said under the report.</p>
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(
@@ -623,6 +626,15 @@ is that of all its programs together, as systemd counts it. Beside each name is 
 or click it, and a tooltip says what the service is (its description, in systemd's own words), its full unit name
 and whether it is the system's or your session's. That is where to look when the pane is too narrow to show the
 description after the name.</p>
+<p>Under the list is <b>Analyze with Claude</b>, with a field at its left. Press the button and Claude reads the
+list as it is now and writes a report: the overall picture, anything worth a closer look and why (a program running
+from an unusual folder, a name that imitates a well-known service, far more memory than such a service needs) with a
+command that only inspects it, and what each service is for. Type something in the field first ("what is the bus
+service doing", "tell me only about the bus service") and Claude answers that. <b>The list stays where it is</b>: the pane splits, and under the list it says it is waiting (with a
+<b>Stop Waiting</b> button) and then shows the report. Drag the divider between the two to give either more room;
+the ✕ on the report closes it. Ask again, with another question, and the new answer replaces it. It needs your Claude API key (Preferences → Claude) and is billed to your Anthropic account; the cost of
+each report is said under it. It is Claude's reading of names and paths, not a security scan, and nothing is ever
+started, stopped or changed.</p>
 <p><b>Running Processes</b>: choose <b>View → Running Processes</b>, or find it in the command palette. The preview
 pane lists every process that is running now, the one using the most memory first, with how it was
 started, its process ID in a column of its own and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is

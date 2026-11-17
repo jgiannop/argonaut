@@ -126,6 +126,9 @@ for line in sys.stdin:
             say({"type": "claude", "id": "c1", "request": claude_request})
         else:
             say({"type": "message", "text": "claude said: %s (%s) $%.4f" % (m.get("text"), m.get("stop_reason"), m.get("dollars", 0))})
+    if m.get("type") == "action":  # the button under a result of ours, with what was typed beside it
+        say({"type": "message", "text": "action %s on %s: %s" % (m.get("action"), m.get("id"), m.get("text"))})
+        say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text", "text": "acted: " + m.get("text", "")})
     if m.get("type") == "search":  # typed in the field over a result that can be searched
         say({"type": "show", "id": m.get("id"), "update": True, "title": "Live", "kind": "text",
              "text": "searched: " + m.get("text", "")})
@@ -173,7 +176,8 @@ for line in sys.stdin:
             say({"type": "show", "id": "t1", "title": "In Menu", "kind": "ansi", "note": "interface=" + interface,
                  "text": "plain \x1b[31mred\x1b[0m"})
         if m.get("command") == "live":
-            say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1", "search": "Search\nthe fake"})
+            say({"type": "show", "id": "live1", "title": "Live", "kind": "text", "text": "live 1", "search": "Search\nthe fake",
+                 "action": {"id": "act", "label": "Do\nIt", "input": "Say\nwhat"}})
         if m.get("command") == "late":
             say({"type": "show", "id": "live1", "update": True, "title": "Live", "kind": "text", "text": "live 3, too late"})
         if m.get("command") == "listme":
