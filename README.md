@@ -111,7 +111,7 @@ The Claude features are off until you add an API key in **Preferences → Claude
 
 What is sent to Anthropic's API when you organize a folder: the names, sizes, dates and types of its items (up to 500), and, only if you allow it, the beginning of some files (some text, the first two pages of a PDF, a small preview of an image). Programs are never read. **Preferences → Claude** sets the default: names only, ask before reading files (the default), or read files when needed. Requests are billed to your own Anthropic account.
 
-What is sent when you press **Analyze with Claude** under the list of running services: each service's name, description, memory, whether it is the system's or your session's, the path of the program it runs and of its unit file, and whatever you typed beside the button. A program's arguments are never sent (they can hold passwords). Claude's report is its reading of that list, not a security scan: it sees names and paths, not what the programs do.
+What is sent when you press **Analyze with Claude** under the list of running services: each service's name, description, memory, whether it is the system's or your session's, the path of the program it runs and of its unit file, and whatever you typed beside the button. A program's arguments are never sent (they can hold passwords). Under the list of running processes the same button sends, for the 400 biggest processes: the name, the process ID, the ID of the process that started it, whose it is, its memory and the program that was started; never how it was started (its arguments). Claude's report is its reading of the list, not a security scan: it sees names and paths, not what the programs do.
 
 ## Building
 

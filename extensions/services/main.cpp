@@ -20,6 +20,7 @@
 //   argonaut-services-extension --text [COLUMNS]
 //                                            prints it once as the terminal interface shows it
 
+#include "../shared/Analysis.h"
 #include "../shared/ResultDrawing.h"
 #include "Format.h"
 #include "Tools.h"
@@ -320,17 +321,15 @@ QImage draw(const Services &s, int width, const Look &look, const QString &searc
 QString inventory(const Services &s)
 {
     QString out = QStringLiteral("name\tscope\tmemory\tprogram\tunit file\tdescription\n");
-    auto cell = [](QString text) { return text.replace(QLatin1Char('\t'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' ')).left(200); };
     for (const Service &service : s.list) {
-        out += cell(service.name) + QLatin1Char('\t') + (service.user ? QStringLiteral("user session") : QStringLiteral("system")) + QLatin1Char('\t')
-               + (service.bytes >= 0 ? sizeOf(service) : QStringLiteral("unknown")) + QLatin1Char('\t') + cell(service.program) + QLatin1Char('\t')
-               + cell(service.unitFile) + QLatin1Char('\t') + cell(service.description) + QLatin1Char('\n');
+        out += Analysis::cell(service.name) + QLatin1Char('\t') + (service.user ? QStringLiteral("user session") : QStringLiteral("system"))
+               + QLatin1Char('\t') + (service.bytes >= 0 ? sizeOf(service) : QStringLiteral("unknown")) + QLatin1Char('\t')
+               + Analysis::cell(service.program) + QLatin1Char('\t') + Analysis::cell(service.unitFile) + QLatin1Char('\t')
+               + Analysis::cell(service.description) + QLatin1Char('\n');
     }
     return out;
 }
 
-// The request (the body of a Messages request; the model, the key and how
-// it is carried are Argonaut's and the user's, not ours).
 QJsonObject analysisRequest(const Services &s, const QString &wish)
 {
     const QString system = QStringLiteral(
@@ -354,14 +353,7 @@ QJsonObject analysisRequest(const Services &s, const QString &wish)
         "and what is your inference. Do not recommend stopping, disabling or removing anything as a first step; suggest "
         "how to look closer. If the person asked something specific, answer that first and at whatever length it needs, and "
         "keep the rest brief or leave it out when they asked for only that.");
-    QString user = QStringLiteral("<services>\n%1</services>\n\n").arg(inventory(s));
-    user += wish.isEmpty() ? QStringLiteral("Please give me your report on these services.")
-                           : QStringLiteral("What I would like to know in particular:\n<request>\n%1\n</request>").arg(wish);
-    return {{QStringLiteral("max_tokens"), 16000},
-            {QStringLiteral("thinking"), QJsonObject{{QStringLiteral("type"), QStringLiteral("adaptive")}}},
-            {QStringLiteral("system"), system},
-            {QStringLiteral("messages"),
-             QJsonArray{QJsonObject{{QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("content"), user}}}}};
+    return Analysis::requestFor(system, QStringLiteral("services"), inventory(s), wish, QStringLiteral("Please give me your report on these services."));
 }
 
 QString drawAnsi(const Services &s, int columns, const QString &search = {})
@@ -401,12 +393,6 @@ int main(int argc, char **argv)
     bool asked = false;      // the command was chosen, and its first answer is still to be shown
     Services services;
     QString search;          // only the services with this in them
-    // Claude's reading of the list: asked for with the button under it.
-    const QString reportId = QStringLiteral("services-report");
-    bool analysing = false;  // Claude has been asked and hasn't answered
-    QString wish;            // what the user typed beside the button
-    Services analysed;       // the services as they were when it was asked
-    auto tell = [](const QString &text) { send({{QStringLiteral("type"), QStringLiteral("message")}, {QStringLiteral("text"), text}}); };
 
     auto show = [&](bool update) {
         QJsonObject message{{QStringLiteral("type"), QStringLiteral("show")},
@@ -415,10 +401,7 @@ int main(int argc, char **argv)
                             {QStringLiteral("note"), QStringLiteral("Most memory first · every 3 seconds")},
                             {QStringLiteral("search"), QStringLiteral("Search services")}, // Argonaut shows a field; what is typed comes as "search"
                             // …and a button under the list, with a line to type beside it; pressed, it comes as "action".
-                            {QStringLiteral("action"),
-                             QJsonObject{{QStringLiteral("id"), QStringLiteral("analyze")},
-                                         {QStringLiteral("label"), QStringLiteral("Analyze with Claude")},
-                                         {QStringLiteral("input"), QStringLiteral("Anything in particular? (optional)")}}}};
+                            {QStringLiteral("action"), Analysis::offer()}};
         if (terminal) {
             message.insert(QStringLiteral("kind"), QStringLiteral("ansi"));
             message.insert(QStringLiteral("text"), drawAnsi(services, room.columns, search));
@@ -456,6 +439,20 @@ int main(int argc, char **argv)
             timer.stop();
     });
 
+    // Claude's reading of the list: asked for with the button under it (Analysis.h).
+    Analysis analysis;
+    analysis.listId = id;
+    analysis.reportId = QStringLiteral("services-report");
+    analysis.title = QStringLiteral("Running Services");
+    analysis.things = QStringLiteral("services");
+    analysis.count = [&] { return known ? int(services.list.size()) : 0; };
+    analysis.request = [&](const QString &wish) { return analysisRequest(services, wish); };
+    analysis.listShown = [&] { return shown; };
+    analysis.showList = [&] {
+        asked = true;
+        asker.ask();
+    };
+
     // Argonaut's messages, each as it comes.
     Conversation conversation([&](const QJsonObject &message) {
         const QString type = message.value(QLatin1String("type")).toString();
@@ -465,65 +462,8 @@ int main(int argc, char **argv)
         } else if (type == QLatin1String("invoke")) {
             asked = true; // shown when systemd has answered
             asker.ask();
-        } else if (type == QLatin1String("action") && message.value(QLatin1String("action")).toString() == QLatin1String("analyze")) {
-            // The button under the list. Is there a key at all? (Free to ask.) The request follows the answer.
-            if (analysing) {
-                tell(QStringLiteral("Claude is still reading the services"));
-            } else if (!known || services.list.isEmpty()) {
-                tell(QStringLiteral("There are no services to analyze yet"));
-            } else {
-                analysing = true;
-                wish = message.value(QLatin1String("text")).toString().trimmed().left(1000);
-                analysed = services;
-                send({{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), QStringLiteral("info")}, {QStringLiteral("ask"), QStringLiteral("info")}});
-            }
-        } else if (type == QLatin1String("action") && message.value(QLatin1String("action")).toString() == QLatin1String("back")) {
-            asked = true; // from the report back to the list
-            asker.ask();
-        } else if (type == QLatin1String("claude")) {
-            const QString which = message.value(QLatin1String("id")).toString();
-            if (!analysing)
-                return;
-            if (message.contains(QLatin1String("error"))) {
-                analysing = false;
-                tell(QStringLiteral("Analyze with Claude: %1").arg(message.value(QLatin1String("error")).toObject().value(QLatin1String("message")).toString()));
-                if (!shown) { // the wait had the pane: the list comes back
-                    asked = true;
-                    asker.ask();
-                }
-            } else if (which == QLatin1String("info")) {
-                if (!message.value(QLatin1String("hasKey")).toBool()) {
-                    analysing = false;
-                    tell(QStringLiteral("Analyze with Claude needs your Claude API key: Preferences → Claude (in the terminal: Edit → Claude API Key…)"));
-                } else {
-                    tell(QStringLiteral("Asking Claude about %1 services…").arg(analysed.list.size()));
-                    send({{QStringLiteral("type"), QStringLiteral("claude")}, {QStringLiteral("id"), QStringLiteral("analysis")},
-                          {QStringLiteral("request"), analysisRequest(analysed, wish)}});
-                }
-            } else if (which == QLatin1String("analysis")) {
-                analysing = false;
-                QString report = message.value(QLatin1String("text")).toString().trimmed();
-                if (report.isEmpty()) {
-                    tell(QStringLiteral("Analyze with Claude: Claude sent no report"));
-                    return;
-                }
-                if (message.value(QLatin1String("stop_reason")).toString() == QLatin1String("max_tokens"))
-                    report += QStringLiteral("\n\n*The report was cut short: it reached the length limit.*");
-                QStringList notes{QStringLiteral("Claude's reading of the list, not a security scan: it sees names and paths, not what the programs do")};
-                const double dollars = message.value(QLatin1String("dollars")).toDouble();
-                if (dollars > 0)
-                    notes << QStringLiteral("this cost about $%1").arg(QString::number(dollars, 'f', 3));
-                // Under the list, which stays on screen (where it no longer is, or in the
-                // terminal, the report is a result of its own, with the way back).
-                send({{QStringLiteral("type"), QStringLiteral("show")},
-                      {QStringLiteral("id"), reportId},
-                      {QStringLiteral("under"), id},
-                      {QStringLiteral("title"), wish.isEmpty() ? QStringLiteral("Running Services: Claude's Report") : QStringLiteral("Running Services: Claude's Answer")},
-                      {QStringLiteral("kind"), QStringLiteral("markdown")},
-                      {QStringLiteral("text"), report},
-                      {QStringLiteral("note"), notes.join(QStringLiteral(" · "))},
-                      {QStringLiteral("action"), QJsonObject{{QStringLiteral("id"), QStringLiteral("back")}, {QStringLiteral("label"), QStringLiteral("Back to the List")}}}});
-            }
+        } else if (analysis.hear(message)) {
+            // (the button under the list, Claude's answers, and the way back from the report)
         } else if (type == QLatin1String("search") && message.value(QLatin1String("id")).toString() == id) {
             search = message.value(QLatin1String("text")).toString().left(200);
             if (known)

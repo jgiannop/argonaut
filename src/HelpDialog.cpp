@@ -559,7 +559,9 @@ of some files (some text, the first pages of a PDF, a small preview of an image)
 default (names only, ask, or read when needed) and the model, and shows what you've spent.</p>
 <p><b>Analyze with Claude</b> under the list of <a href="topic:extensions">running services</a> sends each service's
 name, description, memory, whose it is, and the path of its program and of its unit file, with what you typed beside
-the button. A program's arguments are never sent. It is one request; what it cost is said under the report.</p>
+the button. A program's arguments are never sent. It is one request; what it cost is said under the report.
+Under the list of running processes it sends each process's name, ID, the ID of the process that started it, whose
+it is, its memory and the program that was started (the 400 biggest), and never its arguments.</p>
 )"));
 
     add("git", tr("Git Repositories"), tr(R"(
@@ -639,7 +641,17 @@ started, stopped or changed.</p>
 pane lists every process that is running now, the one using the most memory first, with how it was
 started, its process ID in a column of its own and, when it isn't yours, whose it is. It updates every three seconds, scrolls, and only shows: nothing is
 stopped. The memory is what a process has in RAM now; memory that several processes share is counted for each of
-them, so the rows add up to more than the memory in use, which the bar at the top shows.</p>
+them, so the rows add up to more than the memory in use, which the bar at the top shows. Beside each name is an
+<b>ⓘ</b>: rest the mouse on it, or click it, and a tooltip shows how the process was started, in full, with its
+process ID, whose it is and which process started it.</p>
+<p>Under the list is <b>Analyze with Claude</b>, with a field at its left, exactly as under the services: Claude
+reads the list as it is now and reports the overall picture, anything worth a closer look and why (a program running
+from an unusual folder, a name that imitates a well-known program, a name that doesn't match its program) with a
+command that only inspects it, and what the processes belong to. Type a question in the field first and Claude
+answers that. The list stays; the waiting and then the report are in the part of the pane under it. Claude is sent
+each process's name, ID, the ID of the process that started it, whose it is, its memory and the program that was
+started, for the 400 biggest; <b>never how a process was started</b> (its arguments can hold passwords). Nothing is
+ever stopped or changed.</p>
 <p>Both lists can be searched: click the field over the list and type a part of a name (for a process also its
 number, its owner or a word of how it was started). The list keeps to what fits and still updates. [[Esc]] empties
 the field; [[Esc]] again, or [[Enter]], gives the keys back to the files.</p>

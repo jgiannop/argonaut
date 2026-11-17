@@ -1,11 +1,12 @@
 {
     "id": "running-processes",
     "name": "Running Processes",
-    "description": "View → Running Processes (or the command palette): every process that is running now, the one using the most memory first, in the preview pane, with whose it is and how it was started. It updates every three seconds while it is shown, and only shows: nothing is stopped.",
+    "description": "View → Running Processes (or the command palette): every process that is running now, the one using the most memory first, in the preview pane, with whose it is and how it was started. It updates every three seconds while it is shown, and only shows: nothing is stopped. Under the list, Analyze with Claude asks Claude what the processes are and whether any looks out of place (their names, numbers, owners, memory and program paths are sent to Anthropic, only when you press the button; never how they were started).",
     "version": "@PROJECT_VERSION@",
     "author": "Argonaut",
     "protocol": 1,
     "start": "when-needed",
+    "uses": ["claude"],
     "commands": [{"id": "processes", "label": "Running Processes", "menu": "view"}],
     "exec": ["@ARGONAUT_PROCESSES_EXTENSION_EXE@"]
 }
