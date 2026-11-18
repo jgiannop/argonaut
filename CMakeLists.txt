@@ -426,6 +426,18 @@ if(UNIX)
         install(TARGETS argonaut-journal-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-journal/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-journal)
+        # Updates and Restart: what waits to be installed, and whether a restart is needed (it installs nothing).
+        qt_add_executable(argonaut-updates-extension extensions/updates/main.cpp)
+        target_link_libraries(argonaut-updates-extension PRIVATE argonaut_core)
+        set(ARGONAUT_UPDATES_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-updates-extension")
+        configure_file(extensions/updates/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/updates-and-restart/extension.json @ONLY)
+        set(ARGONAUT_UPDATES_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-updates-extension")
+        configure_file(extensions/updates/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/updates-and-restart/extension.json @ONLY)
+        install(TARGETS argonaut-updates-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/updates-and-restart/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/updates-and-restart)
         # System Cleanup: what can be removed to free space, and how (it removes nothing itself).
         qt_add_executable(argonaut-cleanup-extension extensions/cleanup/main.cpp)
         target_link_libraries(argonaut-cleanup-extension PRIVATE argonaut_core)

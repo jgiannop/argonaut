@@ -1,0 +1,12 @@
+{
+    "id": "updates-and-restart",
+    "name": "Updates and Restart",
+    "description": "View → Updates and Restart (or the command palette): the updates waiting for this computer, security fixes first: the system's packages, Snaps, Flatpaks and firmware, and whether a restart is needed and why (a newer kernel, the system's own flag, programs still using libraries that were updated). It only reads and asks the package tools what is waiting (Snap, Flatpak and firmware ask their own servers); nothing is installed: the commands are shown for you to run. Under the list, Explain with Claude says what the updates are about (their names and versions are sent to Anthropic, only when you press the button).",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "uses": ["claude"],
+    "commands": [{"id": "updates", "label": "Updates and Restart", "menu": "view"}],
+    "exec": ["@ARGONAUT_UPDATES_EXTENSION_EXE@"]
+}

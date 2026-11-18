@@ -575,7 +575,9 @@ Under the list of running processes it sends each process's name, ID, the ID of 
 it is, its memory and the program that was started (the 400 biggest), and never its arguments. Under the System
 Journal it sends the messages themselves (the 150 most important kinds, with who wrote them, how often and when),
 which can name users, computers, addresses and files. <b>Tell Claude What to Do Here…</b> sends your sentence and the names, sizes, dates and types of the open folder's
-items, never their contents. <b>Ask Claude: How to Install…</b> sends what you typed, the system's name and version,
+items, never their contents. Under <b>Updates and Restart</b>, <b>Explain with Claude</b> sends the waiting updates' names, versions and sources, the
+system's name and kernel, and why a restart is needed; not which files your programs use.
+<b>Ask Claude: How to Install…</b> sends what you typed, the system's name and version,
 its processor type, the desktop, which package tools it has and, for packages Claude asks about, whether they are
 installed and which version the system offers; nothing about your files. <b>Ask Claude: What Is This About?</b> sends what it reads of
 the one file or folder you chose: the beginning of a text, a document's text, a small copy of a picture, or the names
@@ -618,7 +620,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>System Cleanup</b>, <b>How to Install</b>,
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>System Cleanup</b>, <b>Updates and Restart</b>, <b>How to Install</b>,
 <b>What Is This About</b>, <b>Tell Claude What to Do</b>, <b>How to Install</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
@@ -717,6 +719,15 @@ run yourself in a terminal (those with sudo ask for your password). Your own cac
 the Trash…</b> under the list: they appear as a checklist, what stays ticked goes to the Trash, and [[Ctrl+Z]] brings it
 back. Programs make their caches again, more slowly the first time, so close them first. The space of what is in the
 Trash returns when you empty it. Nothing leaves this computer.</p>
+<p><b>Updates and Restart</b>: choose <b>View → Updates and Restart</b>, or find it in the command palette. The
+preview pane lists the updates waiting for this computer, security fixes first: the system's packages, Snaps, Flatpaks
+and firmware, each with the new version and the one installed. At the top it says whether the computer needs a
+restart and why (the system asks for one, or a newer kernel is installed), and which of your programs still use a
+library that was updated: those run the old version until you close and open them again. It also says how old the
+package lists are (run <code>sudo apt update</code> when they are old) and whether security updates install by
+themselves. <b>It installs nothing</b>: under the list are the commands to run yourself in a terminal. The field above
+the list searches; <b>Explain with Claude</b> under it says what the updates are about (their names, versions and sources
+are sent, nothing else). Snap, Flatpak and firmware ask their own servers what is new.</p>
 <p><b>How to Install</b>: choose <b>File → Ask Claude: How to Install…</b>, or find it in the command palette, and
 name a program: "mysql server", "docker", "node 22". Claude answers in the preview pane with the best way to install
 it on this computer: which edition and from where, the commands step by step, how to check that it works and how to

@@ -81,6 +81,8 @@ File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose fol
 
 **System cleanup.** View → **System Cleanup**: what can safely be removed to free disk space, biggest first: packages no longer needed, old kernels, downloaded package files, old Snap revisions, Docker's unused images and stopped containers, the journal's older part, crash reports, your caches and the Trash. It removes nothing by itself: the system's part is shown as the commands to run, and your caches go to the Trash only from a checklist you tick, with Ctrl+Z to bring them back.
 
+**Updates and restart.** View → **Updates and Restart**: the updates waiting (system packages, Snaps, Flatpaks, firmware), security fixes first, whether the computer needs a restart and why, and which programs still run libraries that were updated. It installs nothing: the commands are shown to run yourself, and Explain with Claude says what the updates are about.
+
 **How to install.** File → **Ask Claude: How to Install…**: name a program ("mysql server", "node 22") and Claude says the best way to install it on this computer, with the commands, how to check it and how to remove it. It looks up on your machine whether the package is installed and which version your system offers, so the answer is about your system. It only advises: Argonaut runs nothing.
 
 **Network connections.** View → **Network Connections**: the interfaces with their speed, the programs that listen for connections (a port other machines can reach is marked) and the programs that are connected, with where to. Searchable, updated every three seconds, with Analyze with Claude under it. It only shows; how much each program sends is something the system tells only the administrator.
@@ -126,6 +128,8 @@ What is sent to Anthropic's API when you organize a folder: the names, sizes, da
 What is sent when you press **Analyze with Claude** under the list of running services: each service's name, description, memory, whether it is the system's or your session's, the path of the program it runs and of its unit file, and whatever you typed beside the button. A program's arguments are never sent (they can hold passwords). Under the list of running processes the same button sends, for the 400 biggest processes: the name, the process ID, the ID of the process that started it, whose it is, its memory and the program that was started; never how it was started (its arguments). **Tell Claude What to Do Here…** sends your sentence and the names, sizes, dates and types of the open folder's items (500 at most), never what is in the files.
 
 **Ask Claude: What Is This About?** (right-click a file or folder) sends what it reads of that one item: the first 24 kB of a text file, the words of a web page, the text of a PDF's first pages or of an office document (both read in a sandbox), a copy of a picture made smaller (1024 pixels at most), the names and sizes inside an archive or a folder, or a music or video file's details. A small PDF with no readable text is sent whole. Programs, and files that only look like documents, are never read or sent. The line under each answer says what was sent.
+
+Under Updates and Restart, **Explain with Claude** sends the waiting updates' names, versions and sources, your system's name and kernel, and why a restart is needed.
 
 **Ask Claude: How to Install…** sends what you typed, your system's name and version, its processor type, the desktop, which package tools it has, and for the packages Claude asks about, whether they are installed and which version your system offers. Nothing about your files.
 
@@ -271,7 +275,7 @@ Open the folder in VS Code and install the recommended extensions when asked (C/
 ```
 src/               Application source code
 src/tui/           The terminal interface (argonaut --tui)
-extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, Network Connections, System Cleanup, How to Install, What Is This About, Tell Claude What to Do, Document Preview…)
+extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, Network Connections, System Cleanup, Updates and Restart, How to Install, What Is This About, Tell Claude What to Do, Document Preview…)
 docs/              The guide for writing extensions; the comparison with GNOME's file dialog
 tests/             Qt Test suites (run with ctest)
 CMakeLists.txt     Build definition
