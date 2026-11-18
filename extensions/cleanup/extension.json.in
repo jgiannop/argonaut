@@ -1,0 +1,11 @@
+{
+    "id": "system-cleanup",
+    "name": "System Cleanup",
+    "description": "View → System Cleanup (or the command palette): what can safely be removed to free disk space, each with its size and what removing it means: packages no longer needed, the downloaded package cache, old kernels, old Snap revisions, unused Docker data, the journal beyond 200 MB, crash reports, your programs' caches and the Trash. It only measures and explains: the system's part is shown as the commands to run yourself, and your caches go to the Trash only when you choose them in a checklist (Ctrl+Z brings them back). Nothing leaves this computer.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "commands": [{"id": "cleanup", "label": "System Cleanup", "menu": "view"}],
+    "exec": ["@ARGONAUT_CLEANUP_EXTENSION_EXE@"]
+}

@@ -93,6 +93,7 @@ private slots:
     void tellClaudeWhatToDo();
     void networkConnections();
     void howToInstall();
+    void systemCleanup();
     void planStepsAreChecked();
     void runningProcesses();
     void claudeThroughArgonaut();
@@ -2811,6 +2812,208 @@ esac
     QVERIFY(!api.requests.last().body.contains("tools"));
     QVERIFY(api.requests.last().body.value("messages").toArray().first().toObject().value("content").toString().contains("Package tools found on it: none of the usual ones"));
     bare.setEnabled("how-to-install", false);
+}
+
+// System Cleanup: what can be freed, measured with pretend programs and a
+// pretend system; only commands that read are run, the system's part is
+// shown as commands, and the user's caches go to the Trash only through a
+// plan that Argonaut carries out.
+void TestExtensions::systemCleanup()
+{
+    Host probe;
+    bool there = false;
+    for (const Extensions::Manifest &m : probe.extensions())
+        there = there || m.id == "system-cleanup";
+    if (!there)
+        QSKIP("the System Cleanup extension isn't built here (Linux only)");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString system = dir.filePath("root");
+    auto write = [&](const QString &path, qint64 bytes) {
+        QVERIFY(QDir().mkpath(QFileInfo(path).path()));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray(int(bytes), 'x'));
+    };
+    write(system + "/var/cache/apt/archives/one_1.0_amd64.deb", 300000);
+    write(system + "/var/cache/apt/archives/two_2.0_amd64.deb", 200000);
+    write(system + "/var/lib/snapd/snaps/core_100.snap", 400000);
+    write(system + "/var/crash/_usr_bin_thing.1000.crash", 100000);
+    write(system + "/lib/modules/6.17.0-20-generic/kernel.ko", 500000);
+    write(system + "/boot/vmlinuz-6.17.0-20-generic", 100000);
+    write(system + "/lib/modules/7.0.0-42-generic/kernel.ko", 500000);
+    // The user's caches: one big, one small, the thumbnails; and something in the Trash.
+    const QString cache = QDir::homePath() + "/.cache";
+    QDir(cache).removeRecursively();
+    write(cache + "/bigprogram/data.bin", 300000);
+    write(cache + "/thumbnails/large/a.png", 200000);
+    write(cache + "/tiny/x", 1000);
+    write(Trash::homeFilesDir() + "/old-photo.jpg", 150000);
+    // Pretend programs: each notes how it was asked, and answers as the real one does.
+    const QString log = dir.filePath("asked.txt");
+    auto program = [&](const QString &name, const QString &body) {
+        const QString path = dir.filePath(name);
+        TestSupport::writeScript(path, QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"%1 $*\" >> '%2'\n%3\n").arg(name, log, body));
+        return path;
+    };
+    qputenv("ARGONAUT_APT_GET_PROGRAM", program("apt-get", R"([ "$1 $2" = "-s autoremove" ] || exit 2
+echo 'Reading package lists...'
+echo 'Remv libold1 [1.0]'
+echo 'Remv libold-common [1.0]'
+echo 'Remv linux-modules-6.1.0-1-generic [6.1.0-1]')").toLocal8Bit());
+    qputenv("ARGONAUT_DPKG_QUERY_PROGRAM", program("dpkg-query", R"(case "$*" in
+*Installed-Size*) echo 1000; echo 2000; echo 7000 ;;
+*"linux-image-[0-9]*"*) printf 'linux-image-6.17.0-20-generic install ok installed\nlinux-image-7.0.0-42-generic install ok installed\nlinux-image-7.0.0-43-generic install ok installed\nlinux-image-5.0.0-1-generic deinstall ok config-files\n' ;;
+*"linux-*6.17.0-20*"*) printf 'linux-image-6.17.0-20-generic install ok installed\nlinux-modules-6.17.0-20-generic install ok installed\nlinux-headers-6.17.0-20 deinstall ok config-files\n' ;;
+esac)").toLocal8Bit());
+    qputenv("ARGONAUT_SNAP_PROGRAM", program("snap", R"([ "$1 $2" = "list --all" ] || exit 2
+echo 'Name    Version  Rev   Tracking       Publisher   Notes'
+echo 'core    16-2.61  100   latest/stable  canonical*  core,disabled'
+echo 'core    16-2.62  101   latest/stable  canonical*  core'
+echo 'bad;rm  1        7     latest/stable  someone     disabled')").toLocal8Bit());
+    qputenv("ARGONAUT_DOCKER_PROGRAM", program("docker", R"([ "$1 $2" = "system df" ] || exit 2
+printf 'Images\t4.5GB (80%%)\nContainers\t250MB (90%%)\nLocal Volumes\t3GB (100%%)\nBuild Cache\t2kB\n')").toLocal8Bit());
+    qputenv("ARGONAUT_JOURNALCTL_PROGRAM", program("journalctl", R"([ "$1" = "--disk-usage" ] || exit 2
+echo 'Archived and active journals take up 1.2G in the file system.')").toLocal8Bit());
+    qputenv("ARGONAUT_FLATPAK_PROGRAM", program("flatpak", R"([ "$1 $2" = "list --runtime" ] || exit 2
+echo 'org.freedesktop.Platform/x86_64/23.08')").toLocal8Bit());
+    qputenv("ARGONAUT_CLEANUP_ROOT", system.toLocal8Bit());
+    qputenv("ARGONAUT_KERNEL_RELEASE", "7.0.0-43-generic");
+    qputenv("ARGONAUT_CLEANUP_SMALLEST", "100000");
+    const auto restore = qScopeGuard([cache] {
+        for (const char *name : {"ARGONAUT_APT_GET_PROGRAM", "ARGONAUT_DPKG_QUERY_PROGRAM", "ARGONAUT_SNAP_PROGRAM", "ARGONAUT_DOCKER_PROGRAM", "ARGONAUT_JOURNALCTL_PROGRAM",
+                                 "ARGONAUT_FLATPAK_PROGRAM", "ARGONAUT_CLEANUP_ROOT", "ARGONAUT_KERNEL_RELEASE", "ARGONAUT_CLEANUP_SMALLEST"})
+            qunsetenv(name);
+        QSettings().remove("extensions/system-cleanup");
+        QDir(cache).removeRecursively();
+    });
+    static const QRegularExpression codes(QStringLiteral("\x1b\\[[0-9;]*m"));
+
+    // In the terminal interface: first "Measuring…", then everything as text, the commands included.
+    {
+        Host terminal;
+        terminal.setInterface("terminal");
+        terminal.setEnabled("system-cleanup", true);
+        Extensions::Command command;
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (const Extensions::Command &c : terminal.menuCommands("view")) {
+                if (c.extension == "system-cleanup")
+                    command = c;
+            }
+            return !command.id.isEmpty();
+        }(), 10000);
+        QCOMPARE(command.label, QStringLiteral("System Cleanup"));
+        QSignalSpy text(&terminal, &Host::showRequested);
+        terminal.invoke(command, dir.path(), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!text.isEmpty(), 10000);
+        QVERIFY(text.first().at(2).value<Extensions::PreviewReply>().text.contains("Measuring"));
+        QTRY_VERIFY_WITH_TIMEOUT(text.last().at(2).value<Extensions::PreviewReply>().kind == Extensions::PreviewReply::Ansi, 20000);
+        Extensions::ResultLook cells;
+        cells.columns = 160;
+        cells.rows = 60;
+        const int measured = int(text.size());
+        terminal.resultShown("system-cleanup", "cleanup", true, QSize(), cells);
+        QTRY_VERIFY_WITH_TIMEOUT(text.size() > measured, 10000);
+        const QString plain = QString(text.last().at(2).value<Extensions::PreviewReply>().text).remove(codes);
+        for (const char *part : {"SYSTEM CLEANUP", "can be freed", "Docker images no container uses (yours)", "4.5 GB", "Stopped Docker containers", "250.0 MB",
+                                 "Packages no longer needed (needs the administrator)", "10.2 MB", "Old kernel 6.17.0-20-generic",
+                                 "Downloaded package files", "Old Snap revisions", "The journal's older part", "Crash reports", "Unused Flatpak runtimes",
+                                 "The Trash (yours)", "Cache: bigprogram (yours)", "Thumbnails (yours)",
+                                 "sudo apt autoremove", "sudo apt purge linux-image-6.17.0-20-generic linux-modules-6.17.0-20-generic", "sudo apt clean",
+                                 "sudo snap remove core --revision=100", "docker image prune -a", "docker container prune", "sudo journalctl --vacuum-size=200M",
+                                 "sudo rm /var/crash/*.crash", "flatpak uninstall --unused", "Argonaut doesn't run these"})
+            QVERIFY2(plain.contains(QString::fromUtf8(part)), qPrintable(QString::fromUtf8(part) + "\n" + plain));
+        // Kept: the kernel running and the newest other one; a kernel only half there; Docker's volumes (they hold data);
+        // a build cache too small to matter; a snap whose name isn't a name; a cache too small to list.
+        for (const char *part : {"Old kernel 7.0.0-42", "Old kernel 7.0.0-43", "5.0.0-1", "linux-headers-6.17.0-20 ", "Volumes", "build cache", "bad;rm", "revision=7", "Cache: tiny"})
+            QVERIFY2(!plain.contains(QString::fromUtf8(part)), qPrintable(QString::fromUtf8(part) + "\n" + plain));
+        terminal.setEnabled("system-cleanup", false);
+    }
+    // Only questions were asked: nothing was removed, installed or changed by any program.
+    QFile asked(log);
+    QVERIFY(asked.open(QIODevice::ReadOnly));
+    const QStringList calls = QString::fromUtf8(asked.readAll()).split('\n', Qt::SkipEmptyParts);
+    QVERIFY(!calls.isEmpty());
+    for (const QString &call : calls) {
+        const bool reads = call == "apt-get -s autoremove" || call.startsWith("dpkg-query -W ") || call == "snap list --all"
+                           || call.startsWith("docker system df ") || call == "journalctl --disk-usage" || call == "flatpak list --runtime --columns=ref";
+        QVERIFY2(reads, qPrintable(call));
+    }
+    asked.close();
+    QVERIFY(QFile::exists(system + "/var/crash/_usr_bin_thing.1000.crash") && QFile::exists(system + "/var/cache/apt/archives/one_1.0_amd64.deb"));
+
+    // In the window: a picture with an ⓘ a row, the commands under it, and a button for the caches.
+    Host host;
+    host.setEnabled("system-cleanup", true);
+    Extensions::Command command;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.menuCommands("view")) {
+            if (c.extension == "system-cleanup")
+                command = c;
+        }
+        return !command.id.isEmpty();
+    }(), 10000);
+    QSignalSpy shown(&host, &Host::showRequested);
+    QSignalSpy plans(&host, &Host::planRequested);
+    QSignalSpy said(&host, &Host::message);
+    host.invoke(command, dir.path(), {});
+    QTRY_VERIFY_WITH_TIMEOUT(!shown.isEmpty() && shown.last().at(2).value<Extensions::PreviewReply>().kind == Extensions::PreviewReply::Image, 20000);
+    Extensions::ResultLook look;
+    host.resultShown("system-cleanup", "cleanup", true, QSize(560, 700), look);
+    QTRY_VERIFY_WITH_TIMEOUT(shown.last().at(2).value<Extensions::PreviewReply>().under == "cleanup", 10000);
+    const auto under = shown.last().at(2).value<Extensions::PreviewReply>();
+    QCOMPARE(under.kind, Extensions::PreviewReply::Markdown);
+    QVERIFY2(under.text.contains("```\nsudo apt clean\n```") && under.text.contains("docker image prune -a"), qPrintable(under.text));
+    Extensions::PreviewReply list;
+    for (const QList<QVariant> &one : shown) {
+        const auto reply = one.at(2).value<Extensions::PreviewReply>();
+        if (reply.resultId == "cleanup" && reply.kind == Extensions::PreviewReply::Image)
+            list = reply;
+    }
+    QVERIFY(list.scroll && list.tips.size() >= 10);
+    QCOMPARE(list.actionId, QStringLiteral("caches"));
+    QStringList tips;
+    for (const Extensions::Tip &tip : list.tips)
+        tips << tip.text;
+    QVERIFY2(tips.join("\n").contains("To free it:\nsudo apt autoremove") && tips.join("\n").contains("core (revision 100)")
+                 && tips.join("\n").contains("libold1\nlibold-common\nlinux-modules-6.1.0-1-generic"), qPrintable(tips.join("\n---\n")));
+
+    // The button: a plan of the user's caches, to the Trash; the small one isn't in it, and nothing outside ~/.cache.
+    host.resultAction("system-cleanup", "cleanup", "caches", "");
+    QTRY_COMPARE_WITH_TIMEOUT(plans.size(), 1, 10000);
+    const Extensions::Plan plan = plans.first().at(0).value<Extensions::Plan>();
+    QCOMPARE(plan.folder, cache);
+    QStringList items;
+    for (const Extensions::PlanMove &move : plan.moves) {
+        QCOMPARE(move.action, QStringLiteral("trash"));
+        QVERIFY2(move.problem.isEmpty(), qPrintable(move.item + ": " + move.problem));
+        items << move.item;
+    }
+    items.sort();
+    QCOMPARE(items, (QStringList{"bigprogram", "thumbnails"}));
+    QVERIFY2(plan.report.contains("Close the programs first") && plan.report.contains("Trash"), qPrintable(plan.report));
+    // Carried out by Argonaut's file engine: in the Trash, not gone; and the list is measured again.
+    FileOperations ops;
+    const int before = int(shown.size());
+    const PlanApply::Outcome outcome = PlanApply::run(&ops, plan, plan.moves);
+    QCOMPARE(outcome.moving, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(ops.activeJobs().isEmpty(), 20000);
+    QVERIFY(!QFile::exists(cache + "/bigprogram") && QFile::exists(Trash::homeFilesDir() + "/bigprogram/data.bin"));
+    QVERIFY(QFile::exists(cache + "/tiny/x"));
+    host.answerPlan("system-cleanup", plan.id, false, outcome.moving, outcome.skipped); // (the app's own Host does this in PlanApply::run)
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const QList<QVariant> &one : said) {
+            if (one.at(1).toString().contains("the caches are in the Trash"))
+                return true;
+        }
+        return false;
+    }(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(shown.size() > before + 1, 20000); // measured again: the caches have left the list
+    // Undone: they are back.
+    ops.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(ops.activeJobs().isEmpty(), 20000);
+    QVERIFY(QFile::exists(cache + "/bigprogram/data.bin"));
+    host.setEnabled("system-cleanup", false);
 }
 
 // The rules for what a plan may do, on their own (they are Argonaut's, and

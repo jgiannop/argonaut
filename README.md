@@ -79,6 +79,8 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 
 File → **Organize with Claude…** asks Claude, Anthropic's AI, to propose folders, better names and a short report for a messy folder. The plan appears in the preview pane as a checklist; you apply what you keep, and Ctrl+Z puts everything back. It is an extension (switch it off in Edit → Extensions), and it never has your key: Argonaut asks Claude for it. See [Claude and your privacy](#claude-and-your-privacy).
 
+**System cleanup.** View → **System Cleanup**: what can safely be removed to free disk space, biggest first: packages no longer needed, old kernels, downloaded package files, old Snap revisions, Docker's unused images and stopped containers, the journal's older part, crash reports, your caches and the Trash. It removes nothing by itself: the system's part is shown as the commands to run, and your caches go to the Trash only from a checklist you tick, with Ctrl+Z to bring them back.
+
 **How to install.** File → **Ask Claude: How to Install…**: name a program ("mysql server", "node 22") and Claude says the best way to install it on this computer, with the commands, how to check it and how to remove it. It looks up on your machine whether the package is installed and which version your system offers, so the answer is about your system. It only advises: Argonaut runs nothing.
 
 **Network connections.** View → **Network Connections**: the interfaces with their speed, the programs that listen for connections (a port other machines can reach is marked) and the programs that are connected, with where to. Searchable, updated every three seconds, with Analyze with Claude under it. It only shows; how much each program sends is something the system tells only the administrator.
@@ -269,7 +271,7 @@ Open the folder in VS Code and install the recommended extensions when asked (C/
 ```
 src/               Application source code
 src/tui/           The terminal interface (argonaut --tui)
-extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, Network Connections, How to Install, What Is This About, Tell Claude What to Do, Document Preview…)
+extensions/        The extensions that come with Argonaut (Git, System Dashboard, Space Overview, Running Services, Running Processes, System Journal, Network Connections, System Cleanup, How to Install, What Is This About, Tell Claude What to Do, Document Preview…)
 docs/              The guide for writing extensions; the comparison with GNOME's file dialog
 tests/             Qt Test suites (run with ctest)
 CMakeLists.txt     Build definition

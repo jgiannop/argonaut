@@ -426,6 +426,18 @@ if(UNIX)
         install(TARGETS argonaut-journal-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
         install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-journal/extension.json
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-journal)
+        # System Cleanup: what can be removed to free space, and how (it removes nothing itself).
+        qt_add_executable(argonaut-cleanup-extension extensions/cleanup/main.cpp)
+        target_link_libraries(argonaut-cleanup-extension PRIVATE argonaut_core)
+        set(ARGONAUT_CLEANUP_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-cleanup-extension")
+        configure_file(extensions/cleanup/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/extensions/system-cleanup/extension.json @ONLY)
+        set(ARGONAUT_CLEANUP_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-cleanup-extension")
+        configure_file(extensions/cleanup/extension.json.in
+                       ${CMAKE_CURRENT_BINARY_DIR}/install/system-cleanup/extension.json @ONLY)
+        install(TARGETS argonaut-cleanup-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/system-cleanup/extension.json
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/system-cleanup)
         # Network Connections: the interfaces, what listens and what is connected (ss, /proc/net).
         qt_add_executable(argonaut-network-extension extensions/network/main.cpp)
         target_link_libraries(argonaut-network-extension PRIVATE argonaut_core Qt6::Network)

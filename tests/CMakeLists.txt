@@ -66,7 +66,7 @@ if(TARGET argonaut-git-extension)
         add_dependencies(tst_extensions argonaut-dashboard-extension)
     endif()
     if(TARGET argonaut-services-extension)
-        add_dependencies(tst_extensions argonaut-services-extension argonaut-processes-extension argonaut-network-extension)
+        add_dependencies(tst_extensions argonaut-services-extension argonaut-processes-extension argonaut-network-extension argonaut-cleanup-extension)
     endif()
 endif()
 

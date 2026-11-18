@@ -618,7 +618,7 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <p>Extensions are small programs that add to Argonaut: a mark on some files (a letter or a dot, like Git's
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
-<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>How to Install</b>,
+<b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>System Cleanup</b>, <b>How to Install</b>,
 <b>What Is This About</b>, <b>Tell Claude What to Do</b>, <b>How to Install</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
@@ -707,6 +707,16 @@ is, for Claude to read.</li>
 <p>A program is never read or sent, nor a file that only looks like a document. What can't be read gets a line
 saying why, and Claude isn't asked. It needs your Claude API key (Preferences → Claude), costs a little each time
 (said under the answer), and every answer is kept with the other reports (Go → Claude Reports).</p>
+<p><b>System Cleanup</b>: choose <b>View → System Cleanup</b>, or find it in the command palette. The preview pane
+measures what can safely be removed to free disk space, biggest first, each with its size and what removing it means:
+packages no longer needed, old kernels (the one running and the newest other one always stay), the downloaded package
+files, old Snap revisions, Docker's unused images, stopped containers and build cache (never its volumes, which hold
+data), the journal beyond its newest 200 MB, crash reports, your programs' caches and the Trash. The <b>ⓘ</b> beside a row
+says more. <b>It removes nothing by itself.</b> Under the list are the commands that free the system's part, to read and
+run yourself in a terminal (those with sudo ask for your password). Your own caches are freed with <b>Move My Caches to
+the Trash…</b> under the list: they appear as a checklist, what stays ticked goes to the Trash, and [[Ctrl+Z]] brings it
+back. Programs make their caches again, more slowly the first time, so close them first. The space of what is in the
+Trash returns when you empty it. Nothing leaves this computer.</p>
 <p><b>How to Install</b>: choose <b>File → Ask Claude: How to Install…</b>, or find it in the command palette, and
 name a program: "mysql server", "docker", "node 22". Claude answers in the preview pane with the best way to install
 it on this computer: which edition and from where, the commands step by step, how to check that it works and how to
