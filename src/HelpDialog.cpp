@@ -316,7 +316,8 @@ bookmarks, recent files, thumbnails and Trash, and adds a few things of its own.
 </ul>
 <h2>Any command by name</h2>
 <p>Press [[Ctrl+Shift+P]] and type a few letters of what you want: “hid” for Show Hidden Files,
-“nf” for New Folder, “sort size”. [[Enter]] runs it, [[Esc]] closes. The commands you used last come first.</p>
+“nf” for New Folder, “sort size”. [[Enter]] runs it, [[Esc]] closes. The commands you used last come first.
+Commands that come from an extension start with <b>ext::</b> (“ext::System Cleanup”), so “ext” lists them all.</p>
 <p>See also: <a href="topic:views">Views and sorting</a>, <a href="topic:shortcuts">Keyboard shortcuts</a>.</p>
 )"));
 
@@ -867,7 +868,7 @@ window's menus have (there are no tabs in a terminal). Click one, or press [[Alt
 its key.</li>
 <li><b>Command palette:</b> [[Ctrl+P]] opens a list of everything you can do. Type a few letters ("new", "trash",
 "big"), choose with the arrows and press [[Enter]]. Each command shows the key that does the same. Commands that
-extensions add to this window's menus are there too, and so are the themes ("theme forest"; the terminal's own
+extensions add to this window's menus are there too, named <b>ext::…</b>, and so are the themes ("theme forest"; the terminal's own
 colours are the default): <b>System Dashboard</b> opens in the preview at the right,
 drawn with characters, and updates as it does here, <b>Space Overview</b> shows how big the folder is and
 the biggest things inside it, <b>Running Services</b> and <b>Running Processes</b> list every running service and process, most memory

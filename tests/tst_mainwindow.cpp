@@ -2515,6 +2515,19 @@ void TestMainWindow::extensionResultStaysLive()
         for (QAction *action : view->actions())
             times += action->text() == "In The && Menu";
         QCOMPARE(times, 1);
+        // In the command palette as an extension's: "ext::…", with the menu
+        // and the extension's name where it lives.
+        w->showCommandPalette();
+        bool inPalette = false;
+        for (const CommandPalette::Command &c : w->m_palette->commands()) {
+            QVERIFY2(c.name != "In The & Menu", "an extension's command without its ext:: name");
+            if (c.name == "ext::In The & Menu") {
+                inPalette = true;
+                QVERIFY2(c.where.startsWith("View · "), qPrintable(c.where));
+            }
+        }
+        w->m_palette->close();
+        QVERIFY(inPalette);
         QMenu context;
         w->addExtensionCommands(&context, {});
         for (QAction *action : context.actions())

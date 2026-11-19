@@ -1610,7 +1610,7 @@ void TestTui::extensionResultInThePreview()
     // Its command for the window's View menu is in the palette here.
     QTRY_VERIFY_WITH_TIMEOUT([&] {
         keys({Key::control('p')});
-        const bool there = app->paletteNames().contains("In The & Menu");
+        const bool there = app->paletteNames().contains("ext::In The & Menu");
         keys({Key::of(Key::Escape)});
         return there;
     }(), 10000);
@@ -1641,8 +1641,12 @@ void TestTui::extensionResultInThePreview()
 
     QVERIFY(!app->isPreviewShown());
     keys({Key::control('p')});
+    type("ext");
+    QCOMPARE(app->paletteNames(), QStringList{"ext::In The & Menu"}); // "ext" lists the extensions' commands
+    keys({Key::of(Key::Escape)});
+    keys({Key::control('p')});
     type("in the");
-    QCOMPARE(app->paletteNames().first(), QStringLiteral("In The & Menu"));
+    QCOMPARE(app->paletteNames().first(), QStringLiteral("ext::In The & Menu"));
     keys({Key::of(Key::Enter)});
 
     // The preview opens for it; told the room in characters, it sends a

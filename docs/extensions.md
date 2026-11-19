@@ -337,8 +337,10 @@ instead of pixels:
 ```
 
 If you send `ansi` to the window, it shows the text without the colours.
-The terminal's command palette (Ctrl+P) lists the commands you put in the
-window's menus, and asks their `confirm` and `ask` questions itself.
+In both command palettes your menu commands are named with `ext::` in front
+(`ext::System Cleanup`), so users can tell them from Argonaut's own; the
+window's palette also names your extension beside it. The terminal's command
+palette (Ctrl+P) lists the commands you put in the window's menus, and asks their `confirm` and `ask` questions itself.
 
 An update only replaces your result where it is shown. It never opens the
 pane and never takes it from a file, so a late one does no harm; but stop

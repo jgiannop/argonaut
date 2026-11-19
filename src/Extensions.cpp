@@ -23,6 +23,12 @@
 
 namespace Extensions {
 
+QString paletteName(const QString &label)
+{
+    return QStringLiteral("ext::") + label;
+}
+
+
 namespace {
 
 // Limits on what an extension may send: it is someone else's program.

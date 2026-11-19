@@ -1172,7 +1172,10 @@ void MainWindow::showCommandPalette()
     QList<CommandPalette::Command> commands;
     QSet<QAction *> seen{m_paletteAct};
     auto clean = [](QString text) {
+        // "&Open" → "Open", but "Q && A" is "Q & A".
+        text.replace(QStringLiteral("&&"), QStringLiteral("\x01"));
         text.remove(QLatin1Char('&'));
+        text.replace(QLatin1Char('\x01'), QLatin1Char('&'));
         text.remove(QChar(0x2026));
         return text.trimmed();
     };
@@ -1194,7 +1197,13 @@ void MainWindow::showCommandPalette()
             if (!act->isEnabled() || act->text().isEmpty() || seen.contains(act))
                 continue;
             seen.insert(act);
-            commands.append({clean(act->text()), where, act});
+            // An extension's: "ext::System Cleanup", in "View · System Cleanup".
+            const QString extension = act->property("argonautExtension").toString();
+            if (!extension.isEmpty())
+                commands.append({Extensions::paletteName(clean(act->text())),
+                                 where + QStringLiteral(" · ") + Extensions::Host::instance()->nameOf(extension), act});
+            else
+                commands.append({clean(act->text()), where, act});
         }
     };
     for (QAction *top : m_menuBar->actions()) {

@@ -60,6 +60,7 @@ QList<App::Menu> App::menus()
         for (const Extensions::Command &command : added) {
             MenuItem i;
             i.name = command.label;
+            i.palette = Extensions::paletteName(command.label); // "ext::…" in the palette
             i.run = [this, command] { runExtensionCommand(command); };
             i.late = true;
             items->append(i);

@@ -90,6 +90,7 @@ void addToMenuBar(QMenu *menu, QWidget *window, const QString &which, const QStr
     for (const Extensions::Command &command : commands) {
         QAction *action = menu->addAction(QString(command.label).replace(QLatin1Char('&'), QStringLiteral("&&")));
         action->setProperty(mark, true);
+        action->setProperty("argonautExtension", command.extension); // the command palette names it
         if (command.checked) {
             action->setCheckable(true);
             action->setChecked(true);

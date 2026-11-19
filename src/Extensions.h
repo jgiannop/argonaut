@@ -55,6 +55,11 @@ struct Info
 };
 
 // A command an extension offers in the right-click menu.
+struct Command;
+// Its name in a command palette: "ext::Ask Claude: How to Install…", so
+// what comes from an extension can be told apart (and typing "ext" lists them).
+QString paletteName(const QString &label);
+
 struct Command
 {
     QString extension;  // its extension's id
