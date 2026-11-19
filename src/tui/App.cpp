@@ -220,9 +220,51 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
                      : saved == QLatin1String("grid") ? View::Grid
                      : saved.isEmpty() && settings.value(QStringLiteral("tui/grid/%1").arg(i), false).toBool() ? View::Grid : View::List;
         }
+        {
+            const QSettings settings;
+            const int column = settings.value(QStringLiteral("tui/sort/%1").arg(i), int(DirectoryModel::NameColumn)).toInt();
+            const bool down = settings.value(QStringLiteral("tui/sortDown/%1").arg(i), false).toBool();
+            if (column >= DirectoryModel::NameColumn && column <= DirectoryModel::ModifiedColumn)
+                p.model->sort(column, down ? Qt::DescendingOrder : Qt::AscendingOrder);
+        }
         if (!navigate(p, folders[i], false))
             navigate(p, QDir::homePath(), false);
     }
+}
+
+int App::sortColumn(int pane) const
+{
+    return m_panes[pane].model->sortColumn();
+}
+
+Qt::SortOrder App::sortOrder(int pane) const
+{
+    return m_panes[pane].model->sortOrder();
+}
+
+void App::setSort(int pane, int column, Qt::SortOrder order)
+{
+    if (column < DirectoryModel::NameColumn || column > DirectoryModel::ModifiedColumn)
+        return;
+    Pane &p = m_panes[pane];
+    p.model->sort(column, order); // the cursor stays on its item (layoutChanged → rowsChanged)
+    QSettings settings;
+    settings.setValue(QStringLiteral("tui/sort/%1").arg(pane), column);
+    settings.setValue(QStringLiteral("tui/sortDown/%1").arg(pane), order == Qt::DescendingOrder);
+    const QString name = p.model->headerData(column, Qt::Horizontal).toString();
+    say(QStringLiteral("By %1, %2").arg(name.toLower(), order == Qt::AscendingOrder ? QStringLiteral("going up") : QStringLiteral("going down")));
+}
+
+void App::sortBy(int pane, int column)
+{
+    const Pane &p = m_panes[pane];
+    if (p.model->sortColumn() == column) {
+        setSort(pane, column, p.model->sortOrder() == Qt::AscendingOrder ? Qt::DescendingOrder : Qt::AscendingOrder);
+        return;
+    }
+    // A new column: names and types from A, sizes and dates the biggest and newest first.
+    setSort(pane, column, column == DirectoryModel::SizeColumn || column == DirectoryModel::ModifiedColumn ? Qt::DescendingOrder
+                                                                                                         : Qt::AscendingOrder);
 }
 
 App::~App() = default;
@@ -1515,6 +1557,17 @@ void App::mouseInPane(int i, const Mouse &mouse)
     }
     const bool wasActive = m_active == i;
     m_active = i;
+    if (mouse.kind == Mouse::Press && mouse.y == p.columnsY && p.view == View::List) {
+        // A column's name: ordered by it (again: the other way).
+        int column = -1;
+        for (int c = DirectoryModel::NameColumn; c <= DirectoryModel::ModifiedColumn; ++c)
+            if (p.columnX[c] >= 0 && mouse.x >= p.columnX[c] - 1)
+                column = c;
+        if (column >= 0)
+            sortBy(i, column);
+        emit changed();
+        return;
+    }
     if (mouse.kind == Mouse::Press && mouse.y == p.headY) {
         const int arrow = p.arrowsX < 0 || mouse.x < p.arrowsX ? -1 : (mouse.x - p.arrowsX) / 2;
         switch (arrow) {
@@ -2578,17 +2631,31 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
         drawIcons(screen, p, active, x, width, top, height);
         return;
     }
-    // Columns: name, size, when. Narrow panes drop the date, then the size.
+    // Columns: name, size, type, when. Narrow panes drop the type, then the
+    // date, then the size. A click on a column's name orders by it.
+    const int typeWidth = width >= 96 ? 20 : width >= 76 ? 16 : 0;
     const int dateWidth = width >= 56 ? 17 : 0;
     const int sizeWidth = width >= 34 ? 10 : 0;
-    const int nameWidth = width - 2 - (dateWidth ? dateWidth + 1 : 0) - (sizeWidth ? sizeWidth + 1 : 0) - 3;
+    const int nameWidth = width - 2 - (dateWidth ? dateWidth + 1 : 0) - (typeWidth ? typeWidth + 1 : 0) - (sizeWidth ? sizeWidth + 1 : 0) - 3;
     const int sizeX = x + 1 + nameWidth + 3 + 1;
-    const int dateX = sizeX + sizeWidth + 1;
-    screen.put(x + 2, top + 1, p.model->headerData(DirectoryModel::NameColumn, Qt::Horizontal).toString(), kDim, nameWidth);
-    if (sizeWidth)
-        screen.put(sizeX, top + 1, p.model->headerData(DirectoryModel::SizeColumn, Qt::Horizontal).toString(), kDim, sizeWidth);
-    if (dateWidth)
-        screen.put(dateX, top + 1, p.model->headerData(DirectoryModel::ModifiedColumn, Qt::Horizontal).toString(), kDim, dateWidth);
+    const int typeX = sizeX + (sizeWidth ? sizeWidth + 1 : 0) + 1;
+    const int dateX = typeX + (typeWidth ? typeWidth + 1 : 0);
+    p.columnsY = top + 1;
+    p.columnX[DirectoryModel::NameColumn] = x + 2;
+    p.columnX[DirectoryModel::SizeColumn] = sizeWidth ? sizeX : -1;
+    p.columnX[DirectoryModel::TypeColumn] = typeWidth ? typeX : -1;
+    p.columnX[DirectoryModel::ModifiedColumn] = dateWidth ? dateX : -1;
+    const int widths[4] = {nameWidth, sizeWidth, typeWidth, dateWidth};
+    for (int column = DirectoryModel::NameColumn; column <= DirectoryModel::ModifiedColumn; ++column) {
+        if (p.columnX[column] < 0)
+            continue;
+        QString title = p.model->headerData(column, Qt::Horizontal).toString();
+        const bool sorted = p.model->sortColumn() == column;
+        if (sorted)
+            title += p.model->sortOrder() == Qt::AscendingOrder ? QStringLiteral(" ▲") : QStringLiteral(" ▼");
+        screen.put(p.columnX[column], top + 1, Screen::elided(title, widths[column]), sorted ? Style{Ink::Normal, Paper::Normal, true} : kDim,
+                   widths[column]);
+    }
 
     const int rows = qMax(1, height - 3); // heading, column names, footer
     p.rowsShown = rows;
@@ -2669,6 +2736,8 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
             }
             screen.put(sizeX + qMax(0, sizeWidth - Screen::widthOf(size)), y, Screen::elided(size, sizeWidth, false), sizeStyle);
         }
+        if (typeWidth)
+            screen.put(typeX, y, Screen::elided(p.model->index(row, DirectoryModel::TypeColumn).data().toString(), typeWidth, false), detail, typeWidth);
         if (dateWidth)
             screen.put(dateX, y, p.model->index(row, DirectoryModel::ModifiedColumn).data().toString(), detail, dateWidth);
     }
@@ -2712,6 +2781,7 @@ QString App::footerText(const Pane &p) const
 // under the cursor.
 void App::drawGrid(Screen &screen, Pane &p, bool active, int x, int width, int top, int height)
 {
+    p.columnsY = -1;
     p.rowsY = top + 1; // no line of column names
     const int up = upRows(p);
     const int items = p.model->rowCount();
@@ -2848,7 +2918,7 @@ void App::drawGridFooter(Screen &screen, const Pane &p, int x, int width, int y,
         const int row = p.cursor - up;
         const QModelIndex index0 = p.model->index(row, 0);
         footer = p.model->fileName(index0);
-        for (int column : {DirectoryModel::SizeColumn, DirectoryModel::ModifiedColumn}) {
+        for (int column : {DirectoryModel::SizeColumn, DirectoryModel::TypeColumn, DirectoryModel::ModifiedColumn}) {
             const QString detail = p.model->index(row, column).data().toString();
             if (!detail.isEmpty())
                 footer += QStringLiteral(" · ") + detail;
@@ -2927,6 +2997,7 @@ QString takeCells(const QString &text, int width, QString *rest)
 // of a picture as there is; a line of items takes six screen lines.
 void App::drawIcons(Screen &screen, Pane &p, bool active, int x, int width, int top, int height)
 {
+    p.columnsY = -1;
     constexpr int CellHeight = 6; // the frame's line, three of picture, two of name
     constexpr int IconWidth = 7;
     p.rowsY = top + 1; // no line of column names
@@ -3267,6 +3338,7 @@ void App::drawHelp(Screen &screen)
         "  Ctrl+B                            show or hide the places at the left",
         "                                    (in them: Up, Down, Enter opens one in the pane; a click does too)",
         "  F9                                this pane as a list, a grid of names, or big icons",
+        "  a click on a column's name        the list in that order (again: the other way); View → Sort by too",
         "                                    (in a grid the arrows move four ways; Enter opens, Backspace goes up)",
         "  a letter or a digit               go to the name that starts with what you type (keep typing;",
         "                                    the same letter again: the next such name; Esc or a pause ends it)",

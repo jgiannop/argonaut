@@ -121,6 +121,12 @@ public:
     };
     View view(int pane) const { return m_panes[pane == 1 ? 1 : 0].view; }
     bool isGrid(int pane) const { return view(pane) == View::Grid; }
+    // The order of a pane's list: a DirectoryModel column and its direction
+    // (a click on a column's name; again: the other way; View → Sort by).
+    int sortColumn(int pane) const;
+    Qt::SortOrder sortOrder(int pane) const;
+    void sortBy(int pane, int column); // that column; the one it is already: the other way
+    void setSort(int pane, int column, Qt::SortOrder order);
     QString cursorPath() const;         // the item under the active pane's cursor
     QStringList selectedPaths() const;  // the active pane's selection
     QString message() const { return m_message; }
@@ -172,6 +178,8 @@ private:
         QStringList forward;   // where Alt+Right goes (after a back)
         QStringList cameUpFrom; // the folders Up left, for Down to go back into (last = nearest)
         int arrowsX = -1;      // from the last frame: the heading's ← → ↑ ↓ (-1: not drawn)
+        int columnsY = -1;     // from the last frame: the line of column names (-1: none, a grid)
+        int columnX[4] = {-1, -1, -1, -1}; // where Name, Size, Type, Modified start (-1: not shown)
         int cursor = 0;
         int top = 0;           // the first row shown
         QString cursorPath;    // kept across reloads

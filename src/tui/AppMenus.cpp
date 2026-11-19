@@ -117,6 +117,30 @@ QList<App::Menu> App::menus()
         view.items.append(i);
     }
     view.items.append(line());
+    // The order: by a column, and which way (a click on a column's name does the same).
+    {
+        const int active = m_active;
+        const int sorted = p.model->sortColumn();
+        const bool down = p.model->sortOrder() == Qt::DescendingOrder;
+        const QPair<int, const char *> columns[] = {{DirectoryModel::NameColumn, "Name"},
+                                                    {DirectoryModel::SizeColumn, "Size"},
+                                                    {DirectoryModel::TypeColumn, "Type"},
+                                                    {DirectoryModel::ModifiedColumn, "Modified"}};
+        for (const auto &each : columns) {
+            const int column = each.first;
+            MenuItem i = item(QStringLiteral("Sort by %1").arg(QLatin1String(each.second)), QString(), [this, active, column] {
+                if (sortColumn(active) != column)
+                    sortBy(active, column); // the newest, the biggest first; names from A
+            });
+            i.mark = sorted == column ? QStringLiteral("●") : QString();
+            i.inPalette = sorted != column;
+            view.items.append(i);
+        }
+        view.items.append(ticked(QStringLiteral("Reverse Order"), down, QString(), [this, active, sorted, down] {
+            setSort(active, sorted, down ? Qt::AscendingOrder : Qt::DescendingOrder);
+        }, QStringLiteral("Sort Going Up"), QStringLiteral("Sort Going Down")));
+    }
+    view.items.append(line());
     view.items.append(ticked(QStringLiteral("Hidden Files"), m_showHidden, QStringLiteral("."), press(Key::character('.')),
                              QStringLiteral("Hide Hidden Files"), QStringLiteral("Show Hidden Files")));
     view.items.append(ticked(QStringLiteral("Preview"), m_preview, QStringLiteral("F3"), press(Key::of(Key::F3)),

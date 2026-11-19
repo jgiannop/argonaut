@@ -66,6 +66,7 @@ private slots:
     void gridView();
     void arrowsInTheHeading();
     void upRowIsASetting();
+    void columnsAreOrderedByAClick();
     void bigIcons();
     void scrollbars();
     void placesAtTheLeft();
@@ -715,6 +716,71 @@ void TestTui::upRowIsASetting()
     keys({view});
     QVERIFY(screen().contains("Show .. Row"));
     keys({Key::of(Key::Escape)});
+}
+
+// The list has a Type column where there is room, and a click on a column's
+// name orders by it (again: the other way), kept per pane.
+void TestTui::columnsAreOrderedByAClick()
+{
+    make("big.bin", QByteArray(5000, 'x'));
+    make("zeta.txt", "z");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    Screen s(120, 24);
+    app->render(s);
+    int columnsY = -1;
+    for (int y = 0; y < s.height() && columnsY < 0; ++y)
+        if (s.line(y).contains("Name") && s.line(y).contains("Modified"))
+            columnsY = y;
+    QVERIFY2(columnsY >= 0, qPrintable(s.text()));
+    const QString names = s.line(columnsY);
+    QVERIFY2(names.contains("Type") && names.contains("Name ▲"), qPrintable(names));
+    QVERIFY2(s.text().contains("Plain text document"), qPrintable(s.text())); // the type of alpha.txt, whole where there is room
+    // Narrow: no room for the type.
+    QVERIFY(!screen(60, 24).contains("Type"));
+
+    auto order = [&] {
+        QStringList files;
+        for (const QString &line : screen(120, 24).split('\n'))
+            for (const char *name : {"alpha.txt", "beta.txt", "big.bin", "zeta.txt"})
+                if (line.contains(QString::fromLatin1(name) + " "))
+                    files << QString::fromLatin1(name);
+        return files;
+    };
+    QCOMPARE(order(), (QStringList{"alpha.txt", "beta.txt", "big.bin", "zeta.txt"}));
+    app->selectPath(m_left + "/beta.txt");
+    // Size: the biggest first, and the cursor stays on its item.
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, int(names.indexOf("Size")) + 1, columnsY});
+    QCOMPARE(app->sortColumn(0), int(DirectoryModel::SizeColumn));
+    QCOMPARE(app->sortOrder(0), Qt::DescendingOrder);
+    QCOMPARE(order().first(), QStringLiteral("big.bin"));
+    QCOMPARE(app->cursorPath(), m_left + "/beta.txt");
+    QVERIFY(screen(120, 24).contains("Size ▼"));
+    // Again: the other way.
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, int(names.indexOf("Size")) + 1, columnsY});
+    QCOMPARE(app->sortOrder(0), Qt::AscendingOrder);
+    QCOMPARE(order().last(), QStringLiteral("big.bin"));
+    // Name, going down; folders still come first.
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, int(names.indexOf("Name")) + 1, columnsY});
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, int(names.indexOf("Name")) + 1, columnsY});
+    QCOMPARE(app->sortOrder(0), Qt::DescendingOrder);
+    QCOMPARE(order(), (QStringList{"zeta.txt", "big.bin", "beta.txt", "alpha.txt"}));
+    QVERIFY(screen(120, 24).indexOf("Documents/") < screen(120, 24).indexOf("zeta.txt"));
+    // The View menu sorts too, and the order is kept for next time.
+    Key view = Key::character('v');
+    view.alt = true;
+    keys({view});
+    QVERIFY(screen(120, 24).contains("Sort by Type"));
+    keys({Key::of(Key::Escape)});
+    app->setSort(0, DirectoryModel::ModifiedColumn, Qt::DescendingOrder);
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QCOMPARE(app->sortColumn(0), int(DirectoryModel::ModifiedColumn));
+    QCOMPARE(app->sortOrder(0), Qt::DescendingOrder);
 }
 
 void TestTui::gridView()
