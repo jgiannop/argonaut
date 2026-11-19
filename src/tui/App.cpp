@@ -116,6 +116,7 @@ App::App(const QString &leftFolder, const QString &rightFolder, QObject *parent)
     // The sidebar's places: drives and bookmarks change behind our back.
     m_sidebar = QSettings().value(QStringLiteral("tui/sidebar"), true).toBool();
     m_effects = QSettings().value(QStringLiteral("tui/effects"), true).toBool();
+    m_upRow = QSettings().value(QStringLiteral("tui/upRow"), false).toBool();
     // The places are read again when something about them changes (a
     // bookmark, a mount, a drive, an extension's rows), a moment after, so a
     // burst of changes is one reading. Nothing is read while nothing changes.
@@ -266,7 +267,7 @@ QString App::folder(int index) const
 // click on it goes up. Places and the Trash have none (Backspace goes back).
 int App::upRows(const Pane &p) const
 {
-    if (p.current.isEmpty() || DirectoryModel::isVirtualPath(p.current) || Trash::isFilesDir(p.current))
+    if (!m_upRow || p.current.isEmpty() || DirectoryModel::isVirtualPath(p.current) || Trash::isFilesDir(p.current))
         return 0;
     return QFileInfo(p.current).path() != p.current ? 1 : 0;
 }
@@ -357,8 +358,11 @@ bool App::navigate(Pane &p, const QString &path, bool remember)
     }
     if (clean == p.current)
         return true;
-    if (remember && !p.current.isEmpty())
+    if (remember && !p.current.isEmpty()) {
         p.back.append(p.current);
+        p.forward.clear();
+    }
+    p.cameUpFrom.clear(); // Up and Down put it back
     // Going up: the cursor lands on the folder we came out of.
     p.wantedCursor = !p.current.isEmpty() && QFileInfo(p.current).path() == clean ? p.current : QString();
     p.current = clean;
@@ -377,13 +381,80 @@ void App::goUp()
 {
     Pane &p = pane();
     if (DirectoryModel::isVirtualPath(p.current) || Trash::isFilesDir(p.current)) {
-        if (!p.back.isEmpty())
-            navigate(p, p.back.takeLast(), false);
+        goBack();
         return;
     }
     const QString up = QFileInfo(p.current).path();
-    if (up != p.current)
-        navigate(p, up);
+    if (up == p.current)
+        return;
+    const QString left = p.current;
+    QStringList trail = p.cameUpFrom;
+    if (navigate(p, up)) { // the cursor lands on the folder we came out of
+        trail.append(left);
+        p.cameUpFrom = trail;
+    }
+}
+
+bool App::canGoUp(const Pane &p) const
+{
+    if (DirectoryModel::isVirtualPath(p.current) || Trash::isFilesDir(p.current))
+        return !p.back.isEmpty();
+    return !p.current.isEmpty() && QFileInfo(p.current).path() != p.current;
+}
+
+void App::goBack()
+{
+    Pane &p = pane();
+    if (p.back.isEmpty())
+        return;
+    const QString was = p.current;
+    if (navigate(p, p.back.takeLast(), false))
+        p.forward.append(was);
+}
+
+void App::goForward()
+{
+    Pane &p = pane();
+    if (p.forward.isEmpty())
+        return;
+    const QString was = p.current;
+    if (navigate(p, p.forward.takeLast(), false))
+        p.back.append(was);
+}
+
+QString App::downTarget(const Pane &p) const
+{
+    // The folder under the cursor (not "..", not in the Trash) ...
+    if (!p.model->isTrash() && !(upRows(p) == 1 && p.cursor == 0)) {
+        const QModelIndex index = p.model->index(p.cursor - upRows(p), 0);
+        if (index.isValid() && p.model->isDir(index))
+            return p.model->filePath(index);
+    }
+    // ... else back into the one Up left.
+    if (!p.cameUpFrom.isEmpty()) {
+        const QString last = p.cameUpFrom.last();
+        if (QFileInfo(last).path() == p.current && QFileInfo(last).isDir())
+            return last;
+    }
+    return {};
+}
+
+void App::goDown()
+{
+    Pane &p = pane();
+    const QString target = downTarget(p);
+    if (target.isEmpty())
+        return;
+    QStringList trail = p.cameUpFrom;
+    const bool backDown = !trail.isEmpty() && trail.last() == target;
+    if (!navigate(p, target))
+        return;
+    if (backDown) { // further down still leads back where Up started
+        trail.removeLast();
+        p.cameUpFrom = trail;
+        if (!trail.isEmpty())
+            p.wantedCursor = trail.last();
+    }
 }
 
 void App::openCursor()
@@ -746,6 +817,27 @@ void App::setView(View view)
 // F4: one pane or two. The second pane opens on the folder you are in the
 // first time, and keeps its own folder after that. Going back to one pane
 // keeps the pane you are in.
+void App::setUpRowShown(bool on)
+{
+    if (m_upRow == on)
+        return;
+    // Every row number moves by one: the cursor stays on its item.
+    int before[2];
+    for (int i = 0; i < 2; ++i)
+        before[i] = upRows(m_panes[i]);
+    m_upRow = on;
+    QSettings().setValue(QStringLiteral("tui/upRow"), on);
+    for (int i = 0; i < 2; ++i) {
+        Pane &p = m_panes[i];
+        const int shift = upRows(p) - before[i];
+        p.cursor = qBound(0, p.cursor + shift, qMax(0, rowCount(p) - 1));
+        p.top = qMax(0, p.top + (p.view == View::List ? shift : 0));
+        p.hover = -1;
+        p.widthStale = true;
+    }
+    say(on ? QStringLiteral("A .. row at the top of each folder") : QStringLiteral("No .. row: ↑ in the heading, Backspace or Alt+Up go up"));
+}
+
 void App::setEffects(bool on)
 {
     if (m_effects == on)
@@ -1424,7 +1516,14 @@ void App::mouseInPane(int i, const Mouse &mouse)
     const bool wasActive = m_active == i;
     m_active = i;
     if (mouse.kind == Mouse::Press && mouse.y == p.headY) {
-        goUp(); // a click on the folder's name in the heading: up
+        const int arrow = p.arrowsX < 0 || mouse.x < p.arrowsX ? -1 : (mouse.x - p.arrowsX) / 2;
+        switch (arrow) {
+        case 0: goBack(); break;
+        case 1: goForward(); break;
+        case 2: goUp(); break;
+        case 3: goDown(); break;
+        default: goUp(); // a click on the folder's name in the heading: up
+        }
         emit changed();
         return;
     }
@@ -1695,6 +1794,15 @@ void App::normalKey(const Key &key)
     if (typingTakes(key))
         return;
     Pane &p = pane();
+    if (key.alt && !key.ctrl && !key.shift) { // the heading's arrows
+        switch (key.code) {
+        case Key::Left: goBack(); return;
+        case Key::Right: goForward(); return;
+        case Key::Up: goUp(); return;
+        case Key::Down: goDown(); return;
+        default: break;
+        }
+    }
     switch (key.code) {
     case Key::Up:
         if (p.cursor - perLine(p) >= 0)
@@ -1734,10 +1842,7 @@ void App::normalKey(const Key &key)
         openCursor();
         return;
     case Key::Left:
-        if (key.alt) {
-            if (!p.back.isEmpty())
-                navigate(p, p.back.takeLast(), false);
-        } else if (p.view != View::List) {
+        if (p.view != View::List) {
             moveCursor(p, p.cursor - 1);
         } else {
             goUp();
@@ -2448,7 +2553,19 @@ void App::drawPane(Screen &screen, int index, int x, int width, int top, int hei
                                       ? Extensions::Info()
                                       : Extensions::Host::instance()->info(p.model->extensionsFolder());
     const int infoWidth = info.text.isEmpty() ? 0 : qMin(Screen::widthOf(info.text), width / 2);
-    screen.put(x + 1, top, Screen::elided(shown(p.current), width - 2 - (infoWidth ? infoWidth + 1 : 0)), heading);
+    // ← → ↑ ↓ (back, forward, up, down) before the folder, as in the window's header.
+    int pathX = x + 1;
+    p.arrowsX = -1;
+    if (width >= 30) {
+        p.arrowsX = x + 1;
+        const bool can[4] = {!p.back.isEmpty(), !p.forward.isEmpty(), canGoUp(p), !downTarget(p).isEmpty()};
+        static const char16_t arrows[4] = {u'←', u'→', u'↑', u'↓'};
+        for (int k = 0; k < 4; ++k)
+            screen.put(p.arrowsX + 2 * k, top, QString(QChar(arrows[k])),
+                       can[k] ? Style{active ? Ink::Accent : Ink::Normal, Paper::Normal, true} : kDim);
+        pathX = x + 10;
+    }
+    screen.put(pathX, top, Screen::elided(shown(p.current), x + width - 1 - pathX - (infoWidth ? infoWidth + 1 : 0)), heading);
     if (infoWidth)
         screen.put(x + width - 1 - infoWidth, top, Screen::elided(info.text, infoWidth, false), kDim);
 
@@ -3138,8 +3255,10 @@ void App::drawHelp(Screen &screen)
         "                                    (from the files, F12 also brings the shell to the folder you are in;",
         "                                    in it: Ctrl+Up brings the files to its folder, exit closes it;",
         "                                    the wheel, its scrollbar or Shift+PgUp look back at what it wrote before)",
-        "  Backspace, Left, Enter on ..      up to the folder it is in",
-        "  Alt+Left                          back to where you were",
+        "  Backspace, Left                   up to the folder it is in (Enter on .. too, with View → Show .. Row)",
+        "  Alt+Left, Alt+Right               back to where you were, and forward again",
+        "  Alt+Up, Alt+Down                  up a folder; down into the folder under the cursor, or back into",
+        "                                    the one Up left (or click ← → ↑ ↓ in the pane's heading)",
         "  F4                                a second pane beside this one, or back to one",
         "  Tab, Shift+Tab                    the next of the panes and the places at the left",
         "  Ctrl+P                            the command palette: type a few letters of what you want to do",

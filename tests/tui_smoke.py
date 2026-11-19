@@ -37,21 +37,21 @@ os.write(fd, b"\x1bOP")      # F1: the help
 pump(0.6)
 os.write(fd, b"x")            # any key closes it
 pump(0.4)
-# A rectangle: the button pressed on the first item (row 5), the mouse moved one row down with it held
+# A rectangle: the button pressed on the first item (row 4: there is no ".." row by default), the mouse moved one row down with it held
 # (a "motion" report), and released. Both items are selected; Esc clears that.
-os.write(fd, b"\x1b[<0;30;5M")
+os.write(fd, b"\x1b[<0;30;4M")
 pump(0.2)
-os.write(fd, b"\x1b[<32;30;6M")
+os.write(fd, b"\x1b[<32;30;5M")
 pump(0.4)
-os.write(fd, b"\x1b[<0;30;6m")
+os.write(fd, b"\x1b[<0;30;5m")
 pump(0.4)
 dragged = out.decode("utf-8", "replace")
 os.write(fd, b"\x1b")
 pump(0.8)
-# A double click on the first item ("inside/": screen row 5, under "..", column 30, right of the
+# A double click on the first item ("inside/": screen row 4, column 30, right of the
 # places at the left, which take 22 columns): into the folder.
 for _ in range(2):
-    os.write(fd, b"\x1b[<0;30;5M\x1b[<0;30;5m")
+    os.write(fd, b"\x1b[<0;30;4M\x1b[<0;30;4m")
     pump(0.15)
 pump(0.6)
 os.write(fd, b"\x1bf")       # Alt+F: the File menu

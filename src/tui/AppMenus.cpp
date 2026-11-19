@@ -127,6 +127,8 @@ QList<App::Menu> App::menus()
                              QStringLiteral("Hide the Places"), QStringLiteral("Show the Places")));
     view.items.append(ticked(QStringLiteral("Terminal"), m_shell != nullptr, QStringLiteral("F12"), [this] { toggleShell(); },
                              QStringLiteral("Go to the Terminal"), QStringLiteral("Open the Terminal")));
+    view.items.append(ticked(QStringLiteral("Show .. Row"), m_upRow, QString(), [this] { setUpRowShown(!m_upRow); },
+                             QStringLiteral("Hide the .. Row"), QStringLiteral("Show the .. Row")));
     view.items.append(ticked(QStringLiteral("Effects"), m_effects, QString(), [this] { setEffects(!m_effects); },
                              QStringLiteral("Effects Off: The Plain Look"), QStringLiteral("Effects On")));
     view.items.append(line());
@@ -148,7 +150,15 @@ QList<App::Menu> App::menus()
     Key back = Key::of(Key::Left);
     back.alt = true;
     go.items.append(item(QStringLiteral("Back"), QStringLiteral("Alt+Left"), press(back), !p.back.isEmpty(), QStringLiteral("Go Back")));
-    go.items.append(item(QStringLiteral("Up"), QStringLiteral("Backspace"), press(Key::of(Key::Backspace)), true, QStringLiteral("Go Up")));
+    Key forward = Key::of(Key::Right);
+    forward.alt = true;
+    go.items.append(item(QStringLiteral("Forward"), QStringLiteral("Alt+Right"), press(forward), !p.forward.isEmpty(), QStringLiteral("Go Forward")));
+    Key up = Key::of(Key::Up);
+    up.alt = true;
+    go.items.append(item(QStringLiteral("Up"), QStringLiteral("Alt+Up"), press(up), canGoUp(p), QStringLiteral("Go Up")));
+    Key down = Key::of(Key::Down);
+    down.alt = true;
+    go.items.append(item(QStringLiteral("Down"), QStringLiteral("Alt+Down"), press(down), !downTarget(p).isEmpty(), QStringLiteral("Go Down")));
     go.items.append(item(QStringLiteral("Home"), QStringLiteral("~"), press(Key::character('~')), true, QStringLiteral("Go Home")));
     go.items.append(item(QStringLiteral("Go to Folder…"), QStringLiteral("Ctrl+L"), press(Key::control('l'))));
     // Every answer Claude gives is kept as a page (ClaudeReports): the folder they are in.

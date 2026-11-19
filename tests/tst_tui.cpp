@@ -64,6 +64,8 @@ private slots:
     void opensFiles();
     void startsWithOnePane();
     void gridView();
+    void arrowsInTheHeading();
+    void upRowIsASetting();
     void bigIcons();
     void scrollbars();
     void placesAtTheLeft();
@@ -164,6 +166,7 @@ void TestTui::init()
     QDir(QFileInfo(Trash::homeFilesDir()).absolutePath() + "/info").removeRecursively();
     QSettings().remove("tui"); // every test starts with lists
     QSettings().setValue("tui/sidebar", false); // and without the places at the left, unless it is about them
+    QSettings().setValue("tui/upRow", true);    // with a ".." row (off by default: upRowIsASetting)
     app = std::make_unique<App>(m_left, m_right);
     settle();
 }
@@ -585,6 +588,133 @@ void TestTui::startsWithOnePane()
     settle();
     QCOMPARE(app->folder(0), m_left);
     QCOMPARE(app->folder(1), m_left + "/Documents");
+}
+
+// ← → ↑ ↓ before the folder in the pane's heading: back, forward, up, down
+// (Alt and the arrow keys, a click, the Go menu). Up puts the cursor on the
+// folder it left; Down goes into the folder under the cursor, or back.
+void TestTui::arrowsInTheHeading()
+{
+    make("Documents/Deeper/deepest.txt");
+    const QString docs = m_left + "/Documents", deeper = docs + "/Deeper";
+    app = std::make_unique<App>(deeper, QString());
+    settle();
+    auto alt = [](Key::Code code) {
+        Key k = Key::of(code);
+        k.alt = true;
+        return k;
+    };
+    Screen s(100, 24);
+    app->render(s);
+    int headY = -1;
+    for (int y = 0; y < s.height() && headY < 0; ++y)
+        if (s.line(y).contains(QStringLiteral("←") + " → ↑ ↓") && s.line(y).contains("Deeper"))
+            headY = y;
+    QVERIFY2(headY >= 0, qPrintable(s.text()));
+    const int arrowsX = s.line(headY).indexOf(QStringLiteral("←"));
+
+    keys({alt(Key::Up)});
+    settle();
+    QCOMPARE(app->folder(0), docs);
+    QCOMPARE(app->cursorPath(), deeper); // on the folder it came out of
+    keys({alt(Key::Up)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    QCOMPARE(app->cursorPath(), docs);
+    // The cursor moved to a file: Down still goes back where Up came from.
+    app->selectPath(m_left + "/alpha.txt");
+    keys({alt(Key::Down)});
+    settle();
+    QCOMPARE(app->folder(0), docs);
+    QCOMPARE(app->cursorPath(), deeper);
+    // A click on ↓ does the same.
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, arrowsX + 6, headY});
+    settle();
+    QCOMPARE(app->folder(0), deeper);
+
+    // Back, forward: ← and Alt+Left, → and Alt+Right.
+    keys({alt(Key::Left)});
+    settle();
+    QCOMPARE(app->folder(0), docs);
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, arrowsX + 2, headY}); // →
+    settle();
+    QCOMPARE(app->folder(0), deeper);
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, arrowsX, headY}); // ←
+    settle();
+    QCOMPARE(app->folder(0), docs);
+    keys({alt(Key::Right)});
+    settle();
+    QCOMPARE(app->folder(0), deeper);
+    // Going somewhere new forgets what was forward.
+    keys({alt(Key::Left)});
+    settle();
+    keys({alt(Key::Up)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    keys({alt(Key::Right)});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    // ↑ is clickable too, and the Go menu has all four.
+    app->selectPath(docs);
+    keys({alt(Key::Down)});
+    settle();
+    app->render(s);
+    app->mouse({Tui::Mouse::Press, arrowsX + 4, headY});
+    settle();
+    QCOMPARE(app->folder(0), m_left);
+    Key goMenu = Key::character('g');
+    goMenu.alt = true;
+    keys({goMenu});
+    const QString menu = screen();
+    for (const char *name : {"Back", "Forward", "Up", "Down"})
+        QVERIFY2(menu.contains(QString::fromUtf8(name) + " "), qPrintable(menu));
+    QVERIFY(menu.contains("Alt+Down"));
+    keys({Key::of(Key::Escape)});
+}
+
+// The ".." row is off unless View → Show .. Row is ticked; the cursor stays
+// on its item when it comes or goes, and the setting is kept.
+void TestTui::upRowIsASetting()
+{
+    QSettings().remove("tui/upRow");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    QVERIFY(!app->upRowShown());
+    QVERIFY2(!screen().contains("../"), qPrintable(screen()));
+    QCOMPARE(app->cursorPath(), m_left + "/Documents"); // the first row is the first item
+    keys({Key::of(Key::Down)});
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt");
+    // Home goes to the first item, not to an empty row.
+    keys({Key::of(Key::Home)});
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    keys({Key::of(Key::Down)});
+
+    app->setUpRowShown(true);
+    QVERIFY(screen().contains("../"));
+    QCOMPARE(app->cursorPath(), m_left + "/alpha.txt"); // still on it
+    QVERIFY(QSettings().value("tui/upRow").toBool());
+    keys({Key::of(Key::Home)});
+    QVERIFY(app->cursorPath().isEmpty()); // on ".."
+    app->setUpRowShown(false);
+    QVERIFY(!screen().contains("../"));
+    QCOMPARE(app->cursorPath(), m_left + "/Documents");
+    // An empty folder says so.
+    QDir().mkpath(m_left + "/Empty");
+    QTRY_VERIFY_WITH_TIMEOUT(screen().contains("Empty/"), 5000);
+    app->selectPath(m_left + "/Empty");
+    keys({Key::of(Key::Enter)});
+    settle();
+    QCOMPARE(app->folder(0), m_left + "/Empty");
+    QVERIFY(screen().contains("Nothing here"));
+    // In the View menu, ticked or not.
+    Key view = Key::character('v');
+    view.alt = true;
+    keys({view});
+    QVERIFY(screen().contains("Show .. Row"));
+    keys({Key::of(Key::Escape)});
 }
 
 void TestTui::gridView()

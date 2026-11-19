@@ -102,6 +102,9 @@ public:
     // eighths of a cell. Off: the plain look, and less to send to a slow line.
     bool effects() const { return m_effects; }
     void setEffects(bool on);
+    // A ".." row at the top of every folder that has a parent (off: the heading's ↑ does it).
+    bool upRowShown() const { return m_upRow; }
+    void setUpRowShown(bool on);
     bool isSidebarShown() const { return m_sidebar; } // the list of places at the left (Ctrl+B)
     bool isInSidebar() const { return m_inSidebar; }  // and the keys go to it
     void setSidebarShown(bool on);
@@ -166,6 +169,9 @@ private:
         DirectoryModel *model = nullptr;
         QString current;
         QStringList back;      // where Alt+Left / "back" goes
+        QStringList forward;   // where Alt+Right goes (after a back)
+        QStringList cameUpFrom; // the folders Up left, for Down to go back into (last = nearest)
+        int arrowsX = -1;      // from the last frame: the heading's ← → ↑ ↓ (-1: not drawn)
         int cursor = 0;
         int top = 0;           // the first row shown
         QString cursorPath;    // kept across reloads
@@ -236,6 +242,11 @@ private:
 
     bool navigate(Pane &p, const QString &path, bool remember = true);
     void goUp();
+    void goBack();
+    void goForward();
+    void goDown();
+    bool canGoUp(const Pane &p) const;
+    QString downTarget(const Pane &p) const; // where Down goes, or empty
     void openCursor();
     void openFile(const QString &path); // Enter or a double click on a file
     void moveCursor(Pane &p, int row);
@@ -326,6 +337,7 @@ private:
     QElapsedTimer m_typedAt;
     int m_typeAheadMs = 1000;
     bool m_effects = true;
+    bool m_upRow = false; // tui/upRow
     int m_sideHover = -1;      // the row of the places under the mouse
     void hoverAt(int x, int y); // the mouse moved (no button): what is under it lights up
     // mouse() finds what the mouse is on; these do what a click or the wheel means there.
