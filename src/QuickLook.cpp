@@ -20,6 +20,7 @@
 #include <QPushButton>
 #include <QImageReader>
 #include <QStackedWidget>
+#include <QTextDocument>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QRegularExpression>
@@ -27,6 +28,7 @@
 #include "PdfView.h"
 #include "PlanView.h"
 #include "RichView.h"
+#include "TextFinder.h"
 
 #include <QKeyEvent>
 #include <QMimeDatabase>
@@ -177,14 +179,15 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_text = new QPlainTextEdit(m_pages);
     m_text->setObjectName("qlText");
     m_text->setReadOnly(true);
-    m_text->setFocusPolicy(Qt::NoFocus); // keys stay with the file view
+    // A click in a text gives it the keys (select, Ctrl+C, Ctrl+F); Esc gives them back to the files.
+    m_text->setFocusPolicy(Qt::ClickFocus);
     m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     m_rich = new RichView(m_pages);
     m_rich->setObjectName("qlText");
-    m_rich->setFocusPolicy(Qt::NoFocus);
+    m_rich->setFocusPolicy(Qt::ClickFocus);
     m_rich->setOpenLinks(false);
     m_rich->setOpenExternalLinks(false);
-    m_rich->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_rich->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     m_archive = new QTreeWidget(m_pages);
     m_archive->setObjectName("qlArchive");
     m_archive->setFocusPolicy(Qt::NoFocus);
@@ -250,10 +253,10 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     under->addLayout(underTop);
     m_underText = new RichView(m_under);
     m_underText->setObjectName("qlText");
-    m_underText->setFocusPolicy(Qt::NoFocus);
+    m_underText->setFocusPolicy(Qt::ClickFocus);
     m_underText->setOpenLinks(false);
     m_underText->setOpenExternalLinks(false);
-    m_underText->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_underText->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     under->addWidget(m_underText, 1);
     m_underWait = new QWidget(m_under);
     auto *wait = new QVBoxLayout(m_underWait);
@@ -289,6 +292,37 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
             QSettings().setValue(QStringLiteral("window/previewUnderShare"), double(sizes.at(1)) / (sizes.at(0) + sizes.at(1)));
     });
     layout->addWidget(m_split, 1);
+
+    // Ctrl+F in a text: the find bar, under it.
+    m_finder = new TextFinder(this);
+    layout->addWidget(m_finder);
+    connect(m_finder, &TextFinder::closed, this, [this] {
+        if (QWidget *view = m_finder->view(); view && view->isVisible())
+            view->setFocus(Qt::ShortcutFocusReason);
+        else
+            emit keysBackRequested();
+    });
+    for (QWidget *view : {static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_underText)})
+        view->installEventFilter(this);
+    // Another text in the same view (the next file): found again in it, once
+    // the text has settled (Markdown is styled after it is set).
+    m_refind = new QTimer(this);
+    m_refind->setSingleShot(true);
+    m_refind->setInterval(0);
+    connect(m_refind, &QTimer::timeout, this, [this] {
+        QWidget *view = m_finder->view();
+        if (!m_finder->isVisible())
+            return;
+        if (!view || !view->isVisible())
+            m_finder->close(); // a picture now: nothing to find in
+        else
+            m_finder->textChanged();
+    });
+    connect(m_text->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
+    connect(m_rich->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
+    connect(m_underText->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
+    connect(m_pages, &QStackedWidget::currentChanged, m_refind, qOverload<>(&QTimer::start));
+    themeFinder();
 
     // What can be done with a result an extension shows: its button, at the
     // right, and what is typed for it at its left.
@@ -842,8 +876,55 @@ void QuickLook::runAction()
     Extensions::Host::instance()->resultAction(m_resultExtension, m_resultId, m_actionId, text);
 }
 
+// The marks of the find bar, in the theme's accent.
+void QuickLook::themeFinder()
+{
+    QColor mark = currentTheme().accent, current = mark;
+    mark.setAlpha(70);
+    current.setAlpha(170);
+    m_finder->applyTheme(mark, current);
+}
+
+// Keys in a text of the pane (it has them after a click). Selecting and
+// copying are the text's own; Ctrl+F finds in it, Esc gives the keys back
+// to the files. The window's shortcuts that would act on the files (Delete,
+// Enter, F2, Ctrl+C, Ctrl+A…) don't, while the keys are here.
+bool QuickLook::textKey(QWidget *view, QEvent *event)
+{
+    auto *key = static_cast<QKeyEvent *>(event);
+    const bool finding = m_finder->isVisible() && m_finder->view() == view;
+    if (event->type() == QEvent::ShortcutOverride) {
+        const Qt::KeyboardModifiers held = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+        const bool functionKey = key->key() >= Qt::Key_F1 && key->key() <= Qt::Key_F35;
+        if (key->matches(QKeySequence::Copy) || key->matches(QKeySequence::SelectAll) || key->matches(QKeySequence::Find)
+            || (finding && (key->matches(QKeySequence::FindNext) || key->matches(QKeySequence::FindPrevious) || key->key() == Qt::Key_F3))
+            || (held == Qt::NoModifier && !functionKey))
+            event->accept();
+        return false;
+    }
+    if (key->matches(QKeySequence::Find)) {
+        m_finder->open(view);
+        return true;
+    }
+    if (finding && (key->matches(QKeySequence::FindNext) || key->key() == Qt::Key_F3 || key->matches(QKeySequence::FindPrevious))) {
+        m_finder->next(key->matches(QKeySequence::FindPrevious) || (key->modifiers() & Qt::ShiftModifier) ? -1 : +1);
+        return true;
+    }
+    if (key->key() == Qt::Key_Escape) {
+        if (finding)
+            m_finder->close();
+        else
+            emit keysBackRequested();
+        return true;
+    }
+    return false;
+}
+
 bool QuickLook::eventFilter(QObject *watched, QEvent *event)
 {
+    if ((watched == m_text || watched == m_rich || watched == m_underText)
+        && (event->type() == QEvent::KeyPress || event->type() == QEvent::ShortcutOverride))
+        return textKey(static_cast<QWidget *>(watched), event);
     if (watched == m_actionInput && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Return || key == Qt::Key_Enter) {
@@ -886,6 +967,8 @@ void QuickLook::closeResult()
 void QuickLook::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
+    if (m_finder && event->type() == QEvent::PaletteChange)
+        themeFinder();
     // Another theme: the extension draws its result again in the new colours.
     if (m_resultTimer && !m_resultId.isEmpty()
         && (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange))

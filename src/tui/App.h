@@ -88,6 +88,8 @@ public:
     bool isPreviewShown() const { return m_preview; } // the preview at the right (F3)
     bool isInPreview() const { return m_inPreview; }  // and the keys scroll it
     bool isPreviewLoading() const { return m_previewLoading; }
+    QString previewFindText() const;          // "2 of 5", "no matches", "" (tests)
+    QString previewSelectedText() const;      // what Ctrl+C would copy (tests)
     QString resultId() const { return m_resultId; } // the extension's result the preview shows, if any (tests)
     // The theme: "terminal" (the terminal's own colours, the default) or
     // the key of one of Argonaut's themes ("forest", "file:My Theme").
@@ -149,6 +151,9 @@ signals:
     // shellClosed() with the folder the shell was in at the end.
     void shellRequested(const QString &folder);
     void quitRequested();
+    // Lines copied from the preview where there is no desktop's clipboard:
+    // whoever runs it hands them to the terminal (OSC 52).
+    void terminalClipboardRequested(const QString &text);
 
 private:
     struct Pane
@@ -396,6 +401,30 @@ private:
     int m_previewTop = 0;
     int m_previewX = 0, m_previewWidth = 0;        // from the last frame (0: not on screen)
     int m_previewY = 0, m_previewShown = 0, m_previewTotal = 0;
+    // Finding in the preview's text (Ctrl+F or "/"; n and N go on) and
+    // lines selected in it (a drag, Shift+arrows, Ctrl+A) for Ctrl+C.
+    struct Found
+    {
+        int row, at, length; // a row of the preview; characters in it
+    };
+    QList<int> m_previewSource; // each wrapped row's line in m_previewLines
+    QString m_previewFind;
+    QList<Found> m_previewFound;
+    int m_previewMatch = -1;    // the one gone to
+    int m_previewSelAnchor = -1, m_previewSelEnd = -1; // rows (-1: none)
+    int m_previewDragFrom = -1; // a press on a row, before the drag
+    bool m_previewDragging = false;
+    bool previewIsText() const;
+    int previewRowCount() const;
+    QString previewRow(int row) const;
+    void findInPreview(bool goToFirst);
+    void showFound(int index);
+    void findPrompt();
+    void copyPreviewSelection();
+    void forgetPreviewSelection();
+    void previewDragTo(int y);
+    void markPreview(Screen &screen, int x, int width, int rows); // the selected lines and what was found
+    QString previewMarksText() const; // "“needle” 2 of 5 · n, N" and "3 lines selected · Ctrl+C copies"
     // The command palette: every command, and those that fit what is typed.
     QString m_paletteText;
     QList<Command> m_paletteAll;

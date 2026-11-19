@@ -24,6 +24,7 @@
 #include "PathBar.h"
 #include "QuickLook.h"
 #include "TipPicture.h"
+#include "TextFinder.h"
 #include "RichTextStyle.h"
 #include "Theme.h"
 #include "Sidebar.h"
@@ -43,6 +44,9 @@
 #endif
 
 #include <QPushButton>
+#include <QClipboard>
+#include <QMimeData>
+#include <QPlainTextEdit>
 #include <QPainter>
 #include <QPageSize>
 #include <QScrollBar>
@@ -128,6 +132,7 @@ private slots:
     void longPictureFromAnExtensionScrolls();
     void pictureFromAnExtensionHasTooltips();
     void htmlPageInThePreview();
+    void textInThePreviewIsFoundAndCopied();
     void answerUnderAResult();
     void resultKeepsThePane();
     void extensionResultCanBeSearched();
@@ -1951,6 +1956,73 @@ void TestMainWindow::htmlPageInThePreview()
     QVERIFY2(shown.contains("A Heading") && shown.contains("Some bold text and a link.") && shown.contains("One") && shown.contains("cell"),
              qPrintable(shown));
     QVERIFY2(!shown.contains("<h1>") && !shown.contains("<b>"), qPrintable(shown)); // a page, not its source
+}
+
+// A text in the preview: a click gives it the keys, and then it can be
+// selected and copied, and Ctrl+F finds in it. The window's shortcuts that
+// act on files (Delete, Ctrl+C, Ctrl+A) don't while the keys are there; Esc
+// gives them back to the files.
+void TestMainWindow::textInThePreviewIsFoundAndCopied()
+{
+    const QString a = make("notes.txt", "first line\nthe Needle is here\nnothing\na needle again, and NEEDLE\nlast\n");
+    open(m_dir);
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QuickLook *preview = w->m_quickLook;
+    QTRY_COMPARE(preview->kind(), Preview::Kind::Text);
+    QPlainTextEdit *text = preview->textView();
+    QTRY_VERIFY(text->toPlainText().contains("Needle"));
+    w->show();
+    QVERIFY(QTest::qWaitForWindowExposed(w.get()));
+    QTest::mouseClick(text->viewport(), Qt::LeftButton, {}, QPoint(10, 10));
+    QTRY_VERIFY(text->hasFocus());
+
+    // Delete and Ctrl+A are the text's now: the file isn't trashed, the text is selected.
+    QTest::keyClick(text, Qt::Key_Delete);
+    QTest::qWait(300);
+    QVERIFY(QFile::exists(a));
+    QTest::keyClick(text, Qt::Key_A, Qt::ControlModifier);
+    QCOMPARE(text->textCursor().selectedText().replace(QChar::ParagraphSeparator, '\n'), text->toPlainText());
+    QApplication::clipboard()->clear();
+    QTest::keyClick(text, Qt::Key_C, Qt::ControlModifier);
+    QCOMPARE(QApplication::clipboard()->text(), text->toPlainText()); // the words, not the file
+    QVERIFY(QApplication::clipboard()->mimeData()->urls().isEmpty());
+
+    // Ctrl+F: the bar, finding as it is typed, any case.
+    QTextCursor start = text->textCursor();
+    start.clearSelection();
+    start.movePosition(QTextCursor::Start);
+    text->setTextCursor(start);
+    TextFinder *finder = preview->finder();
+    QVERIFY(!finder->isVisible());
+    QTest::keyClick(text, Qt::Key_F, Qt::ControlModifier);
+    QVERIFY(finder->isVisible());
+    QVERIFY(!w->m_pane->model->isSearch()); // not the window's search
+    QTRY_VERIFY(finder->field()->hasFocus());
+    QTest::keyClicks(finder->field(), "needle");
+    QCOMPARE(finder->count(), 3);
+    QCOMPARE(finder->current(), 0);
+    QCOMPARE(finder->countText(), QStringLiteral("1 of 3"));
+    QCOMPARE(text->textCursor().selectedText(), QStringLiteral("Needle"));
+    QTest::keyClick(finder->field(), Qt::Key_Return);
+    QCOMPARE(finder->current(), 1);
+    QCOMPARE(text->textCursor().selectedText(), QStringLiteral("needle"));
+    QTest::keyClick(finder->field(), Qt::Key_Return, Qt::ShiftModifier);
+    QTest::keyClick(finder->field(), Qt::Key_Return, Qt::ShiftModifier);
+    QCOMPARE(finder->current(), 2); // round to the last
+    QCOMPARE(text->textCursor().selectedText(), QStringLiteral("NEEDLE"));
+    QCOMPARE(text->extraSelections().size(), 3); // every one is marked
+    QTest::keyClicks(finder->field(), "x");
+    QCOMPARE(finder->countText(), QStringLiteral("No matches"));
+    // Esc: the bar goes with its marks, the keys go back to the text; Esc again, to the files.
+    QTest::keyClick(finder->field(), Qt::Key_Escape);
+    QVERIFY(!finder->isVisible());
+    QVERIFY(text->extraSelections().isEmpty());
+    QTRY_VERIFY(text->hasFocus());
+    QTest::keyClick(text, Qt::Key_Escape);
+    QTRY_VERIFY(w->m_pane->view->hasFocus());
+    QVERIFY(w->quickLookVisible());
+    QVERIFY(QFile::exists(a));
 }
 
 // What an extension has to say about its result on screen (Claude's report

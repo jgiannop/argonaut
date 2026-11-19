@@ -98,6 +98,8 @@ public:
     TipPicture *tipPicture() const { return m_scrollPicture; } // the long picture and its tooltips (tests)
     int pictureScrollValue() const;
     void scrollPictureTo(int value);
+    class TextFinder *finder() const { return m_finder; } // Ctrl+F in a text (tests)
+    QPlainTextEdit *textView() const { return m_text; }   // (tests)
     QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
     PdfView *pdfReader() const { return m_pdf; }         // the reader, shown for a PDF where it can be (tests)
     bool isReadingPdf() const;
@@ -167,6 +169,10 @@ private:
     QLabel *m_movieLabel = nullptr;
     QMovie *m_movie = nullptr;
     QPlainTextEdit *m_text = nullptr;
+    class TextFinder *m_finder = nullptr; // Ctrl+F in a text
+    QTimer *m_refind = nullptr;           // the text changed: find again
+    bool textKey(QWidget *view, QEvent *event);
+    void themeFinder();
     QTextBrowser *m_rich = nullptr;   // Markdown and HTML from extensions
     int m_extensionRequest = 0;       // waiting for this answer (0: not waiting)
     QTimer *m_extensionTimer = nullptr; // not for long: then the built-in preview

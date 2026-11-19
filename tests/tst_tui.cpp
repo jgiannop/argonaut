@@ -68,6 +68,7 @@ private slots:
     void scrollbars();
     void placesAtTheLeft();
     void previewAtTheRight();
+    void previewTextIsFoundAndCopied();
     void unmountedDrive();
     void commandPalette();
     void menus();
@@ -3049,6 +3050,92 @@ void TestTui::themes()
     app->setTheme("system");
     QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
 }
+// In the preview's text: Ctrl+F (or "/") finds, n and N go on; lines are
+// selected with a drag, Shift+arrows or Ctrl+A, and Ctrl+C copies them as
+// the file has them (where there is no desktop, through the terminal).
+void TestTui::previewTextIsFoundAndCopied()
+{
+    const QString file = make("notes.txt", "first line has a Needle\n\tsecond, with a tab\nthird " + QByteArray(80, 'w')
+                                               + " end\nfourth: needle\nfifth NEEDLE\n");
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    keys({Key::of(Key::F3)});
+    app->selectPath(file);
+    QTRY_VERIFY_WITH_TIMEOUT(!app->isPreviewLoading() && screen(120, 30).contains("first line has"), 10000);
+    QStringList lines = screen(120, 30).split('\n');
+    const int edge = int(lines.at(5).lastIndexOf(QChar(0x2502)));
+    QVERIFY(lines.at(4).mid(edge + 2).startsWith("first line"));
+
+    // A click on the text gives it the keys.
+    app->mouse({Tui::Mouse::Press, edge + 3, 4});
+    app->mouse({Tui::Mouse::Release, edge + 3, 4});
+    QVERIFY(app->isInPreview());
+
+    // Ctrl+F: what to find; the first is marked and said at the bottom.
+    keys({Key::control('f')});
+    type("needle");
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->previewFindText(), QStringLiteral("1 of 3"));
+    QVERIFY2(screen(120, 30).contains("“needle” 1 of 3"), qPrintable(screen(120, 30)));
+    Screen s(120, 30);
+    app->render(s);
+    const int at = int(lines.at(4).indexOf("Needle"));
+    QVERIFY(s.at(at, 4).style.reverse); // the one gone to
+    keys({Key::character('n')});
+    QCOMPARE(app->previewFindText(), QStringLiteral("2 of 3"));
+    keys({Key::character('N'), Key::character('N')});
+    QCOMPARE(app->previewFindText(), QStringLiteral("3 of 3")); // round to the last
+    QVERIFY(app->isInPreview()); // "n" isn't typing a name in the files
+    // "/" asks again; something that isn't there is said.
+    keys({Key::character('/')});
+    keys({Key::control('u')});
+    type("nowhere");
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(app->previewFindText(), QStringLiteral("no matches"));
+    // Esc forgets it (the keys stay here); the next Esc gives them back.
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->previewFindText().isEmpty());
+    QVERIFY(app->isInPreview());
+
+    // A drag over three rows: the first two lines whole (the tab kept), and
+    // the part of the long third line that was on the row.
+    screen(120, 30);
+    app->mouse({Tui::Mouse::Press, edge + 4, 4});
+    app->mouse({Tui::Mouse::Move, edge + 4, 5});
+    app->mouse({Tui::Mouse::Move, edge + 4, 6});
+    app->mouse({Tui::Mouse::Release, edge + 4, 6});
+    QString selected = app->previewSelectedText();
+    QVERIFY2(selected.startsWith("first line has a Needle\n\tsecond, with a tab\nthird www"), qPrintable(selected));
+    QVERIFY2(!selected.contains(" end"), qPrintable(selected)); // the rest of that line wasn't selected
+    QVERIFY(screen(120, 30).contains("3 lines selected"));
+    QSignalSpy copied(app.get(), &App::terminalClipboardRequested); // no desktop clipboard in tests
+    keys({Key::control('c')});
+    QCOMPARE(copied.size(), 1);
+    QCOMPARE(copied.at(0).at(0).toString(), selected);
+    QVERIFY(screen(120, 30).contains("Copied 3 lines"));
+    QVERIFY(QFile::exists(file)); // the file wasn't touched; it is the text that was copied
+
+    // A click alone forgets the selection; Shift+↓ selects from the first line in sight.
+    app->mouse({Tui::Mouse::Press, edge + 4, 5});
+    app->mouse({Tui::Mouse::Release, edge + 4, 5});
+    QVERIFY(app->previewSelectedText().isEmpty());
+    Key down = Key::of(Key::Down);
+    down.shift = true;
+    keys({down, down});
+    QCOMPARE(app->previewSelectedText(), QStringLiteral("first line has a Needle\n\tsecond, with a tab"));
+    // Ctrl+A: all of it, the long line whole.
+    keys({Key::control('a')});
+    selected = app->previewSelectedText();
+    QVERIFY2(selected.startsWith("first line") && selected.contains("third " + QString(80, 'w') + " end\nfourth") && selected.contains("fifth NEEDLE"),
+             qPrintable(selected));
+    // Esc: the selection goes, then the keys go back to the files.
+    keys({Key::of(Key::Escape)});
+    QVERIFY(app->previewSelectedText().isEmpty());
+    QVERIFY(app->isInPreview());
+    keys({Key::of(Key::Escape)});
+    QVERIFY(!app->isInPreview());
+}
+
 
 // F3: the preview at the right, of the item under the cursor: a text
 // file's lines with a scrollbar, an archive's entries, a rough picture, a

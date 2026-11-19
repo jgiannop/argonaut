@@ -8,6 +8,7 @@
 
 #include "ContentType.h"
 #include "DirectoryModel.h"
+#include "FileClipboard.h"
 #include "Extensions.h"
 #include "Format.h"
 #include "Preview.h"
@@ -91,6 +92,7 @@ void App::syncPreview()
         return;
     m_previewCells.clear();
     m_previewPath = path;
+    forgetPreviewSelection();
     const quint64 request = ++m_previewRequest;
     m_previewTop = 0;
     m_previewLines.clear();
@@ -302,6 +304,7 @@ void App::showResult(const QString &title, const Extensions::PreviewReply &conte
         ++m_previewRequest; // a file's preview still on its way is dropped
         m_preview = true;
         m_previewTop = 0;
+        forgetPreviewSelection();
         m_resultShown = true;
         m_previewPath = QStringLiteral("\x01result"); // not a file's: the next file loads afresh
     }
@@ -316,6 +319,7 @@ void App::showResult(const QString &title, const Extensions::PreviewReply &conte
     switch (content.kind) {
     case PreviewReply::Ansi:
         m_previewCells = cellsOf(content.text.left(400000));
+        findInPreview(false);
         break;
     case PreviewReply::Image: {
         QImageReader reader(content.image);
@@ -454,6 +458,224 @@ void App::runExtensionCommand(const Extensions::Command &command, const QStringL
         typed();
 }
 
+// ------------------------------------------- finding and copying text ---
+
+// The preview shows rows of text (a file, a result as text or with
+// colours): those can be searched and copied. A picture can't.
+bool App::previewIsText() const
+{
+    return m_preview && m_previewImage.isNull() && !m_previewLoading && !m_previewWarning;
+}
+
+int App::previewRowCount() const
+{
+    return int(m_previewCells.isEmpty() ? m_previewWrapped.size() : m_previewCells.size());
+}
+
+QString App::previewRow(int row) const
+{
+    if (m_previewCells.isEmpty())
+        return m_previewWrapped.value(row);
+    QString text;
+    if (row >= 0 && row < m_previewCells.size()) {
+        for (const Cell &cell : m_previewCells.at(row)) {
+            if (!cell.tail)
+                text += QString::fromUcs4(&cell.ch, 1);
+        }
+    }
+    return text;
+}
+
+// Every place the text is in the rows, ignoring case. A word cut where a
+// long line goes on in the next row isn't found (the rows are what is shown).
+void App::findInPreview(bool goToFirst)
+{
+    m_previewFound.clear();
+    if (m_previewFind.isEmpty() || !previewIsText()) {
+        m_previewMatch = -1;
+        return;
+    }
+    const int count = previewRowCount();
+    for (int row = 0; row < count && m_previewFound.size() < 100000; ++row) {
+        const QString text = previewRow(row);
+        for (qsizetype at = text.indexOf(m_previewFind, 0, Qt::CaseInsensitive); at >= 0;
+             at = text.indexOf(m_previewFind, at + m_previewFind.size(), Qt::CaseInsensitive))
+            m_previewFound.append({row, int(at), int(m_previewFind.size())});
+    }
+    m_previewMatch = qMin(m_previewMatch, int(m_previewFound.size()) - 1);
+    if (goToFirst && !m_previewFound.isEmpty()) {
+        int first = 0; // the first from the top of what is shown, so the text doesn't jump back to its start
+        while (first < m_previewFound.size() && m_previewFound.at(first).row < m_previewTop)
+            ++first;
+        showFound(first < m_previewFound.size() ? first : 0);
+    }
+}
+
+void App::showFound(int index)
+{
+    m_previewMatch = index;
+    const int row = m_previewFound.at(index).row;
+    if (row < m_previewTop || row >= m_previewTop + m_previewShown)
+        scrollPreview(row - m_previewShown / 3); // with a little of what comes before
+    emit changed();
+}
+
+// Ctrl+F or "/": what to find, typed at the bottom (what was found last is there to change).
+void App::findPrompt()
+{
+    prompt(QStringLiteral("Find in the text"), m_previewFind, int(m_previewFind.size()),
+           [this](const QString &text) {
+               m_previewFind = text;
+               m_previewMatch = -1;
+               findInPreview(true);
+               if (!m_previewFind.isEmpty() && m_previewFound.isEmpty())
+                   say(QStringLiteral("“%1” isn't in the text").arg(m_previewFind));
+               emit changed();
+           },
+           true);
+}
+
+QString App::previewFindText() const
+{
+    if (m_previewFind.isEmpty())
+        return {};
+    if (m_previewFound.isEmpty())
+        return QStringLiteral("no matches");
+    return QStringLiteral("%1 of %2").arg(m_previewMatch + 1).arg(m_previewFound.size());
+}
+
+void App::forgetPreviewSelection()
+{
+    m_previewSelAnchor = m_previewSelEnd = -1;
+    m_previewDragFrom = -1;
+    m_previewDragging = false;
+}
+
+// The selected rows as the text they are: the rows of one line of a file
+// are joined again, and a line that is selected whole is the file's own
+// (tabs and all).
+QString App::previewSelectedText() const
+{
+    if (m_previewSelAnchor < 0 || !previewIsText())
+        return {};
+    const int count = previewRowCount();
+    const int from = qBound(0, qMin(m_previewSelAnchor, m_previewSelEnd), count - 1);
+    const int to = qBound(0, qMax(m_previewSelAnchor, m_previewSelEnd), count - 1);
+    QStringList lines;
+    if (!m_previewCells.isEmpty()) {
+        for (int row = from; row <= to; ++row)
+            lines << previewRow(row);
+        return lines.join(QLatin1Char('\n'));
+    }
+    int last = -1;
+    for (int row = from; row <= to; ++row) {
+        const int source = m_previewSource.value(row, -1);
+        if (source == last) {
+            continue; // a whole line was taken at its first row; a part is added below
+        }
+        int first = row, end = row;
+        while (first > 0 && m_previewSource.value(first - 1) == source)
+            --first;
+        while (end + 1 < m_previewSource.size() && m_previewSource.value(end + 1) == source)
+            ++end;
+        if (first >= from && end <= to) {
+            lines << m_previewLines.value(source);
+        } else {
+            QString part;
+            for (int r = qMax(first, from); r <= qMin(end, to); ++r)
+                part += m_previewWrapped.value(r);
+            lines << part;
+        }
+        last = source;
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+// Ctrl+C: the selected lines to the desktop's clipboard, or, where there is
+// none (over SSH), to the terminal's.
+void App::copyPreviewSelection()
+{
+    const QString text = previewSelectedText();
+    if (m_previewSelAnchor < 0) {
+        say(QStringLiteral("Select lines first: drag over them, Shift+↑/↓, or Ctrl+A for all"));
+        return;
+    }
+    const int lines = qAbs(m_previewSelEnd - m_previewSelAnchor) + 1;
+    const QString what = lines == 1 ? QStringLiteral("1 line") : QStringLiteral("%1 lines").arg(lines);
+    if (FileClipboard::copyTextToDesktop(text)) {
+        say(QStringLiteral("Copied %1").arg(what));
+    } else {
+        emit terminalClipboardRequested(text);
+        say(QStringLiteral("Copied %1 through the terminal (where it allows it)").arg(what));
+    }
+}
+
+// A drag over the rows selects whole lines; past the top or bottom it scrolls.
+void App::previewDragTo(int y)
+{
+    const int count = previewRowCount();
+    if (m_previewDragFrom < 0 || count == 0)
+        return;
+    int row;
+    if (y < m_previewY) {
+        scrollPreview(m_previewTop - 1);
+        row = m_previewTop;
+    } else if (y >= m_previewY + m_previewShown) {
+        scrollPreview(m_previewTop + 1);
+        row = m_previewTop + m_previewShown - 1;
+    } else {
+        row = m_previewTop + (y - m_previewY);
+    }
+    row = qBound(0, row, count - 1);
+    if (m_previewSelAnchor < 0 && row == m_previewDragFrom)
+        return; // not moved off the line yet
+    m_previewSelAnchor = m_previewDragFrom;
+    m_previewSelEnd = row;
+    emit changed();
+}
+
+void App::markPreview(Screen &screen, int x, int width, int rows)
+{
+    if (m_previewSelAnchor >= 0) {
+        const int from = qMin(m_previewSelAnchor, m_previewSelEnd), to = qMax(m_previewSelAnchor, m_previewSelEnd);
+        for (int i = 0; i < rows; ++i) {
+            const int row = m_previewTop + i;
+            if (row >= from && row <= to)
+                screen.tint(x, m_previewY + i, width, 1, Paper::Normal, Paper::Cursor);
+        }
+    }
+    for (int i = 0; i < m_previewFound.size(); ++i) {
+        const Found &found = m_previewFound.at(i);
+        if (found.row < m_previewTop)
+            continue;
+        if (found.row >= m_previewTop + rows)
+            break;
+        const QString row = previewRow(found.row);
+        const int column = Screen::widthOf(row.left(found.at));
+        if (column >= width)
+            continue;
+        Style style{Ink::Normal, Paper::Field, false};
+        if (i == m_previewMatch) {
+            style.bold = true;
+            style.reverse = true;
+        }
+        screen.put(x + column, m_previewY + found.row - m_previewTop, row.mid(found.at, found.length), style, width - column);
+    }
+}
+
+QString App::previewMarksText() const
+{
+    QStringList parts;
+    if (!m_previewFind.isEmpty())
+        parts << (m_previewFound.isEmpty() ? QStringLiteral("no “%1”").arg(m_previewFind)
+                                           : QStringLiteral("“%1” %2 · n, N").arg(m_previewFind, previewFindText()));
+    if (m_previewSelAnchor >= 0) {
+        const int lines = qAbs(m_previewSelEnd - m_previewSelAnchor) + 1;
+        parts << (lines == 1 ? QStringLiteral("1 line") : QStringLiteral("%1 lines").arg(lines)) + QStringLiteral(" selected · Ctrl+C copies");
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
 // The preview pane: the item's name, what it is, then its content with a
 // scrollbar: text as lines (long ones go on to the next), an archive's
 // entries, or a picture made of half blocks, two "pixels" to the cell.
@@ -537,6 +759,9 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
                            {on ? (m_inPreview ? Ink::Accent : Ink::Normal) : Ink::Dim, Paper::Normal, false});
             }
         }
+        markPreview(screen, x + 2, inner, rows);
+        if (const QString marks = previewMarksText(); !marks.isEmpty() && !offer)
+            screen.put(x + 2, top + height - 1, marks, kDim, inner);
         reportResult();
         return;
     }
@@ -544,9 +769,14 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
         reportResult();
     if (m_previewWrapWidth != inner) {
         m_previewWrapped.clear();
-        for (const QString &line : std::as_const(m_previewLines))
-            wrapInto(&m_previewWrapped, line, inner);
+        m_previewSource.clear();
+        for (int i = 0; i < m_previewLines.size(); ++i) {
+            wrapInto(&m_previewWrapped, m_previewLines.at(i), inner);
+            while (m_previewSource.size() < m_previewWrapped.size())
+                m_previewSource.append(i);
+        }
         m_previewWrapWidth = inner;
+        findInPreview(false); // the rows are others now
     }
     const int count = int(m_previewWrapped.size());
     m_previewTotal = count;
@@ -554,6 +784,8 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
     const Style text{m_previewWarning ? Ink::Bad : Ink::Normal, Paper::Normal, m_previewWarning};
     for (int i = 0; i < rows && m_previewTop + i < count; ++i)
         screen.put(x + 2, contentY + i, m_previewWrapped.at(m_previewTop + i), text, inner);
+    markPreview(screen, x + 2, inner, rows);
+    const QString marks = previewMarksText();
     if (count > rows) {
         // The scrollbar, and where we are.
         const int thumb = qBound(1, rows * rows / count, rows - 1);
@@ -565,10 +797,13 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
         }
         screen.put(x + 2, top + height - 1, QStringLiteral("lines %1–%2 of %3").arg(m_previewTop + 1).arg(qMin(count, m_previewTop + rows)).arg(count)
                                                 + (m_resultShown && m_resultSearchable ? QStringLiteral(" · / search") : QString())
-                                                + (m_resultShown && !m_resultActionId.isEmpty() && !offer ? QStringLiteral(" · Enter: ") + m_resultActionLabel : QString()),
+                                                + (m_resultShown && !m_resultActionId.isEmpty() && !offer ? QStringLiteral(" · Enter: ") + m_resultActionLabel : QString())
+                                                + (marks.isEmpty() ? QString() : QStringLiteral(" · ") + marks),
                    kDim, inner);
-    } else if (m_resultShown && (m_resultSearchable || (!m_resultActionId.isEmpty() && !offer))) {
+    } else if (!marks.isEmpty() || (m_resultShown && (m_resultSearchable || (!m_resultActionId.isEmpty() && !offer)))) {
         QStringList hints;
+        if (!marks.isEmpty())
+            hints << marks;
         if (m_resultSearchable)
             hints << QStringLiteral("/ search");
         if (!m_resultActionId.isEmpty() && !offer) // (a pane too low for the line of its own)
@@ -580,6 +815,57 @@ void App::drawPreview(Screen &screen, int x, int width, int top, int height)
 bool App::previewKey(const Key &key)
 {
     const int page = qMax(1, m_previewShown - 1);
+    // Lines to copy: Shift+arrows from the first line in sight (or the
+    // selection's end), Ctrl+A all of them, Ctrl+C copies.
+    if (previewIsText() && key.shift && (key.code == Key::Up || key.code == Key::Down)) {
+        const int count = previewRowCount();
+        if (count > 0) {
+            if (m_previewSelAnchor < 0) {
+                m_previewSelAnchor = m_previewSelEnd = qBound(0, m_previewTop, count - 1);
+            } else {
+                m_previewSelEnd = qBound(0, m_previewSelEnd + (key.code == Key::Down ? 1 : -1), count - 1);
+            }
+            if (m_previewSelEnd < m_previewTop)
+                scrollPreview(m_previewSelEnd);
+            else if (m_previewSelEnd >= m_previewTop + m_previewShown)
+                scrollPreview(m_previewSelEnd - m_previewShown + 1);
+            emit changed();
+        }
+        return true;
+    }
+    if (key.isControl('a') && previewIsText() && previewRowCount() > 0) {
+        m_previewSelAnchor = 0;
+        m_previewSelEnd = previewRowCount() - 1;
+        emit changed();
+        return true;
+    }
+    if (key.isControl('c') && previewIsText()) {
+        copyPreviewSelection();
+        return true;
+    }
+    if (key.isControl('f') && previewIsText()) {
+        findPrompt();
+        return true;
+    }
+    if (!m_previewFind.isEmpty() && (key.isChar('n') || key.isChar('N'))) {
+        if (m_previewFound.isEmpty())
+            say(QStringLiteral("“%1” isn't in the text").arg(m_previewFind));
+        else
+            showFound(int((m_previewMatch + (key.isChar('n') ? 1 : -1) + m_previewFound.size()) % m_previewFound.size()));
+        return true;
+    }
+    if (key.code == Key::Escape && (m_previewSelAnchor >= 0 || !m_previewFind.isEmpty())) {
+        // The first Esc forgets the selection, then what was found; then the keys go back to the files.
+        if (m_previewSelAnchor >= 0) {
+            forgetPreviewSelection();
+        } else {
+            m_previewFind.clear();
+            m_previewFound.clear();
+            m_previewMatch = -1;
+        }
+        emit changed();
+        return true;
+    }
     int top = m_previewTop;
     if (scrollKey(key, page, m_previewTotal, &top)) {
         scrollPreview(top); // it knows how far there is to go
@@ -623,6 +909,10 @@ bool App::previewKey(const Key &key)
                        Extensions::Host::instance()->searchResult(extension, id, m_resultSearch);
                    },
                    true);
+            return true;
+        }
+        if (key.isChar('/') && previewIsText()) {
+            findPrompt();
             return true;
         }
         return !(key.isControl('q') || key.isControl('b'));

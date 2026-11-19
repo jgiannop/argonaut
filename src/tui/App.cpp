@@ -1176,6 +1176,14 @@ void App::scrollTo(Pane &p, int top)
 
 void App::mouse(const Mouse &mouse)
 {
+    if (mouse.kind == Mouse::Move && m_previewDragging) {
+        previewDragTo(mouse.y); // the button is held: lines of the preview are selected
+        return;
+    }
+    if (mouse.kind == Mouse::Release && m_previewDragging) {
+        m_previewDragging = false;
+        return;
+    }
     if (mouse.kind == Mouse::Move) {
         if (m_band.down)
             bandTo(mouse.x, mouse.y); // the button is held: a rectangle over the files
@@ -1188,6 +1196,7 @@ void App::mouse(const Mouse &mouse)
         return;
     }
     endBand(); // a press: whatever was being dragged is over (its release was lost)
+    m_previewDragging = false;
     if (m_mode == Mode::Help) {
         // The wheel moves through a help longer than the screen.
         if (mouse.isWheel()) {
@@ -1345,7 +1354,7 @@ void App::mouseInSidebar(const Mouse &mouse)
     openPlace(entry);
 }
 
-// In the preview: the wheel scrolls it, a click on its scrollbar goes to that part, a click elsewhere in it gives it the keys.
+// In the preview: the wheel scrolls it, a click on its scrollbar goes to that part, a click elsewhere in it gives it the keys, and a drag over its lines selects them.
 void App::mouseInPreview(const Mouse &mouse)
 {
     if (mouse.isWheel()) {
@@ -1365,6 +1374,13 @@ void App::mouseInPreview(const Mouse &mouse)
             m_inShell = false;
             m_inSidebar = false;
             m_inPreview = true;
+            // On a line of text: a drag from here selects lines; a click alone forgets a selection.
+            forgetPreviewSelection();
+            const int row = m_previewTop + (mouse.y - m_previewY);
+            if (previewIsText() && mouse.y >= m_previewY && mouse.y < m_previewY + m_previewShown && row < previewRowCount()) {
+                m_previewDragFrom = row;
+                m_previewDragging = true;
+            }
             emit changed();
         }
     }
@@ -3111,7 +3127,9 @@ void App::drawHelp(Screen &screen)
         "                                    stays while you move among the files, until F3 closes it;",
         "                                    in a list of services or processes, / searches it; where the preview",
         "                                    offers something more, such as Analyze with Claude under the services,",
-        "                                    a lit line at its bottom says so: Enter there, or a click on it)",
+        "                                    a lit line at its bottom says so: Enter there, or a click on it;",
+        "                                    in a text, Ctrl+F or / finds (n and N go on), a drag over the lines,",
+        "                                    Shift+Up/Down or Ctrl+A selects them and Ctrl+C copies them)",
         "  F12  or  Ctrl+`                   a terminal under the files, in this folder; again: back to the files",
         "                                    (from the files, F12 also brings the shell to the folder you are in;",
         "                                    in it: Ctrl+Up brings the files to its folder, exit closes it;",

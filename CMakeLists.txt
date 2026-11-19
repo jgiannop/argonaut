@@ -156,6 +156,8 @@ qt_add_library(argonaut_app STATIC
     src/PlanView.h
     src/PlanView.cpp
     src/RichView.h
+    src/TextFinder.h
+    src/TextFinder.cpp
     src/ExtensionMenu.h
     src/ExtensionMenu.cpp
     src/ExtensionsDialog.h

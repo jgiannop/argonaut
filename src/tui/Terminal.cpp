@@ -509,4 +509,9 @@ QList<Key> Terminal::readKeys(bool *resized)
     return keys;
 }
 
+void Terminal::copyText(const QString &text)
+{
+    tell("\033]52;c;" + text.toUtf8().toBase64() + "\007");
+}
+
 } // namespace Tui

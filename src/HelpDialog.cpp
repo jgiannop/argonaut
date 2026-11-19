@@ -354,6 +354,11 @@ What an extension shows there (the System Dashboard, the running services, a dif
 with the files</b>: selecting files and changing folder don't take it away. Press [[Space]] on a file to see that
 file's preview again; [[Esc]] or the pane's ✕ closes it.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
+<p><b>Text in the preview can be copied and searched.</b> Click in it: then select with the mouse (or
+[[Ctrl+A]] for all) and [[Ctrl+C]] copies the words. [[Ctrl+F]] opens a small find bar under the text: what you
+type is marked everywhere it is, any case; [[Enter]] goes to the next, [[Shift+Enter]] to the one before, [[Esc]]
+closes the bar. While the keys are in the text, the file commands (Delete, Copy…) leave the files alone;
+[[Esc]] gives the keys back to the files.</p>
 <p>A PDF is shown whole: every page, one under another. Scroll with the wheel or the scrollbar; the line under
 the pages says which page you are on. [[Ctrl]] and the wheel make the pages bigger. Pages are drawn as you reach
 them, so a long document opens as quickly as a short one. They are pictures: to select text, follow a link or fill

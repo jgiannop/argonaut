@@ -35,5 +35,7 @@ enum class Read { Unavailable, Empty, Files };
 bool copyToDesktop(const QStringList &paths, bool cut);
 Read readDesktop(QStringList *paths, bool *cut);
 void clearDesktop(); // a cut is pasted once
+// Text (lines copied from the preview) on the desktop's clipboard.
+bool copyTextToDesktop(const QString &text);
 
 } // namespace FileClipboard

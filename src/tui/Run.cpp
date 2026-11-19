@@ -88,6 +88,7 @@ int run(int argc, char **argv)
     // A text file to read: the terminal goes to `less` until it is closed.
     // It only shows the file: no helper programs are run on it (LESSOPEN),
     // and from inside it nothing can be started or written (LESSSECURE).
+    QObject::connect(&tui, &App::terminalClipboardRequested, &app, [&](const QString &text) { terminal->copyText(text); });
     QObject::connect(&tui, &App::viewRequested, &app, [&](const QString &path) {
         QString pager = QStandardPaths::findExecutable(QStringLiteral("less"));
         if (pager.isEmpty())

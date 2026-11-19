@@ -27,6 +27,9 @@ public:
     // Hands the terminal to another program (a pager) and takes it back.
     void suspend();
     void resume();
+    // Text to the clipboard through the terminal itself (OSC 52), where there
+    // is no desktop to give it to (over SSH). Many terminals allow it; some don't.
+    void copyText(const QString &text);
 
 private:
     int pairFor(Ink ink, Paper paper);

@@ -181,6 +181,15 @@ Read readDesktop(QStringList *paths, bool *cut)
     return Read::Empty;
 }
 
+bool copyTextToDesktop(const QString &text)
+{
+    const Chosen with = chosen();
+    if (with.helper == Helper::None)
+        return false;
+    return run(with.copy, copyArguments(with.helper, with.helper == Helper::Wayland ? QStringLiteral("text/plain;charset=utf-8") : QStringLiteral("UTF8_STRING")),
+               text.toUtf8());
+}
+
 void clearDesktop()
 {
     const Chosen with = chosen();
