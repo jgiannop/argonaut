@@ -634,7 +634,12 @@ This is the Git extension: switch it off in <b>Edit → Extensions</b> ([[Ctrl+S
 <b>M</b>), a short text at the right end of the path bar, and commands in the right-click menu. These come
 with Argonaut: <b>Git</b> (marks, the branch, and <i>Git: Stage</i> / <i>Git: Unstage</i> on changed items),
 <b>Organize with Claude</b>, <b>Send by Email</b>, <b>Set as Background</b>, <b>Document Preview</b>, <b>System Dashboard</b>, <b>Space Overview</b>, <b>Running Services</b>, <b>Running Processes</b>, <b>System Journal</b>, <b>Network Connections</b>, <b>System Cleanup</b>, <b>Updates and Restart</b>, <b>How to Install</b>,
-<b>What Is This About</b>, <b>Tell Claude What to Do</b>, <b>How to Install</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<b>What Is This About</b>, <b>Tell Claude What to Do</b>, <b>How to Install</b>, <b>Project Explorer</b> and <b>Connect to Server</b> (see <a href="topic:places">Places and Drives</a>).</p>
+<p><b>Project Explorer</b>: <b>File → Open as Project</b> (or a folder's right-click menu) shows the folder as a tree under
+the places, with a divider you can drag between them. What the project's Git ignores (<i>build/</i>, <i>node_modules/</i>)
+is faint and <i>.git</i> is left out. A click on a folder opens it in the files, a click on a file shows it selected in its
+folder (and in the preview, if that is open), a double click opens it. <b>File → Open Recent Project…</b> chooses one of the
+last ten, <b>Close Project</b> or the tree's ✕ closes it. The project is there again the next time Argonaut starts.</p>
 <p>An extension that says so may ask Claude things <b>through Argonaut</b>: with the key and the model you set in
 <b>Preferences → Claude</b>, at your cost, and only while it does something you chose. It never gets the key. The
 Extensions window says which extensions use Claude and what each has cost so far.</p>

@@ -29,6 +29,7 @@ for line in sys.stdin:
             {"id": "live", "label": "Live", "target": "folder", "group": "Fake"},
             {"id": "form", "label": "Form", "target": "folder", "group": "Fake"},
             {"id": "late", "label": "Late", "target": "folder", "group": "Fake"},
+            {"id": "tree", "label": "Tree", "target": "folder", "group": "Fake"},
             {"id": "inmenu", "label": "In The & Menu", "menu": "view"},
             {"id": "nomenu", "label": "In No Menu", "menu": "tools"},
             {"id": "", "label": "No id"},
@@ -49,6 +50,8 @@ for line in sys.stdin:
         say({"type": "open", "folder": here})  # out of the blue: not obeyed
         say({"type": "form", "id": "sneaky", "title": "Your password, please",
              "fields": [{"id": "p", "label": "Password", "kind": "secret"}]})  # nor is this shown
+    if m.get("type") == "tree" and m.get("action") == "close":
+        say({"type": "message", "text": "tree closed " + m.get("id", "")})
     if m.get("type") == "place":
         here = os.path.dirname(os.path.abspath(__file__))
         if m.get("action") == "open":
@@ -197,6 +200,11 @@ for line in sys.stdin:
                      {"x": 10, "y": 900000, "width": 30, "height": 30, "text": "far below"},
                      {"x": "ten", "y": 20, "width": 30, "height": 30, "text": "not a number"},
                      "not an object"] + [{"x": 100, "y": n, "width": 5, "height": 1, "text": "many %d" % n} for n in range(600)]})
+        if m.get("command") == "tree":
+            say({"type": "tree", "id": "t1", "folder": "relative/folder"})  # not a folder: no tree
+            say({"type": "tree", "id": "t1", "title": "Fake\nTree", "tooltip": "the fake's tree", "folder": folder,
+                 "faint": ["build/", "../up", "/etc", "a/../../b", "ok/deep", "", ".", 5],
+                 "hidden": [".git", "../.."]})
         if m.get("command") == "showme":
             say({"type": "show", "title": "A result\nfrom the fake", "kind": "diff", "note": "2 lines",
                  "text": "diff --git a/x b/x\n@@ -1 +1 @@\n-old <b>line</b>\n+new line"})

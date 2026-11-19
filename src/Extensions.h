@@ -177,6 +177,26 @@ struct Place
 // Something an extension needs the user to fill in or decide while it works
 // (a login, an unknown host key, which shared folder): shown as a dialog
 // that says which extension is asking.
+// A tree of a folder in the lower part of the sidebar (a project): the
+// extension says which folder and what in it is faint or left out;
+// Argonaut lists it and draws it. One is shown at a time, the newest.
+struct Tree
+{
+    bool valid = false;
+    QString extension; // its extension's id
+    QString id;
+    QString title;     // the tree's heading ("argonaut")
+    QString tooltip;
+    QString folder;    // its top folder (absolute, existing)
+    QSet<QString> faint;  // relative paths drawn faint, with everything inside (ignored by Git: build/)
+    QSet<QString> hidden; // relative paths left out, with everything inside (.git)
+    qint64 since = 0;     // when it was sent (the newest is shown)
+    // `relative` or a folder it is in is in `set`.
+    static bool covers(const QSet<QString> &set, const QString &relative);
+    bool isFaint(const QString &relative) const { return covers(faint, relative); }
+    bool isHidden(const QString &relative) const { return covers(hidden, relative); }
+};
+
 struct FormField
 {
     enum Kind { Text, Secret, Check, Choice } kind = Text;
@@ -368,6 +388,13 @@ public:
     // "text":…}. The extension answers by making the result again.
     void searchResult(const QString &extension, const QString &id, const QString &text);
 
+    // The tree shown under the sidebar's places: the newest any running
+    // extension sent ({"type":"tree",…}); !valid: none. closeTree(): the
+    // user closed it; its extension is told {"type":"tree","id":…,"action":"close"}.
+    Tree tree() const;
+    void closeTree();
+    static constexpr int MaxTreePaths = 20000; // faint and hidden, each
+
     // Sidebar rows from extensions, in the extensions' order.
     QList<Place> places() const;
     // "extension-place:///<extension>/<id>": the address of a row that has
@@ -428,6 +455,7 @@ signals:
     void message(const QString &extension, const QString &text); // something to tell the user
     void previewReady(int request, const Extensions::PreviewReply &reply);
     void placesChanged();                                  // the sidebar rows from extensions
+    void treeChanged();                                    // the tree under them: another one, changed, or none
     void formRequested(const Extensions::Form &form);      // an extension asks the user something
     void planRequested(const Extensions::Plan &plan);      // an extension proposes changes: shown to be ticked and applied
     // Claude is being asked something for an extension (`waiting` questions
@@ -461,6 +489,7 @@ private:
         QStringList previewTypes; // what it previews ("text/markdown", "image/*")
         QHash<QString, Listing> listings; // by id
         QList<Place> places;              // its sidebar rows
+        Tree tree;                        // its tree under them (!valid: none)
         qint64 userActed = 0;             // when the user last chose something of its (ms since the epoch)
         bool commandsSaid = false;        // it has sent "commands": those count, not the manifest's
         bool previewsSaid = false;        // …and "previews"
@@ -487,6 +516,7 @@ private:
     void handle(Running *ext, const QByteArray &line);
     // handle() tells what kind of message it is; the long ones are read here.
     void hearPlaces(Running *ext, const QJsonObject &message);
+    void hearTree(Running *ext, const QJsonObject &message);
     void hearForm(Running *ext, const QJsonObject &message);
     void hearListing(Running *ext, const QJsonObject &message);
     void hearShow(Running *ext, const QJsonObject &message);

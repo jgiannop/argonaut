@@ -49,6 +49,7 @@
 #include "PropertiesDialog.h"
 #include "QuickLook.h"
 #include "Sidebar.h"
+#include "SideTree.h"
 #include "StyleSheet.h"
 #include "TabStrip.h"
 #include "Thumbnailer.h"
@@ -141,6 +142,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_ops = new FileOperations(this);
     m_ops->setAskOnConflict(true);
     connect(m_ops, &FileOperations::jobFinished, this, &MainWindow::onJobFinished);
+    // A tree an extension shows under the places (Project Explorer's project).
+    connect(Extensions::Host::instance(), &Extensions::Host::treeChanged, this, &MainWindow::updateSideTree);
     // What an extension has to say ("Staged", "Background changed"): in the window in front.
     connect(Extensions::Host::instance(), &Extensions::Host::message, this, [this](const QString &, const QString &text) {
         if (!QApplication::activeWindow() || QApplication::activeWindow() == this)
@@ -801,8 +804,46 @@ QWidget *MainWindow::buildSidebarPane()
         if (path.isEmpty() || !navigateTo(path))
             syncSidebarSelection();
     });
-    layout->addWidget(m_sidebar, 1);
+    // Places above, an extension's tree (a project) below, with a splitter.
+    m_sideSplit = new QSplitter(Qt::Vertical, pane);
+    m_sideSplit->setObjectName("sideSplit");
+    m_sideSplit->setHandleWidth(1);
+    m_sideSplit->setChildrenCollapsible(false);
+    m_sideSplit->addWidget(m_sidebar);
+    m_sideTree = new SideTree(m_sideSplit);
+    m_sideTree->hide();
+    m_sideSplit->addWidget(m_sideTree);
+    m_sideSplit->setStretchFactor(0, 2);
+    m_sideSplit->setStretchFactor(1, 3);
+    connect(m_sideTree, &SideTree::closeRequested, this, [] { Extensions::Host::instance()->closeTree(); });
+    connect(m_sideTree, &SideTree::folderClicked, this, [this](const QString &path) { navigateTo(path); });
+    connect(m_sideTree, &SideTree::fileClicked, this, [this](const QString &path) {
+        // Its folder, with it selected (and in the preview, if that is open).
+        if (navigateTo(QFileInfo(path).path()))
+            selectPaths({path});
+    });
+    connect(m_sideTree, &SideTree::fileActivated, this, [this](const QString &path) { openFile(path); });
+    layout->addWidget(m_sideSplit, 1);
     return pane;
+}
+
+void MainWindow::updateSideTree()
+{
+    if (!m_sideTree)
+        return;
+#if defined(ARGONAUT_DBUS)
+    if (m_chooser) // an Open/Save window for another program: no project
+        return;
+#endif
+    const Extensions::Tree tree = Extensions::Host::instance()->tree();
+    if (!tree.valid) {
+        m_sideTree->setTree(Extensions::Tree());
+        m_sideTree->hide();
+        return;
+    }
+    m_sideTree->setTree(tree);
+    m_sideTree->show();
+    m_sideTree->reveal(m_pane->current);
 }
 
 QWidget *MainWindow::buildContentPane()
@@ -1159,6 +1200,8 @@ void MainWindow::refreshChrome()
     m_trashBar->setVisible(m_pane->model->isTrash());
     m_pathBar->setPath(m_pane->current);
     updateGitBadge();
+    if (m_sideTree && m_sideTree->isVisible())
+        m_sideTree->reveal(m_pane->current); // its row in the project's tree
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) {
         setWindowTitle(m_chooser->windowTitle());
@@ -1698,6 +1741,8 @@ void MainWindow::applyTheme(bool force)
     m_themeId = theme.id;
 
     setStyleSheet(styleSheetFor(m_theme));
+    if (m_sideTree)
+        m_sideTree->applyTheme(m_theme);
 
     m_backButton->setIcon(glyphIcon(Glyph::ChevronLeft, m_theme.fg));
     m_forwardButton->setIcon(glyphIcon(Glyph::ChevronRight, m_theme.fg));
@@ -1929,6 +1974,8 @@ void MainWindow::loadSettings()
         restoreGeometry(settings.value("window/geometry").toByteArray());
     if (settings.contains("window/sidebarSplitter"))
         m_splitter->restoreState(settings.value("window/sidebarSplitter").toByteArray());
+    if (settings.contains("window/sideTreeSplitter"))
+        m_sideSplit->restoreState(settings.value("window/sideTreeSplitter").toByteArray());
     m_terminalHeight = settings.value("window/terminalHeight", 0).toInt();
     m_previewWidth = settings.value("window/previewWidth", 0).toInt();
     if (settings.contains("view/listHeader"))
@@ -1977,6 +2024,7 @@ void MainWindow::saveSettings()
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/sidebarSplitter", m_splitter->saveState());
+    settings.setValue("window/sideTreeSplitter", m_sideSplit->saveState());
     if (m_terminalPanel && m_terminalPanel->isVisible())
         m_terminalHeight = m_terminalPanel->height();
     settings.setValue("window/terminalHeight", m_terminalHeight);

@@ -176,6 +176,8 @@ Ignore message types and keys you don't know; newer versions may add some.
 - `form`: the answer to a form you showed (see [Forms](#forms)).
 - `place`: the user clicked one of your sidebar rows, or its ⏏ (see
   [Places in the sidebar](#places-in-the-sidebar)).
+- `tree`: the user closed your tree (see
+  [A tree under the places](#a-tree-under-the-places)).
 - `result`: a result you named is on screen now, or no longer is (see
   [Results that update](#results-that-update)).
 - `invoke`: the user chose one of your commands (and said yes to its
@@ -473,6 +475,52 @@ changed, and to show the user where they now are:
 Argonaut obeys one `open` after the user chose something of yours (a row, or
 one of your commands), within five minutes, and ignores any other. An
 extension can't move the user about on its own. At most 20 rows.
+
+### A tree under the places
+
+An extension that has a folder the user works in for a while (a project)
+can show it as a tree in the lower part of the sidebar, under the places,
+with a splitter between them. Argonaut lists the folder and draws the tree
+(and your marks on its rows: watch the folder to send them); you say which
+folder it is and what in it is faint or left out:
+
+```json
+{"type": "tree", "id": "project", "title": "argonaut", "tooltip": "~/dev/argonaut\nGit: main",
+ "folder": "/home/me/dev/argonaut",
+ "faint": ["build/", "node_modules/", "run.log"],
+ "hidden": [".git"]}
+```
+
+Send it again whenever it changes; it replaces what you said before. Without
+a `folder` it takes your tree away:
+
+```json
+{"type": "tree", "id": "project"}
+```
+
+| Key | Meaning |
+|---|---|
+| `id` | Required. Comes back when the user closes it. |
+| `folder` | Required: a real folder, by its full path. Its contents are the tree. |
+| `title` | The tree's heading, up to 60 characters. Leave it out for the folder's name. |
+| `tooltip` | A line or two over the heading. |
+| `faint` | Paths **relative to the folder** drawn faint, with everything inside them (what a build or a tool made). A trailing `/` is fine; no `..`, nothing absolute. At most 20,000. |
+| `hidden` | Paths left out, with everything inside them, the same way. |
+
+A click on a folder in the tree opens it in the files, a click on a file
+shows its folder with it selected, a double click opens the file. The tree
+never takes the keys. When the user closes it (its ✕), it is gone at once
+and you are told:
+
+```json
+{"type": "tree", "id": "project", "action": "close"}
+```
+
+One tree is shown at a time: the one sent most recently, by any
+extension. While you show one you are not stopped for being idle, and if
+yours was shown when Argonaut quit, your program is started with Argonaut
+the next time (even with `"start": "when-needed"`), so you can send it
+again. Project Explorer, which comes with Argonaut, is built on this.
 
 ### Addresses
 

@@ -55,7 +55,7 @@ if(TARGET argonaut-git-extension)
     target_compile_definitions(tst_extensions PRIVATE GIT_EXTENSION_FOLDER="${CMAKE_BINARY_DIR}/extensions"
         FAKE_EXTENSION="${CMAKE_CURRENT_SOURCE_DIR}/fake_extension.py")
     # (Which of them are built depends on the system: only those that are.)
-    foreach(extension git desktop preview space organize command about install)
+    foreach(extension git desktop preview space organize command about install project)
         if(TARGET argonaut-${extension}-extension)
             add_dependencies(tst_extensions argonaut-${extension}-extension)
         endif()

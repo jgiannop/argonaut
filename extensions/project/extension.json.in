@@ -1,0 +1,16 @@
+{
+    "id": "project-explorer",
+    "name": "Project Explorer",
+    "description": "Opens a folder as a project: its tree under the places in the sidebar, as in a code editor, with what Git ignores (build/, node_modules/) shown faint. Adds File → Open as Project, Open Recent Project… and Close Project. The project is there again the next time Argonaut starts.",
+    "version": "@PROJECT_VERSION@",
+    "author": "Argonaut",
+    "protocol": 1,
+    "start": "when-needed",
+    "commands": [
+        {"id": "open", "label": "Open as Project", "menu": "file"},
+        {"id": "open", "label": "Open as Project", "target": "folder"},
+        {"id": "open", "label": "Open as Project", "kind": "folders", "multiple": false},
+        {"id": "recent", "label": "Open Recent Project…", "menu": "file"}
+    ],
+    "exec": ["@ARGONAUT_PROJECT_EXTENSION_EXE@"]
+}

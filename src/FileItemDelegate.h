@@ -33,6 +33,8 @@ public:
     void setIconSize(int px);
     int iconSize() const { return m_iconSize; }
     void setTheme(const Theme &theme);
+    // An extension's mark colour ("warning", "success"…) in `theme`: libadwaita's shades.
+    static QColor badgeColorFor(const Theme &theme, const QString &name);
     // Folder under a drag in progress: drawn highlighted ("drop here").
     void setDropTarget(const QModelIndex &index) { m_dropTarget = index; }
     QSize gridCellSize(const QFontMetrics &fm) const;

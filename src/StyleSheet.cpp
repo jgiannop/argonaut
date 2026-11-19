@@ -40,6 +40,14 @@ QListWidget#sidebar::item { height: 36px; padding-left: 8px; border: none; borde
 QListWidget#sidebar::item:hover { background: @hover; }
 QListWidget#sidebar::item:selected { background: @selected; color: @fg; }
 
+QSplitter#sideSplit::handle { background: @border; }
+QWidget#sideTree { background: @sidebar; }
+QLabel#sideTreeTitle { color: @dim; }
+QTreeView#sideTreeView { background: @sidebar; color: @fg; border: none; outline: 0; padding: 0px 6px 6px 6px; }
+QTreeView#sideTreeView::item { height: 26px; border: none; border-radius: 6px; }
+QTreeView#sideTreeView::item:hover { background: @hover; }
+QTreeView#sideTreeView::item:selected { background: @selected; color: @fg; }
+
 QListView#files { background: @window; border: none; outline: 0; padding: 6px 6px; }
 QTreeView#detailView { background: @window; border: none; outline: 0; padding: 0px 6px 6px 6px; }
 QTreeView#detailView::item, QTreeView#detailView::item:selected,

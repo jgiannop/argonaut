@@ -111,6 +111,8 @@ private slots:
     void gitChangesCommitAndBranches();
     void gitChangesAsAListOfFiles();
     void sendByEmailIsAnExtension();
+    void treesAreData();
+    void projectExplorer();
 
 private:
     int starts() const;
@@ -357,7 +359,7 @@ void TestExtensions::commandsFitTheSelection()
     QCOMPARE(ids(m_dir, {photo, photo}), (QStringList{"hello", "ask"})); // "one image" means one
     QCOMPARE(ids(m_dir, {dir}), (QStringList{"hello", "folders", "ask"}));
     QCOMPARE(ids(m_dir, {dir, text}), (QStringList{"hello", "ask"}));
-    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme", "live", "form", "late"})); // the folder's empty space
+    QCOMPARE(ids(m_dir, {}), (QStringList{"here", "typed", "showme", "listme", "live", "form", "late", "tree"})); // the folder's empty space
     QCOMPARE(ids(QString(), {text}), (QStringList{"hello", "ask"}));    // Recent: no folder, no folder commands
     QVERIFY(ids(QString(), {}).isEmpty());
     // A command for the menu bar is in its menu and nowhere else; one for a
@@ -470,6 +472,156 @@ void TestExtensions::previewsAreAskedAndChecked()
 // Sidebar rows from an extension, checked like everything else it says; a
 // click is told to it, and "open this folder" is obeyed only as the answer
 // to something the user chose, once.
+// A tree under the places: only a real folder, only paths inside it; the
+// user's ✕ is told to the extension.
+void TestExtensions::treesAreData()
+{
+    Host host;
+    QSignalSpy changed(&host, &Host::treeChanged);
+    QSignalSpy said(&host, &Host::message);
+    host.setEnabled("fake", true);
+    host.watch(m_dir);
+    Extensions::Command tree;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host.commands(m_dir, {}))
+            if (c.id == "tree")
+                tree = c;
+        return !tree.id.isEmpty();
+    }(), 10000);
+    QVERIFY(!host.tree().valid);
+    host.invoke(tree, m_dir, {});
+    QTRY_VERIFY_WITH_TIMEOUT(host.tree().valid, 10000);
+    const Extensions::Tree shown = host.tree();
+    QCOMPARE(shown.extension, QStringLiteral("fake"));
+    QCOMPARE(shown.id, QStringLiteral("t1"));
+    QCOMPARE(shown.folder, m_dir);
+    QCOMPARE(shown.title, QStringLiteral("Fake Tree")); // one line
+    QCOMPARE(shown.faint, (QSet<QString>{"build", "ok/deep"})); // "build/" as "build"; nothing outside, nothing empty
+    QCOMPARE(shown.hidden, QSet<QString>{".git"});
+    QVERIFY(shown.isFaint("build") && shown.isFaint("build/x/y.o") && shown.isFaint("ok/deep/z"));
+    QVERIFY(!shown.isFaint("ok") && !shown.isFaint("buildx") && !shown.isFaint("src/build"));
+    QVERIFY(shown.isHidden(".git/config") && !shown.isHidden(".gitignore"));
+    QVERIFY(QSettings().value("extensions/fake/treeShown").toBool()); // started with Argonaut next time
+
+    // The ✕: gone at once, and the extension hears it.
+    host.closeTree();
+    QVERIFY(!host.tree().valid);
+    QVERIFY(!QSettings().value("extensions/fake/treeShown").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const QList<QVariant> &m : said)
+            if (m.at(1).toString() == "tree closed t1")
+                return true;
+        return false;
+    }(), 10000);
+    // Switched off: its tree goes with it.
+    host.invoke(tree, m_dir, {});
+    QTRY_VERIFY_WITH_TIMEOUT(host.tree().valid, 10000);
+    host.setEnabled("fake", false);
+    QVERIFY(!host.tree().valid);
+}
+
+// Project Explorer, the real one: a folder as a project, with what Git
+// ignores faint and .git left out; remembered, and there again when
+// Argonaut starts; recent projects to choose from.
+void TestExtensions::projectExplorer()
+{
+    if (QStandardPaths::findExecutable("git").isEmpty())
+        QSKIP("git isn't installed");
+    const QString project = m_dir + "/proj";
+    QVERIFY(QDir().mkpath(project + "/src"));
+    QVERIFY(QDir().mkpath(project + "/build/obj"));
+    writeFile(project + "/.gitignore", "build/\n*.log\n");
+    writeFile(project + "/src/main.cpp", "int main() {}\n");
+    writeFile(project + "/build/obj/main.o", "x");
+    writeFile(project + "/run.log", "x");
+    writeFile(project + "/README.md", "# proj\n");
+    QVERIFY(git(project, {"init", "-q"}));
+    QVERIFY(git(project, {"add", "."}));
+    QVERIFY(git(project, {"commit", "-q", "-m", "first"}));
+    const QString plain = m_dir + "/plain"; // no Git: what tools make, by name
+    QVERIFY(QDir().mkpath(plain + "/node_modules/x"));
+    QVERIFY(QDir().mkpath(plain + "/lib"));
+
+    auto commandOf = [](Host &host, const QString &id) {
+        for (const Extensions::Command &c : host.menuCommands("file"))
+            if (c.extension == "project-explorer" && c.id == id)
+                return c;
+        return Extensions::Command();
+    };
+    {
+        Host host;
+        host.setEnabled("project-explorer", true);
+        // Started only when needed: its commands come from its extension.json meanwhile.
+        QVERIFY(!host.isRunning("project-explorer"));
+        const Extensions::Command open = commandOf(host, "open");
+        QCOMPARE(open.label, QStringLiteral("Open as Project"));
+        QVERIFY(!commandOf(host, "recent").id.isEmpty());
+        QVERIFY(commandOf(host, "close").id.isEmpty()); // nothing open
+        bool onFolder = false, onAFolder = false;
+        for (const Extensions::Command &c : host.commands(project, {}))
+            onFolder = onFolder || (c.extension == "project-explorer" && c.id == "open");
+        for (const Extensions::Command &c : host.commands(m_dir, {{project, "inode/directory", true}}))
+            onAFolder = onAFolder || (c.extension == "project-explorer" && c.id == "open");
+        QVERIFY(onFolder && onAFolder);
+
+        QSignalSpy said(&host, &Host::message);
+        host.invoke(open, project + "/src", {project}); // a folder right-clicked: that one
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().valid, 10000);
+        QCOMPARE(host.tree().folder, project);
+        QCOMPARE(host.tree().title, QStringLiteral("proj"));
+        QCOMPARE(host.tree().hidden, QSet<QString>{".git"});
+        // What Git ignores, once the repository was checked.
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().isFaint("build/obj/main.o") && host.tree().isFaint("run.log"), 10000);
+        QVERIFY(!host.tree().isFaint("src/main.cpp") && !host.tree().isFaint("README.md") && !host.tree().isFaint(".gitignore"));
+        QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty(), 5000);
+        QVERIFY(said.first().at(1).toString().contains("open as a project"));
+        // A new file Git ignores: faint after the folder is looked at again.
+        host.watch(project); // as the window's tree does
+        writeFile(project + "/new.log", "x");
+        host.refresh(project);
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().isFaint("new.log"), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!commandOf(host, "close").id.isEmpty(), 5000);
+
+        // Another project: a folder without Git.
+        host.invoke(open, plain, {});
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().folder == plain, 10000);
+        QCOMPARE(host.tree().faint, QSet<QString>{"node_modules"});
+        // The recent ones, to choose from: the newest first.
+        QSignalSpy forms(&host, &Host::formRequested);
+        host.invoke(commandOf(host, "recent"), plain, {});
+        QTRY_COMPARE_WITH_TIMEOUT(forms.size(), 1, 10000);
+        const Extensions::Form form = forms.first().first().value<Extensions::Form>();
+        QCOMPARE(form.fields.size(), 1);
+        QCOMPARE(form.fields.first().choices.size(), 2);
+        QVERIFY(form.fields.first().choices.at(0).startsWith("plain"));
+        const QString proj = form.fields.first().choices.at(1);
+        QVERIFY(proj.startsWith("proj") && proj.contains(project));
+        QVERIFY(host.takeForm("project-explorer", form.id));
+        host.answerForm("project-explorer", form.id, false, {{"project", proj}}, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().folder == project, 10000);
+        host.unwatch(project);
+    }
+    // Argonaut again: the project is there again, without anything chosen.
+    {
+        Host host;
+        QVERIFY(host.isEnabled("project-explorer"));
+        host.watch(m_dir); // the first folder shown starts what has to run
+        QTRY_VERIFY_WITH_TIMEOUT(host.tree().valid, 10000);
+        QCOMPARE(host.tree().folder, project);
+        // Closed (the ✕): gone, and not there the next time.
+        host.closeTree();
+        QTRY_VERIFY_WITH_TIMEOUT(commandOf(host, "close").id.isEmpty(), 10000);
+        host.unwatch(m_dir);
+    }
+    {
+        Host host;
+        host.watch(m_dir);
+        QTest::qWait(500);
+        QVERIFY(!host.isRunning("project-explorer"));
+        QVERIFY(!host.tree().valid);
+    }
+}
+
 void TestExtensions::placesAndOpeningFolders()
 {
     Host host;

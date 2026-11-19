@@ -387,16 +387,21 @@ void FileItemDelegate::paintStarBadge(QPainter *painter, const QRect &iconRect, 
 
 QColor FileItemDelegate::badgeColor(const QString &name) const
 {
+    return badgeColorFor(m_theme, name);
+}
+
+QColor FileItemDelegate::badgeColorFor(const Theme &theme, const QString &name)
+{
     // libadwaita's palette: brighter shades on dark themes.
     if (name == QLatin1String("success"))
-        return m_theme.dark ? QColor("#57e389") : QColor("#26a269");
+        return theme.dark ? QColor("#57e389") : QColor("#26a269");
     if (name == QLatin1String("error"))
-        return m_theme.dark ? QColor("#f66151") : QColor("#c01c28");
+        return theme.dark ? QColor("#f66151") : QColor("#c01c28");
     if (name == QLatin1String("accent"))
-        return m_theme.accent;
+        return theme.accent;
     if (name == QLatin1String("dim"))
-        return m_theme.dark ? QColor("#9a9996") : QColor("#77767b");
-    return m_theme.dark ? QColor("#ffa348") : QColor("#c64600"); // warning
+        return theme.dark ? QColor("#9a9996") : QColor("#77767b");
+    return theme.dark ? QColor("#ffa348") : QColor("#c64600"); // warning
 }
 
 // Grid: a small round tag at the icon's bottom-left (next to a link arrow).

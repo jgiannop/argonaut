@@ -67,6 +67,12 @@ QString tidy(const QString &text, int maxChars)
     return out.trimmed();
 }
 
+// Whether an extension had a tree shown (its program is started with Argonaut then).
+QString treeKey(const QString &id)
+{
+    return QStringLiteral("extensions/%1/treeShown").arg(id);
+}
+
 // A path inside a folder: relative, no "..", no leading or trailing '/'.
 bool isInsidePath(const QString &key)
 {
@@ -659,7 +665,7 @@ void Host::stopIdle()
     for (Running *ext : std::as_const(m_running)) {
         if (!ext->process || !ext->manifest.whenNeeded)
             continue;
-        if (!ext->resultsShown.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || !ext->listings.isEmpty())
+        if (!ext->resultsShown.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || ext->tree.valid || !ext->listings.isEmpty())
             continue; // it has something on screen
         if (ext->claudePending > 0 || !ext->planPending.isEmpty())
             continue; // it waits for an answer from Claude, or for the user to look at its plan
@@ -1232,8 +1238,10 @@ void Host::startAsNeeded()
     if (m_watched.isEmpty() || m_quitting)
         return; // nothing to ask yet: programs start with the first folder
     for (Running *ext : std::as_const(m_running)) {
-        // Not the ones that asked to be started only when something of theirs is used.
-        if (!ext->process && ext->failures < MaxFailures && !ext->manifest.whenNeeded)
+        // Not the ones that asked to be started only when something of theirs is used,
+        // unless one had a tree under the places when Argonaut last quit (a project): it is there again.
+        if (!ext->process && ext->failures < MaxFailures
+            && (!ext->manifest.whenNeeded || QSettings().value(treeKey(ext->manifest.id)).toBool()))
             start(ext);
     }
 }
@@ -1415,6 +1423,10 @@ void Host::handle(Running *ext, const QByteArray &line)
         hearPlaces(ext, message);
         return;
     }
+    if (type == QLatin1String("tree")) { // a folder's tree under the sidebar's places (a project)
+        hearTree(ext, message);
+        return;
+    }
     if (type == QLatin1String("form")) { // it needs the user to fill something in, or to decide
         hearForm(ext, message);
         return;
@@ -1489,6 +1501,89 @@ void Host::hearPlaces(Running *ext, const QJsonObject &message)
     }
     ext->places = places;
     emit placesChanged();
+}
+
+// "tree": a folder shown as a tree under the sidebar's places; replaces
+// what it said before. No folder: it takes its tree away.
+void Host::hearTree(Running *ext, const QJsonObject &message)
+{
+    Tree tree;
+    tree.extension = ext->manifest.id;
+    tree.id = message.value(QLatin1String("id")).toString().left(64);
+    const QString folder = message.value(QLatin1String("folder")).toString();
+    // Its top folder must be a real one, by its full path.
+    if (!tree.id.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir()) {
+        tree.valid = true;
+        tree.folder = QDir::cleanPath(folder);
+        tree.title = tidy(message.value(QLatin1String("title")).toString(), MaxLabelChars).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (tree.title.isEmpty())
+            tree.title = QFileInfo(tree.folder).fileName();
+        tree.tooltip = tidy(message.value(QLatin1String("tooltip")).toString(), MaxTooltipChars);
+        // Paths inside it, nothing else ("build/" as Git says it is "build").
+        auto read = [&](const char *key, QSet<QString> *into) {
+            const QJsonArray list = message.value(QLatin1String(key)).toArray();
+            for (const QJsonValue &entry : list) {
+                if (into->size() >= MaxTreePaths)
+                    break;
+                QString relative = entry.toString().left(4096);
+                while (relative.endsWith(QLatin1Char('/')))
+                    relative.chop(1);
+                if (!relative.isEmpty() && relative != QLatin1String(".") && isInsidePath(relative))
+                    into->insert(relative);
+            }
+        };
+        read("faint", &tree.faint);
+        read("hidden", &tree.hidden);
+        // The same tree again keeps its place in the order; a new one is the newest.
+        tree.since = ext->tree.valid && ext->tree.id == tree.id && ext->tree.folder == tree.folder
+                         ? ext->tree.since
+                         : QDateTime::currentMSecsSinceEpoch();
+    }
+    if (!tree.valid && !ext->tree.valid)
+        return;
+    ext->tree = tree;
+    QSettings().setValue(treeKey(ext->manifest.id), tree.valid); // started again next time while it has one
+    emit treeChanged();
+}
+
+bool Tree::covers(const QSet<QString> &set, const QString &relative)
+{
+    if (set.isEmpty())
+        return false;
+    QString path = relative;
+    for (;;) {
+        if (set.contains(path))
+            return true;
+        const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+        if (slash < 0)
+            return false;
+        path.truncate(slash);
+    }
+}
+
+Tree Host::tree() const
+{
+    Tree newest;
+    for (const Running *ext : m_running) {
+        if (ext->process && ext->tree.valid && (!newest.valid || ext->tree.since > newest.since))
+            newest = ext->tree;
+    }
+    return newest;
+}
+
+void Host::closeTree()
+{
+    const Tree shown = tree();
+    if (!shown.valid)
+        return;
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != shown.extension)
+            continue;
+        ext->tree = Tree();
+        QSettings().setValue(treeKey(ext->manifest.id), false);
+        send(ext, {{QStringLiteral("type"), QStringLiteral("tree")}, {QStringLiteral("id"), shown.id}, {QStringLiteral("action"), QStringLiteral("close")}});
+    }
+    emit treeChanged();
 }
 
 // "form": it needs the user to fill something in, or to decide
@@ -1759,6 +1854,10 @@ void Host::forget(Running *ext)
     if (!ext->places.isEmpty()) {
         ext->places.clear();
         emit placesChanged();
+    }
+    if (ext->tree.valid) {
+        ext->tree = Tree();
+        emit treeChanged();
     }
     ext->userActed = 0;
     ext->formPending.clear();

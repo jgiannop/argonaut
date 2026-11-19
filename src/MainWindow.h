@@ -27,6 +27,7 @@ class DirectoryModel;
 class InlineRename;
 class MountActions;
 class Sidebar;
+class SideTree;
 class AnalyzeView;
 class QuickLook;
 namespace Extensions {
@@ -258,6 +259,10 @@ private:
     QToolButton *m_analyzeButton = nullptr;
     bool m_analyzing = false;
     Sidebar *m_sidebar = nullptr;
+    // An extension's tree under the places (Project Explorer), with a splitter between them.
+    SideTree *m_sideTree = nullptr;
+    class QSplitter *m_sideSplit = nullptr;
+    void updateSideTree(); // shows the tree the extensions ask for now, or none
     QWidget *m_root = nullptr;
     QSplitter *m_splitter = nullptr;
     QStackedWidget *m_locationStack = nullptr;

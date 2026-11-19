@@ -28,6 +28,7 @@
 #include "RichTextStyle.h"
 #include "Theme.h"
 #include "Sidebar.h"
+#include "SideTree.h"
 #include "TabStrip.h"
 #if defined(ARGONAUT_TERMINAL)
 #include "TerminalWidget.h"
@@ -141,6 +142,7 @@ private slots:
     void extensionFormsAndAddresses();
     void themesFromFiles();
     void upAndDownButtons();
+    void extensionTreeUnderThePlaces();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -1827,6 +1829,75 @@ void TestMainWindow::extensionFormsAndAddresses()
 // An extension's rows in the sidebar: a click on one that is a folder opens
 // it; one that isn't asks its extension, which answers with the folder to
 // open; ⏏ is the extension's to carry out.
+// An extension's tree (Project Explorer's project) under the places, with a
+// splitter: faint and left-out paths as it says, a click on a folder opens
+// it, on a file shows it selected in its folder; the ✕ closes it.
+void TestMainWindow::extensionTreeUnderThePlaces()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    make("build/out.o");
+    make(".git/config");
+    make("ok/deep/x.txt");
+    make("src/main.cpp");
+    make("README.md");
+    open(m_dir);
+    QVERIFY(w->m_sideTree && !w->m_sideTree->isVisible());
+    host->setEnabled("fake", true);
+    Extensions::Command tree;
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const Extensions::Command &c : host->commands(m_dir, {}))
+            if (c.extension == "fake" && c.id == "tree")
+                tree = c;
+        return !tree.id.isEmpty();
+    }(), 10000);
+    host->invoke(tree, m_dir, {});
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_sideTree->isVisible(), 10000);
+    QCOMPARE(w->m_sideSplit->indexOf(w->m_sideTree), 1); // under the places
+    QCOMPARE(w->m_sideTree->tree().folder, m_dir);
+
+    // Listed: faint where the extension says, .git left out.
+    QTreeView *view = w->m_sideTree->view();
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_sideTree->indexOf(m_dir + "/src").isValid()
+                                 && view->model()->rowCount(view->rootIndex()) == 4, 10000); // build, ok, src, README.md
+    QVERIFY(!w->m_sideTree->indexOf(m_dir + "/.git").isValid());
+    const QModelIndex build = w->m_sideTree->indexOf(m_dir + "/build");
+    QVERIFY(w->m_sideTree->isFaint(build));
+    QVERIFY(build.data(Qt::ForegroundRole).value<QColor>().isValid());
+    QVERIFY(!w->m_sideTree->isFaint(w->m_sideTree->indexOf(m_dir + "/src")));
+    QVERIFY(!w->m_sideTree->indexOf(m_dir + "/src").data(Qt::ForegroundRole).value<QColor>().isValid());
+    // Folders first.
+    QCOMPARE(w->m_sideTree->pathAt(view->model()->index(3, 0, view->rootIndex())), m_dir + "/README.md");
+
+    // A click on a folder opens it in the files; on a file, its folder with it selected.
+    emit view->clicked(w->m_sideTree->indexOf(m_dir + "/src"));
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/src");
+    QVERIFY(view->isExpanded(w->m_sideTree->indexOf(m_dir + "/src")));
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_sideTree->indexOf(m_dir + "/src/main.cpp").isValid(), 5000);
+    open(m_dir);
+    emit view->clicked(w->m_sideTree->indexOf(m_dir + "/src/main.cpp"));
+    QTRY_COMPARE(w->m_pane->current, m_dir + "/src");
+    QTRY_COMPARE(w->selectedPaths(), QStringList{m_dir + "/src/main.cpp"});
+    // Going to a folder in the files marks its row.
+    open(m_dir + "/ok");
+    QCOMPARE(w->m_sideTree->pathAt(view->currentIndex()), m_dir + "/ok");
+    // The keys stay with the files.
+    QCOMPARE(view->focusPolicy(), Qt::NoFocus);
+
+    // The ✕: gone, and the extension is told.
+    QSignalSpy said(host, &Extensions::Host::message);
+    emit w->m_sideTree->closeRequested();
+    QVERIFY(!w->m_sideTree->isVisible());
+    QVERIFY(!host->tree().valid);
+    QTRY_VERIFY_WITH_TIMEOUT(!said.isEmpty() && said.last().at(1).toString() == "tree closed t1", 10000);
+    // Switched off with a tree shown: it goes too.
+    host->invoke(tree, m_dir, {});
+    QTRY_VERIFY_WITH_TIMEOUT(w->m_sideTree->isVisible(), 10000);
+    host->setEnabled("fake", false);
+    QVERIFY(!w->m_sideTree->isVisible());
+}
+
 void TestMainWindow::extensionPlacesInTheSidebar()
 {
     if (QStandardPaths::findExecutable("python3").isEmpty())

@@ -159,6 +159,8 @@ qt_add_library(argonaut_app STATIC
     src/PlanView.cpp
     src/RichView.h
     src/TextFinder.h
+    src/SideTree.h
+    src/SideTree.cpp
     src/TextFinder.cpp
     src/ExtensionMenu.h
     src/ExtensionMenu.cpp
@@ -347,6 +349,19 @@ if(UNIX)
     install(TARGETS argonaut-preview-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/document-preview/extension.json
             DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/document-preview)
+
+    # Project Explorer: a folder as a project, its tree under the sidebar's places.
+    qt_add_executable(argonaut-project-extension extensions/project/main.cpp)
+    target_link_libraries(argonaut-project-extension PRIVATE argonaut_core)
+    set(ARGONAUT_PROJECT_EXTENSION_EXE "${CMAKE_CURRENT_BINARY_DIR}/argonaut-project-extension")
+    configure_file(extensions/project/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/extensions/project-explorer/extension.json @ONLY)
+    set(ARGONAUT_PROJECT_EXTENSION_EXE "${CMAKE_INSTALL_FULL_LIBEXECDIR}/argonaut/argonaut-project-extension")
+    configure_file(extensions/project/extension.json.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/install/project-explorer/extension.json @ONLY)
+    install(TARGETS argonaut-project-extension RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/argonaut)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/install/project-explorer/extension.json
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/argonaut/extensions/project-explorer)
 
     # What Is This About: Claude says in a few lines what a file is about.
     qt_add_executable(argonaut-about-extension extensions/about/main.cpp)
