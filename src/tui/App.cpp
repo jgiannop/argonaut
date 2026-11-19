@@ -1841,6 +1841,8 @@ void App::normalKey(const Key &key)
         emit changed();
     } else if (key.isControl('l')) {
         goTo();
+    } else if (key.isControl('e')) {
+        editFile();
     } else if (key.isControl('b')) {
         setSidebarShown(!m_sidebar);
     } else if (key.isControl('r')) {
@@ -3121,6 +3123,8 @@ void App::drawHelp(Screen &screen)
         "",
         "  Up, Down, PgUp, PgDn, Home, End   move",
         "  Enter, Right                      open the folder, or the file with its app",
+        "  Ctrl+E                            edit the file in your editor ($VISUAL or $EDITOR, else nano);",
+        "                                    the file as it was goes to the Trash (not when nothing changed)",
         "  F3                                the preview at the right: what is in the file under the cursor",
         "                                    (Tab goes to it; there the arrows and PgUp/PgDn scroll, or use the wheel;",
         "                                    what an extension shows there, such as the dashboard or the services,",

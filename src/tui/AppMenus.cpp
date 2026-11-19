@@ -5,6 +5,8 @@
 #include "ClaudeReports.h"
 #include "App.h"
 
+#include <QFileInfo>
+
 #include "Frames.h"
 
 #include "ContentType.h"
@@ -73,6 +75,8 @@ QList<App::Menu> App::menus()
     Menu file{QStringLiteral("File"), U'f', {}};
     file.items.append(item(QStringLiteral("New Folder…"), QStringLiteral("F7"), press(Key::of(Key::F7))));
     file.items.append(item(QStringLiteral("Open"), QStringLiteral("Enter"), press(Key::of(Key::Enter)), some));
+    file.items.append(item(QStringLiteral("Edit…"), QStringLiteral("Ctrl+E"), press(Key::control('e')),
+                           !cursorPath().isEmpty() && QFileInfo(cursorPath()).isFile(), QStringLiteral("Edit the File")));
     file.items.append(item(QStringLiteral("Rename…"), QStringLiteral("F2"), press(Key::of(Key::F2)), some));
     file.items.append(line());
     file.items.append(item(QStringLiteral("Copy to the Other Pane"), QStringLiteral("F5"), press(Key::of(Key::F5)), some && m_split));
@@ -238,6 +242,7 @@ void App::openContextMenu(int x, int y, bool onItems)
     };
     if (onItems) {
         add("Open");
+        add("Edit…");
         add("Rename…");
         line();
         add("Copy");

@@ -36,6 +36,8 @@ qt_add_library(argonaut_core STATIC
     src/ContentType.cpp
     src/Trash.h
     src/Trash.cpp
+    src/TextFile.h
+    src/TextFile.cpp
     src/Bookmarks.h
     src/Bookmarks.cpp
     src/Places.h

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <memory>
+
+#include "TextFile.h"
+
 #include "Extensions.h"
 #include "Preview.h"
 
@@ -62,6 +66,7 @@ public:
     // the user asks for a file's preview (Space) or closes the pane.
     bool hasResult() const { return m_showsResult; }
     QString detailsText() const; // the line under the title (tests)
+    QString noteText() const;    // the line at the bottom (tests)
     // An extension is waiting for something that takes a while (Claude's
     // answer): the pane says so, with how long it has been, until
     // endWorking (or a plan, or the pane closing). Selecting a file
@@ -70,7 +75,16 @@ public:
     void endWorking(const QString &extension);
     bool isWorking() const { return !m_workingFor.isEmpty(); }
     // A plan or "working" has the pane: files and other results don't take it.
-    bool isHeld() const { return hasPlan() || isWorking(); }
+    bool isHeld() const { return hasPlan() || isWorking() || m_editing; }
+    // Editing the text file shown (the Edit box, or Ctrl+Space from the
+    // files): it holds the pane until the box is unticked or the pane closes.
+    void editCurrent();
+    bool isEditing() const { return m_editing; }
+    bool saveEditing();
+    // Before the pane closes (or the window): unsaved changes are asked
+    // about. False: the user went on editing, so it mustn't close.
+    bool mayClose();
+    class QCheckBox *editBox() const { return m_editBox; } // (tests)
     QString workingText() const; // what it says (tests)
     QPushButton *stopWaitingButton() const { return m_stopWaiting; } // (tests)
     class PlanView *planView() const { return m_plan; } // (tests)
@@ -113,6 +127,7 @@ signals:
     void keysBackRequested(); // Esc or Enter in the search field: the keys are the files' again
     void openRequested(const QString &path);
     void closeRequested();
+    void fileSaved(const QString &path);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -199,4 +214,14 @@ private:
     QLabel *m_infoText = nullptr;
     QLabel *m_note = nullptr;
     QPushButton *m_open = nullptr;
+    // Editing (the Edit box).
+    class QCheckBox *m_editBox = nullptr;
+    QPushButton *m_save = nullptr;
+    bool m_editing = false;
+    bool m_editKept = false; // the version from before is in the Trash already (this editing)
+    std::unique_ptr<TextFile::Loaded> m_edit;
+    QMetaObject::Connection m_editTitle;
+    bool startEditing();
+    bool stopEditing();
+    void endEditing(); // no questions: the editing is over
 };

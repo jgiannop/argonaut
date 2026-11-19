@@ -32,6 +32,7 @@ endfunction()
 # The file engine.
 argonaut_test(fileoperations TIMEOUT 300)
 argonaut_test(naming)
+argonaut_test(textfile)
 if(LIBARCHIVE_FOUND)
     argonaut_test(archives TIMEOUT 300)
 endif()

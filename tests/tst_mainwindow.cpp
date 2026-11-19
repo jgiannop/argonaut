@@ -133,6 +133,7 @@ private slots:
     void pictureFromAnExtensionHasTooltips();
     void htmlPageInThePreview();
     void textInThePreviewIsFoundAndCopied();
+    void textFileIsEditedInThePreview();
     void answerUnderAResult();
     void resultKeepsThePane();
     void extensionResultCanBeSearched();
@@ -2023,6 +2024,110 @@ void TestMainWindow::textInThePreviewIsFoundAndCopied()
     QTRY_VERIFY(w->m_pane->view->hasFocus());
     QVERIFY(w->quickLookVisible());
     QVERIFY(QFile::exists(a));
+}
+
+// Ctrl+Space (or the Edit box): the selected text file can be edited in the
+// preview. The keys are the editor's (Delete, Ctrl+Z don't touch files);
+// Ctrl+S saves, and the first save puts the version from before in the
+// Trash. The file being edited keeps the pane; unsaved changes are asked
+// about before it closes. What isn't text can't be edited.
+void TestMainWindow::textFileIsEditedInThePreview()
+{
+    const QString a = make("letter.txt", "Dear friend,\n");
+    const QString b = make("other.txt", "other\n");
+    const QString data = make("data.bin", QByteArray("ab\0cd", 5));
+    open(m_dir);
+    w->show();
+    QVERIFY(QTest::qWaitForWindowExposed(w.get()));
+    auto current = [&](const QString &path) {
+        w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(path)));
+    };
+    auto trashed = [] { return QDir(Trash::homeFilesDir()).entryList(QDir::Files | QDir::NoDotAndDotDot); };
+    auto read = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const int trashedBefore = int(trashed().size());
+
+    // What isn't text: the pane says why, and nothing is editable.
+    current(data);
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space, Qt::ControlModifier);
+    QVERIFY(w->quickLookVisible());
+    QuickLook *preview = w->m_quickLook;
+    QVERIFY(!preview->isEditing());
+    QVERIFY2(preview->noteText().contains("isn't text"), qPrintable(preview->noteText()));
+    QVERIFY(!preview->editBox()->isChecked());
+
+    // Ctrl+Space on the letter: editing, the cursor in the text.
+    current(a);
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space, Qt::ControlModifier);
+    QTRY_VERIFY(preview->isEditing());
+    QPlainTextEdit *text = preview->textView();
+    QVERIFY(!text->isReadOnly());
+    QVERIFY(preview->editBox()->isChecked());
+    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\n"));
+    QTRY_VERIFY(text->hasFocus());
+    text->moveCursor(QTextCursor::End);
+    QTest::keyClicks(text, "Thanks!x");
+    QTest::keyClick(text, Qt::Key_Backspace);
+    QTest::keyClick(text, Qt::Key_Delete); // nothing after the cursor: nothing happens, to the files either
+    QTest::qWait(200);
+    QVERIFY(QFile::exists(a));
+    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\nThanks!"));
+    // A preview that was still loading doesn't replace what is typed.
+    QTest::qWait(200);
+    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\nThanks!"));
+
+    // Ctrl+S: saved; the version from before is in the Trash, once.
+    QTest::keyClick(text, Qt::Key_S, Qt::ControlModifier);
+    QCOMPARE(read(a), QByteArray("Dear friend,\nThanks!"));
+    QCOMPARE(int(trashed().size()), trashedBefore + 1);
+    QTest::keyClicks(text, " Bye");
+    QTest::keyClick(text, Qt::Key_S, Qt::ControlModifier);
+    QCOMPARE(read(a), QByteArray("Dear friend,\nThanks! Bye"));
+    QCOMPARE(int(trashed().size()), trashedBefore + 1); // not a version a save
+
+    // Another file selected meanwhile doesn't take the pane.
+    current(b);
+    QTest::qWait(100);
+    QCOMPARE(preview->path(), a);
+    QVERIFY(preview->isEditing());
+
+    // Unsaved changes: closing the pane asks; Cancel keeps editing, Discard closes it.
+    QTest::keyClicks(text, " unsaved");
+    answerNext("Cancel");
+    QVERIFY(!w->hideQuickLook());
+    QVERIFY(w->quickLookVisible() && preview->isEditing());
+    QVERIFY(m_question.contains("Save the changes"));
+    answerNext("Discard");
+    QVERIFY(w->hideQuickLook());
+    QVERIFY(!w->quickLookVisible());
+    QCOMPARE(read(a), QByteArray("Dear friend,\nThanks! Bye"));
+
+    // Another program changes the file while it is edited: asked before it is saved over.
+    current(a);
+    w->editInQuickLook();
+    QTRY_VERIFY(preview->isEditing());
+    QTest::qWait(20);
+    {
+        QFile other(a);
+        QVERIFY(other.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        other.write("their words\n");
+    }
+    text->moveCursor(QTextCursor::End);
+    QTest::keyClicks(text, "!");
+    answerNext("Cancel");
+    QVERIFY(!preview->saveEditing());
+    QCOMPARE(read(a), QByteArray("their words\n")); // theirs, untouched
+    answerNext("Save Mine");
+    QVERIFY(preview->saveEditing());
+    QCOMPARE(read(a), QByteArray("Dear friend,\nThanks! Bye!"));
+    QCOMPARE(int(trashed().size()), trashedBefore + 2); // theirs is in the Trash
+
+    // Unticking Edit: the preview again, read-only.
+    preview->editBox()->setChecked(false);
+    QVERIFY(!preview->isEditing());
+    QTRY_VERIFY(text->isReadOnly());
 }
 
 // What an extension has to say about its result on screen (Claude's report

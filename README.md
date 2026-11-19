@@ -71,6 +71,7 @@ Most file managers, Nautilus included, believe a file's extension: `report.pdf` 
 - **Properties → Details** for photos, music, videos and PDFs (dimensions, camera and exposure, date taken, length, tags, pages), read with exiftool inside a sandbox
 - 🔒 and ↗ badges on items you can't change and on links; Cut, Trash and Rename are off where the folder can't be changed
 - **Send by Email…**, **Set as Background**, and **Scripts ▸** (runs your GNOME Files scripts unchanged)
+- **Edit text files in Quick Look**: tick Edit (or Ctrl+Space on the file), Ctrl+S saves; the first save puts the file as it was in the Trash, so nothing is lost (in the terminal version, Ctrl+E opens it in your own editor)
 - **Text in Quick Look** can be selected and copied, and Ctrl+F finds in it (in the terminal version too: a drag or Shift+arrows select lines, Ctrl+C copies, Ctrl+F or / finds)
 - **Command palette** (Ctrl+Shift+P): type part of any command; those that come from extensions are named `ext::…` (type "ext" to list them)
 - A built-in **User Guide** (F1) and a **Keyboard Shortcuts** page (Ctrl+?)

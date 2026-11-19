@@ -19,6 +19,8 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QImageReader>
+#include <QCheckBox>
+#include <QMessageBox>
 #include <QStackedWidget>
 #include <QTextDocument>
 #include <QTextBrowser>
@@ -28,6 +30,7 @@
 #include "PdfView.h"
 #include "PlanView.h"
 #include "RichView.h"
+#include "TextFile.h"
 #include "TextFinder.h"
 
 #include <QKeyEvent>
@@ -105,8 +108,20 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     close->setFocusPolicy(Qt::NoFocus);
     close->setAutoRaise(true);
     connect(close, &QToolButton::clicked, this, &QuickLook::closeRequested);
+    // Edit: the text file shown becomes editable (Ctrl+Space from the files does the same).
+    m_editBox = new QCheckBox(tr("Edit"), this);
+    m_editBox->setFocusPolicy(Qt::NoFocus);
+    m_editBox->setToolTip(tr("Edit this text file here (Ctrl+Space)"));
+    m_editBox->hide();
+    connect(m_editBox, &QCheckBox::toggled, this, [this](bool on) {
+        if (on ? !startEditing() : !stopEditing()) {
+            const QSignalBlocker blocker(m_editBox);
+            m_editBox->setChecked(!on); // it couldn't, or the user kept editing
+        }
+    });
     auto *top = new QHBoxLayout;
     top->addWidget(m_title, 1);
+    top->addWidget(m_editBox);
     top->addWidget(close);
     layout->addLayout(top);
     layout->addWidget(m_details);
@@ -311,8 +326,8 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_refind->setInterval(0);
     connect(m_refind, &QTimer::timeout, this, [this] {
         QWidget *view = m_finder->view();
-        if (!m_finder->isVisible())
-            return;
+        if (!m_finder->isVisible() || (m_editing && view == m_text))
+            return; // (while typing, the marks move with the text; finding again would move the cursor)
         if (!view || !view->isVisible())
             m_finder->close(); // a picture now: nothing to find in
         else
@@ -354,6 +369,13 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_open->setFocusPolicy(Qt::NoFocus);
     connect(m_open, &QPushButton::clicked, this, [this] { emit openRequested(m_item.path); });
     bottom->addWidget(m_open);
+    m_save = new QPushButton(tr("Save"), this);
+    m_save->setObjectName("prefButton");
+    m_save->setFocusPolicy(Qt::NoFocus);
+    m_save->setToolTip(tr("Save (Ctrl+S)"));
+    m_save->hide();
+    connect(m_save, &QPushButton::clicked, this, [this] { saveEditing(); });
+    bottom->addWidget(m_save);
     layout->addLayout(bottom);
 
     // An extension that previews this kind of file is asked first, briefly.
@@ -555,8 +577,8 @@ QString QuickLook::workingText() const
 // look at what a move is about) doesn't take it away.
 bool QuickLook::showPlan(const Extensions::Plan &plan)
 {
-    if (hasPlan())
-        return false; // one at a time
+    if (hasPlan() || m_editing)
+        return false; // one at a time; and never over a file being edited
     endWorking(m_workingFor); // what was waited for is here
     clear();
     m_open->hide();
@@ -565,6 +587,7 @@ bool QuickLook::showPlan(const Extensions::Plan &plan)
     m_note->setText(plan.note);
     m_plan->setPlan(plan);
     m_pages->setCurrentWidget(m_plan);
+    m_editBox->hide();
     return true;
 }
 
@@ -596,6 +619,7 @@ void QuickLook::showItem(const Item &item)
     m_note->clear();
     m_open->setEnabled(item.verdict != ContentType::Verdict::Dangerous);
     m_open->show();
+    m_editBox->setVisible(item.listing.isEmpty() && QFileInfo(item.path).isFile());
     if (m_movie) {
         m_movie->stop();
         m_movie->deleteLater();
@@ -855,6 +879,11 @@ void QuickLook::setActionShown(const Extensions::PreviewReply &content)
     m_actionRow->show();
 }
 
+QString QuickLook::noteText() const
+{
+    return m_note->text();
+}
+
 QString QuickLook::detailsText() const
 {
     return m_details->text();
@@ -876,6 +905,145 @@ void QuickLook::runAction()
     Extensions::Host::instance()->resultAction(m_resultExtension, m_resultId, m_actionId, text);
 }
 
+// ------------------------------------------------------------ editing ---
+
+void QuickLook::editCurrent()
+{
+    if (!m_editBox->isVisible() || m_editing)
+        return;
+    m_editBox->setChecked(true); // → startEditing
+}
+
+// The file shown, as it is on disk, in the text view made editable. It
+// holds the pane until editing stops: selecting other files doesn't take it.
+bool QuickLook::startEditing()
+{
+    if (m_item.path.isEmpty())
+        return false;
+    TextFile::Loaded file = TextFile::load(m_item.path);
+    if (!file.problem.isEmpty()) {
+        m_note->setText(tr("Can't be edited here: this file %1.").arg(file.problem));
+        return false;
+    }
+    ++m_generation; // the preview still loading is dropped
+    m_extensionTimer->stop();
+    m_extensionRequest = 0;
+    m_fromExtension = false;
+    m_edit = std::make_unique<TextFile::Loaded>(std::move(file));
+    m_editing = true;
+    m_editKept = false;
+    m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    m_text->setPlainText(m_edit->text);
+    m_text->setReadOnly(false);
+    m_text->document()->setModified(false);
+    m_text->moveCursor(QTextCursor::Start);
+    m_pages->setCurrentWidget(m_text);
+    m_open->hide();
+    m_save->show();
+    m_save->setEnabled(false);
+    m_note->setText(tr("Editing · Ctrl+S saves; the first save puts the version from before in the Trash"));
+    m_editTitle = connect(m_text->document(), &QTextDocument::modificationChanged, this, [this](bool changed) {
+        m_title->setText(changed ? m_item.name + QStringLiteral(" •") : m_item.name);
+        m_save->setEnabled(changed);
+    });
+    m_text->setFocus(Qt::OtherFocusReason);
+    return true;
+}
+
+// Saves the text. The first save of an editing puts the file as it was in
+// the Trash; so does a save over another program's change, which is asked
+// about first. Where there is no Trash, replacing it is asked about too.
+bool QuickLook::saveEditing()
+{
+    if (!m_editing || !m_edit)
+        return false;
+    const QString name = QFileInfo(m_edit->path).fileName();
+    const bool changed = TextFile::changedOnDisk(*m_edit);
+    if (changed) {
+        QMessageBox box(QMessageBox::Warning, tr("Changed by another program"),
+                        tr("“%1” was changed or removed by another program since you began editing it. Save yours over it? "
+                           "What is there now goes to the Trash.").arg(name),
+                        QMessageBox::NoButton, window());
+        QPushButton *save = box.addButton(tr("Save Mine"), QMessageBox::AcceptRole);
+        box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+        box.exec();
+        if (box.clickedButton() != save)
+            return false;
+    }
+    const bool keepOld = (!m_editKept || changed) && QFileInfo::exists(m_edit->path);
+    TextFile::Saved saved = TextFile::save(m_edit.get(), m_text->toPlainText(), keepOld);
+    if (!saved.ok && keepOld && saved.oldVersion.isEmpty()) {
+        QMessageBox box(QMessageBox::Question, tr("No Trash here"),
+                        tr("The version from before can't be kept: %1. Save anyway, replacing it?").arg(saved.error),
+                        QMessageBox::NoButton, window());
+        QPushButton *save = box.addButton(tr("Replace It"), QMessageBox::AcceptRole);
+        box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+        box.exec();
+        if (box.clickedButton() != save)
+            return false;
+        saved = TextFile::save(m_edit.get(), m_text->toPlainText(), false);
+    }
+    if (!saved.ok) {
+        QMessageBox::warning(window(), tr("Not saved"), tr("“%1” couldn't be saved: %2").arg(name, saved.error));
+        return false;
+    }
+    if (!saved.oldVersion.isEmpty())
+        m_editKept = true;
+    m_text->document()->setModified(false);
+    m_note->setText(m_editKept ? tr("Saved · the version from before is in the Trash") : tr("Saved"));
+    emit fileSaved(m_edit->path);
+    return true;
+}
+
+// Unsaved changes are asked about: Save, Discard or Cancel (false: keep editing).
+bool QuickLook::mayClose()
+{
+    if (!m_editing || !m_text->document()->isModified())
+        return true;
+    QMessageBox box(QMessageBox::Question, tr("Save changes?"),
+                    tr("Save the changes to “%1”?").arg(m_item.name), QMessageBox::NoButton, window());
+    QPushButton *save = box.addButton(tr("Save"), QMessageBox::AcceptRole);
+    QPushButton *discard = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(save);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() == save)
+        return saveEditing();
+    return box.clickedButton() == discard;
+}
+
+// The Edit box was unticked: unsaved changes are asked about, then the
+// preview of the file as it is now.
+bool QuickLook::stopEditing()
+{
+    if (!m_editing)
+        return true;
+    if (!mayClose())
+        return false;
+    const Item item = m_item;
+    endEditing();
+    m_item = Item(); // shown again, from the disk
+    showItem(item);
+    return true;
+}
+
+void QuickLook::endEditing()
+{
+    if (!m_editing)
+        return;
+    m_editing = false;
+    disconnect(m_editTitle);
+    m_edit.reset();
+    m_text->setReadOnly(true);
+    m_text->document()->setModified(false);
+    m_title->setText(m_item.name);
+    m_save->hide();
+    m_open->show();
+    const QSignalBlocker blocker(m_editBox);
+    m_editBox->setChecked(false);
+}
+
 // The marks of the find bar, in the theme's accent.
 void QuickLook::themeFinder()
 {
@@ -893,9 +1061,14 @@ bool QuickLook::textKey(QWidget *view, QEvent *event)
 {
     auto *key = static_cast<QKeyEvent *>(event);
     const bool finding = m_finder->isVisible() && m_finder->view() == view;
+    const bool editing = m_editing && view == m_text;
     if (event->type() == QEvent::ShortcutOverride) {
         const Qt::KeyboardModifiers held = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
         const bool functionKey = key->key() >= Qt::Key_F1 && key->key() <= Qt::Key_F35;
+        if (editing && !functionKey) {
+            event->accept(); // an editor's keys (Ctrl+Z, Ctrl+X, Ctrl+V, Ctrl+S…) are the editor's, never the files'
+            return false;
+        }
         if (key->matches(QKeySequence::Copy) || key->matches(QKeySequence::SelectAll) || key->matches(QKeySequence::Find)
             || (finding && (key->matches(QKeySequence::FindNext) || key->matches(QKeySequence::FindPrevious) || key->key() == Qt::Key_F3))
             || (held == Qt::NoModifier && !functionKey))
@@ -904,6 +1077,10 @@ bool QuickLook::textKey(QWidget *view, QEvent *event)
     }
     if (key->matches(QKeySequence::Find)) {
         m_finder->open(view);
+        return true;
+    }
+    if (editing && key->matches(QKeySequence::Save)) {
+        saveEditing();
         return true;
     }
     if (finding && (key->matches(QKeySequence::FindNext) || key->key() == Qt::Key_F3 || key->matches(QKeySequence::FindPrevious))) {
@@ -1033,6 +1210,7 @@ void QuickLook::clear()
     m_infoText->setStyleSheet(QString());
     m_open->setEnabled(false);
     m_open->show();
+    m_editBox->hide();
     showInfo(tr("Select a file to preview it"));
 }
 
@@ -1113,6 +1291,7 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 
 void QuickLook::hideEvent(QHideEvent *event)
 {
+    endEditing(); // (whoever closes the pane asked mayClose() first)
     closePlan(true); // the pane was closed: the plan is not applied
     forgetWorking(); // nor is the waiting shown any more (it goes on: the plan will open the pane)
     closeResult();

@@ -563,6 +563,11 @@ void MainWindow::setupActions()
     m_previewAct->setShortcut(QKeySequence(Qt::Key_Space));
     m_previewAct->setShortcutContext(Qt::WidgetShortcut);
     connect(m_previewAct, &QAction::triggered, this, &MainWindow::toggleQuickLook);
+    m_editTextAct = new QAction(tr("Edit in Preview"), this);
+    // Ctrl+Space, handled in eventFilter like Space.
+    m_editTextAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Space));
+    m_editTextAct->setShortcutContext(Qt::WidgetShortcut);
+    connect(m_editTextAct, &QAction::triggered, this, &MainWindow::editInQuickLook);
 
     m_splitAct = new QAction(tr("Split View"), this);
     m_splitAct->setShortcut(QKeySequence(Qt::Key_F3));
@@ -1256,6 +1261,7 @@ void MainWindow::showGuide(const QString &topic)
                         row(m_zoomResetAct, tr("Normal size")),
                         note(tr("Zoom with the mouse"), tr("[[Ctrl]] + mouse wheel")),
                         note(tr("Quick Look (preview)"), QStringLiteral("[[Space]]")),
+                        note(tr("Edit the text file in the preview (Ctrl+S saves)"), QStringLiteral("[[Ctrl+Space]]")),
                         row(m_splitAct, tr("Split view")), row(m_copyToOtherAct, tr("Copy to the other side")),
                         row(m_moveToOtherAct, tr("Move to the other side"))}});
         QList<HelpDialog::Shortcut> files = {
@@ -2242,8 +2248,13 @@ void MainWindow::setAnalyzeMode(bool on)
     if (paneIndex() != 0)
         activatePane(0); // Analyze lives in the first pane
     m_rename->cancel();
+    if (!hideQuickLook()) { // a file being edited stays
+        const QSignalBlocker blockAction(m_analyzeAct), blockButton(m_analyzeButton);
+        m_analyzeAct->setChecked(false);
+        m_analyzeButton->setChecked(false);
+        return;
+    }
     setSearchActive(false); // search is about files; Analyze shows folders
-    hideQuickLook();
     m_analyzing = true;
     m_analyzeAct->setChecked(true);
     m_analyzeButton->setChecked(true);
@@ -2719,6 +2730,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         if (event->type() == QEvent::KeyPress) {
             auto *key = static_cast<QKeyEvent *>(event);
+            if (key->key() == Qt::Key_Space && key->modifiers() == Qt::ControlModifier) {
+                editInQuickLook();
+                return true;
+            }
             if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier) {
                 // Over a result an extension shows, Space asks for the selected
                 // file's preview (the result stayed while files were selected);
@@ -2910,6 +2925,8 @@ void MainWindow::updateEditActions()
     const bool changeable = hasSelection && (inTrash || canChangeSelection());
     for (QAction *action : {m_openAct, m_copyAct})
         action->setEnabled(hasSelection);
+    m_editTextAct->setEnabled(hasSelection && !inTrash && selectedViewIndexes().size() == 1
+                              && !m_pane->model->isDir(toSource(m_pane->view->currentIndex())));
     for (QAction *action : {m_cutAct, m_trashAct})
         action->setEnabled(changeable);
     const bool writable = !m_analyzing && !inTrash && !m_pane->current.isEmpty() && QFileInfo(m_pane->current).isWritable();
@@ -2975,8 +2992,11 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_hiddenAct);
     } else if (index.isValid()) {
         menu->addAction(m_openAct);
-        if (selectedViewIndexes().size() == 1)
+        if (selectedViewIndexes().size() == 1) {
             menu->addAction(m_previewAct);
+            if (!m_pane->model->isDir(toSource(index)) && !m_pane->model->isTrash())
+                menu->addAction(m_editTextAct);
+        }
         const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
         if ((verdict == ContentType::Verdict::Mismatch || verdict == ContentType::Verdict::Dangerous)
             && selectedViewIndexes().size() == 1) {
@@ -3192,6 +3212,10 @@ void MainWindow::showEvent(QShowEvent *event)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (quickLookVisible() && !m_quickLook->mayClose()) {
+        event->ignore(); // a file is being edited and the user went on
+        return;
+    }
     if (!m_ops->activeJobs().isEmpty()) {
         QMessageBox box(QMessageBox::Question, tr("Cancel file operations?"),
                         tr("Files are still being copied or moved. Closing now will cancel "
@@ -3288,6 +3312,7 @@ QWidget *MainWindow::buildMenuBar()
     file->addMenu(m_newDocumentMenu);
     file->addSeparator();
     file->addAction(m_openAct);
+    file->addAction(m_editTextAct);
     file->addAction(m_propertiesAct);
     file->addSeparator();
     if (FileJob::archivesSupported()) {
@@ -4204,12 +4229,29 @@ bool MainWindow::quickLookVisible() const
     return m_quickLook && m_quickLook->isVisible();
 }
 
-void MainWindow::hideQuickLook()
+// False: a file is being edited there and the user went on editing.
+bool MainWindow::hideQuickLook()
 {
     if (!quickLookVisible())
-        return;
+        return true;
+    if (!m_quickLook->mayClose())
+        return false;
     m_previewWidth = m_quickLook->width();
     m_quickLook->hide();
+    return true;
+}
+
+// Ctrl+Space: the selected text file, in the preview, to edit.
+void MainWindow::editInQuickLook()
+{
+    if (!m_pane->view->currentIndex().isValid() || m_analyzing)
+        return;
+    if (!quickLookVisible())
+        toggleQuickLook();
+    else if (!m_quickLook->isEditing())
+        updateQuickLook(true);
+    if (quickLookVisible())
+        m_quickLook->editCurrent();
 }
 
 void MainWindow::toggleQuickLook()

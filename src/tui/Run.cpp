@@ -89,6 +89,36 @@ int run(int argc, char **argv)
     // It only shows the file: no helper programs are run on it (LESSOPEN),
     // and from inside it nothing can be started or written (LESSSECURE).
     QObject::connect(&tui, &App::terminalClipboardRequested, &app, [&](const QString &text) { terminal->copyText(text); });
+    // Ctrl+E: the user's editor has the terminal until it is closed.
+    QObject::connect(&tui, &App::editRequested, &app, [&](const QString &path) {
+        QStringList command;
+        for (const char *variable : {"VISUAL", "EDITOR"}) {
+            command = QProcess::splitCommand(qEnvironmentVariable(variable));
+            if (!command.isEmpty() && !QStandardPaths::findExecutable(command.first()).isEmpty())
+                break;
+            command.clear();
+        }
+        for (const char *editor : {"nano", "vim", "vi"}) {
+            if (command.isEmpty() && !QStandardPaths::findExecutable(QString::fromLatin1(editor)).isEmpty())
+                command = {QString::fromLatin1(editor)};
+        }
+        if (command.isEmpty()) {
+            tui.notify(QStringLiteral("No editor to edit it with: set EDITOR, or install nano"));
+            return;
+        }
+        const QString program = command.takeFirst();
+        input.setEnabled(false);
+        terminal->suspend();
+        QProcess editor;
+        editor.setProcessChannelMode(QProcess::ForwardedChannels);
+        editor.setInputChannelMode(QProcess::ForwardedInputChannel);
+        editor.start(program, command << QStringLiteral("--") << path);
+        editor.waitForFinished(-1);
+        terminal->resume();
+        input.setEnabled(true);
+        dirty = true;
+        draw();
+    });
     QObject::connect(&tui, &App::viewRequested, &app, [&](const QString &path) {
         QString pager = QStandardPaths::findExecutable(QStringLiteral("less"));
         if (pager.isEmpty())

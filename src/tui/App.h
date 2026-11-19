@@ -154,6 +154,11 @@ signals:
     // Lines copied from the preview where there is no desktop's clipboard:
     // whoever runs it hands them to the terminal (OSC 52).
     void terminalClipboardRequested(const QString &text);
+    // Ctrl+E: the user's editor ($VISUAL, $EDITOR, else nano or vi) on this
+    // file, with the terminal, until it is closed. Whoever runs the
+    // interface does it (the interface never touches the terminal); the
+    // file has been edited when the signal returns.
+    void editRequested(const QString &path);
 
 private:
     struct Pane
@@ -423,6 +428,7 @@ private:
     void copyPreviewSelection();
     void forgetPreviewSelection();
     void previewDragTo(int y);
+    void editFile(); // Ctrl+E
     void markPreview(Screen &screen, int x, int width, int rows); // the selected lines and what was found
     QString previewMarksText() const; // "“needle” 2 of 5 · n, N" and "3 lines selected · Ctrl+C copies"
     // The command palette: every command, and those that fit what is typed.

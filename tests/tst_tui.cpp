@@ -69,6 +69,7 @@ private slots:
     void placesAtTheLeft();
     void previewAtTheRight();
     void previewTextIsFoundAndCopied();
+    void editedWithTheUsersEditor();
     void unmountedDrive();
     void commandPalette();
     void menus();
@@ -1251,7 +1252,7 @@ void TestTui::mouseClicksAndDoubleClicks()
     app->mouse({Mouse::RightPress, 10, 5});
     QVERIFY(app->isContextMenuOpen());
     QCOMPARE(app->selectedPaths(), QStringList{m_left + "/alpha.txt"});
-    QCOMPARE(app->menuNames().mid(0, 2), (QStringList{"Open", "Rename…"}));
+    QCOMPARE(app->menuNames().mid(0, 3), (QStringList{"Open", "Edit…", "Rename…"}));
     QVERIFY(app->menuNames().contains("Move to Trash") && app->menuNames().contains("Delete Permanently…"));
     QVERIFY(!app->menuNames().contains("New Folder…"));
     QString menuText = screen(100, 30);
@@ -3050,6 +3051,64 @@ void TestTui::themes()
     app->setTheme("system");
     QCOMPARE(app->themeKey(), QStringLiteral("terminal"));
 }
+// Ctrl+E: the file under the cursor in the user's editor (here a pretend
+// one that changes it, or doesn't). The version from before goes to the
+// Trash, and comes back out of it when nothing was changed; what isn't
+// text isn't handed to the editor.
+void TestTui::editedWithTheUsersEditor()
+{
+    const QString file = make("todo.txt", "buy milk\n");
+    const QString data = make("data.bin", QByteArray("ab\0cd", 5));
+    app = std::make_unique<App>(m_left, QString());
+    settle();
+    auto trashed = [] { return QDir(Trash::homeFilesDir()).entryList(QDir::Files | QDir::NoDotAndDotDot); };
+    auto read = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    const int before = int(trashed().size());
+    QStringList edited;
+    QByteArray writes;
+    connect(app.get(), &App::editRequested, this, [&](const QString &path) {
+        edited << path;
+        if (!writes.isEmpty()) {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(writes);
+        }
+    });
+
+    // What isn't text: said, and no editor.
+    app->selectPath(data);
+    keys({Key::control('e')});
+    QVERIFY(edited.isEmpty());
+    QVERIFY2(app->message().contains("isn't text"), qPrintable(app->message()));
+
+    // Changed in the editor: the version from before is in the Trash.
+    app->selectPath(file);
+    writes = "buy milk\nand bread\n";
+    keys({Key::control('e')});
+    QCOMPARE(edited, QStringList{file});
+    QCOMPARE(read(file), QByteArray("buy milk\nand bread\n"));
+    QCOMPARE(int(trashed().size()), before + 1);
+    QVERIFY2(app->message().contains("in the Trash"), qPrintable(app->message()));
+
+    // Closed without a change: nothing left in the Trash for it.
+    writes.clear();
+    keys({Key::control('e')});
+    QCOMPARE(edited.size(), 2);
+    QCOMPARE(int(trashed().size()), before + 1);
+    QCOMPARE(app->message(), QStringLiteral("Not changed"));
+    QCOMPARE(read(file), QByteArray("buy milk\nand bread\n"));
+
+    // In the File menu (and so the palette) too.
+    keys({Key::control('p')});
+    type("edit the");
+    QCOMPARE(app->paletteNames().value(0), QStringLiteral("Edit the File"));
+    keys({Key::of(Key::Enter)});
+    QCOMPARE(edited.size(), 3);
+}
+
 // In the preview's text: Ctrl+F (or "/") finds, n and N go on; lines are
 // selected with a drag, Shift+arrows or Ctrl+A, and Ctrl+C copies them as
 // the file has them (where there is no desktop, through the terminal).

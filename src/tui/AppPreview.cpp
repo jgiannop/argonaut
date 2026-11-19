@@ -12,7 +12,9 @@
 #include "Extensions.h"
 #include "Format.h"
 #include "Preview.h"
+#include "TextFile.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QMimeDatabase>
@@ -458,6 +460,53 @@ void App::runExtensionCommand(const Extensions::Command &command, const QStringL
         typed();
 }
 
+// ------------------------------------------------------------ editing ---
+
+// Ctrl+E: the file under the cursor in the user's own editor. Only what
+// may be edited (TextFile::problem: text, writable, not a program in
+// disguise, not in the Trash). The file as it was goes to the Trash first,
+// and comes back out of it when nothing was changed after all.
+void App::editFile()
+{
+    const QString path = cursorPath();
+    if (path.isEmpty() || !QFileInfo(path).isFile()) {
+        say(QStringLiteral("Ctrl+E edits a file: put the cursor on one"));
+        return;
+    }
+    const QString problem = TextFile::problem(path);
+    if (!problem.isEmpty()) {
+        say(QStringLiteral("Can't be edited here: this file %1").arg(problem));
+        return;
+    }
+    const QString real = QFileInfo(path).canonicalFilePath();
+    auto edit = [this, real](const QString &kept) {
+        QFile before(real);
+        const QByteArray was = before.open(QIODevice::ReadOnly) ? before.readAll() : QByteArray();
+        before.close();
+        emit editRequested(real); // returns when the editor is closed
+        QFile after(real);
+        const QByteArray is = after.open(QIODevice::ReadOnly) ? after.readAll() : QByteArray();
+        if (QFileInfo::exists(real) && is == was) {
+            TextFile::forgetOldVersion(kept); // nothing changed: no version to keep
+            say(QStringLiteral("Not changed"));
+        } else {
+            say(kept.isEmpty() ? QStringLiteral("Edited") : QStringLiteral("Edited · the version from before is in the Trash"));
+        }
+        m_previewPath.clear(); // the preview shows it as it is now
+        pane().model->refresh();
+        emit changed();
+    };
+    QString error;
+    const QString kept = TextFile::keepOldVersion(real, &error);
+    if (!kept.isEmpty()) {
+        edit(kept);
+        return;
+    }
+    ask({QStringLiteral("Edit"), QStringLiteral("The version from before can't be kept: %1. Edit it anyway?").arg(error), QString(),
+         QStringLiteral("Edit")},
+        [edit] { edit(QString()); });
+}
+
 // ------------------------------------------- finding and copying text ---
 
 // The preview shows rows of text (a file, a result as text or with
@@ -841,6 +890,10 @@ bool App::previewKey(const Key &key)
     }
     if (key.isControl('c') && previewIsText()) {
         copyPreviewSelection();
+        return true;
+    }
+    if (key.isControl('e') && !m_resultShown) {
+        editFile();
         return true;
     }
     if (key.isControl('f') && previewIsText()) {
