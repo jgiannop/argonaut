@@ -221,6 +221,8 @@ private:
     bool m_editKept = false; // the version from before is in the Trash already (this editing)
     std::unique_ptr<TextFile::Loaded> m_edit;
     QMetaObject::Connection m_editTitle;
+    static bool isEditableKind(const Item &item);
+    void applyEditLook();
     bool startEditing();
     bool stopEditing();
     void endEditing(); // no questions: the editing is over

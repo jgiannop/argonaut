@@ -39,6 +39,7 @@
 #include "OpenWithDialog.h"
 #include "OperationsPanel.h"
 #include "PathBar.h"
+#include "Preview.h"
 #include "ExtensionMenu.h"
 #include "ExtensionsDialog.h"
 #include "FadeOverlay.h"
@@ -2925,8 +2926,7 @@ void MainWindow::updateEditActions()
     const bool changeable = hasSelection && (inTrash || canChangeSelection());
     for (QAction *action : {m_openAct, m_copyAct})
         action->setEnabled(hasSelection);
-    m_editTextAct->setEnabled(hasSelection && !inTrash && selectedViewIndexes().size() == 1
-                              && !m_pane->model->isDir(toSource(m_pane->view->currentIndex())));
+    m_editTextAct->setEnabled(hasSelection && !inTrash && selectedViewIndexes().size() == 1 && isTextFileAt(m_pane->view->currentIndex()));
     for (QAction *action : {m_cutAct, m_trashAct})
         action->setEnabled(changeable);
     const bool writable = !m_analyzing && !inTrash && !m_pane->current.isEmpty() && QFileInfo(m_pane->current).isWritable();
@@ -2994,7 +2994,7 @@ void MainWindow::showContextMenu(const QPoint &pos)
         menu->addAction(m_openAct);
         if (selectedViewIndexes().size() == 1) {
             menu->addAction(m_previewAct);
-            if (!m_pane->model->isDir(toSource(index)) && !m_pane->model->isTrash())
+            if (!m_pane->model->isTrash() && isTextFileAt(index))
                 menu->addAction(m_editTextAct);
         }
         const auto verdict = ContentType::Verdict(index.data(DirectoryModel::VerdictRole).toInt());
@@ -4239,6 +4239,19 @@ bool MainWindow::hideQuickLook()
     m_previewWidth = m_quickLook->width();
     m_quickLook->hide();
     return true;
+}
+
+// A text file (by its real type), not a program in disguise: what Edit in Preview is for.
+bool MainWindow::isTextFileAt(const QModelIndex &view) const
+{
+    if (!view.isValid())
+        return false;
+    const QModelIndex source = toSource(view.siblingAtColumn(0));
+    if (m_pane->model->isDir(source)
+        || ContentType::Verdict(source.data(DirectoryModel::VerdictRole).toInt()) == ContentType::Verdict::Dangerous)
+        return false;
+    const QString mime = effectiveMimeAt(source);
+    return Preview::isTextual(mime) || mime == QLatin1String("application/x-zerosize");
 }
 
 // Ctrl+Space: the selected text file, in the preview, to edit.

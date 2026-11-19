@@ -619,7 +619,7 @@ void QuickLook::showItem(const Item &item)
     m_note->clear();
     m_open->setEnabled(item.verdict != ContentType::Verdict::Dangerous);
     m_open->show();
-    m_editBox->setVisible(item.listing.isEmpty() && QFileInfo(item.path).isFile());
+    m_editBox->setVisible(isEditableKind(item));
     if (m_movie) {
         m_movie->stop();
         m_movie->deleteLater();
@@ -907,10 +907,24 @@ void QuickLook::runAction()
 
 // ------------------------------------------------------------ editing ---
 
+// Edit is offered only for text (by the file's real type; an empty file is
+// text to be) and never for a program in disguise. Whether it can really
+// be edited (writable, UTF-8…) is checked when it is ticked.
+bool QuickLook::isEditableKind(const Item &item)
+{
+    return item.listing.isEmpty() && item.verdict != ContentType::Verdict::Dangerous && QFileInfo(item.path).isFile()
+           && (Preview::isTextual(item.mimeType) || item.mimeType == QLatin1String("application/x-zerosize"));
+}
+
 void QuickLook::editCurrent()
 {
-    if (!m_editBox->isVisible() || m_editing)
+    if (m_editing)
         return;
+    if (!m_editBox->isVisible()) {
+        if (QFileInfo(m_item.path).isFile())
+            m_note->setText(tr("Only text files can be edited here."));
+        return;
+    }
     m_editBox->setChecked(true); // → startEditing
 }
 
@@ -936,6 +950,7 @@ bool QuickLook::startEditing()
     m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
     m_text->setPlainText(m_edit->text);
     m_text->setReadOnly(false);
+    applyEditLook();
     m_text->document()->setModified(false);
     m_text->moveCursor(QTextCursor::Start);
     m_pages->setCurrentWidget(m_text);
@@ -1036,12 +1051,23 @@ void QuickLook::endEditing()
     disconnect(m_editTitle);
     m_edit.reset();
     m_text->setReadOnly(true);
+    m_text->setStyleSheet(QString()); // the preview's look again
     m_text->document()->setModified(false);
     m_title->setText(m_item.name);
     m_save->hide();
     m_open->show();
     const QSignalBlocker blocker(m_editBox);
     m_editBox->setChecked(false);
+}
+
+// A file being edited is on white paper, like a notepad, whatever the theme:
+// it is plain to see that this text is being changed, not only shown.
+void QuickLook::applyEditLook()
+{
+    const Theme &theme = currentTheme();
+    m_text->setStyleSheet(QStringLiteral("QPlainTextEdit#qlText { background: #ffffff; color: #1f1f1f; border: 1px solid %1;"
+                                         " border-radius: 8px; padding: 6px; selection-background-color: %2; selection-color: #ffffff; }")
+                              .arg(cssColor(theme.accent), cssColor(theme.accent)));
 }
 
 // The marks of the find bar, in the theme's accent.
@@ -1144,8 +1170,11 @@ void QuickLook::closeResult()
 void QuickLook::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
-    if (m_finder && event->type() == QEvent::PaletteChange)
+    if (m_finder && event->type() == QEvent::PaletteChange) {
         themeFinder();
+        if (m_editing)
+            applyEditLook(); // the border and the selection in the new accent
+    }
     // Another theme: the extension draws its result again in the new colours.
     if (m_resultTimer && !m_resultId.isEmpty()
         && (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange))

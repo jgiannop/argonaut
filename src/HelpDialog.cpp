@@ -360,7 +360,7 @@ type is marked everywhere it is, any case; [[Enter]] goes to the next, [[Shift+E
 closes the bar. While the keys are in the text, the file commands (Delete, Copy…) leave the files alone;
 [[Esc]] gives the keys back to the files.</p>
 <p><b>A text file can be edited in the preview.</b> Tick <b>Edit</b> at the top of the pane, or press
-[[Ctrl+Space]] on the file (also <b>File → Edit in Preview</b>). Type as in any editor; [[Ctrl+S]] or the
+[[Ctrl+Space]] on the file (also <b>File → Edit in Preview</b>; it is offered for text files only). The text is then on white paper, like a notepad, whatever the theme. Type as in any editor; [[Ctrl+S]] or the
 <b>Save</b> button saves. <b>The first save puts the file as it was in the Trash</b>, so you can always get it back;
 the line ends and encoding stay as the file had them. While you edit, the file keeps the pane (selecting other
 files doesn't take it), and closing the pane or the window with unsaved changes asks first. If another program

@@ -330,6 +330,7 @@ private:
     int m_previewWidth = 0;               // the pane's last width (view/previewWidth)
     bool hideQuickLook();
     void editInQuickLook();
+    bool isTextFileAt(const QModelIndex &view) const;
     QAction *m_removeRecentAct = nullptr; // Recent: take items off the list
     QAction *m_zoomInAct = nullptr;       // Ctrl++ / Ctrl+= / Ctrl+wheel
     QAction *m_zoomOutAct = nullptr;      // Ctrl+-

@@ -2055,8 +2055,25 @@ void TestMainWindow::textFileIsEditedInThePreview()
     QVERIFY(w->quickLookVisible());
     QuickLook *preview = w->m_quickLook;
     QVERIFY(!preview->isEditing());
-    QVERIFY2(preview->noteText().contains("isn't text"), qPrintable(preview->noteText()));
-    QVERIFY(!preview->editBox()->isChecked());
+    QVERIFY2(preview->noteText().contains("Only text files"), qPrintable(preview->noteText()));
+    QVERIFY(preview->editBox()->isHidden()); // not even offered
+    // Nor for a picture.
+    QImage picture(8, 8, QImage::Format_RGB32);
+    picture.fill(Qt::red);
+    QVERIFY(picture.save(m_dir + "/photo.png"));
+    QTRY_VERIFY(w->m_pane->model->indexForPath(m_dir + "/photo.png").isValid());
+    current(m_dir + "/photo.png");
+    QTRY_COMPARE(preview->path(), m_dir + "/photo.png");
+    QVERIFY(preview->editBox()->isHidden());
+    // A text file that isn't UTF-8 is offered, and ticking it says why it can't be.
+    const QString latin = make("latin.txt", "caf\xe9\n");
+    QTRY_VERIFY(w->m_pane->model->indexForPath(latin).isValid());
+    current(latin);
+    QTRY_COMPARE(preview->path(), latin);
+    QVERIFY(!preview->editBox()->isHidden());
+    preview->editBox()->setChecked(true);
+    QVERIFY(!preview->isEditing() && !preview->editBox()->isChecked());
+    QVERIFY2(preview->noteText().contains("isn't UTF-8 text"), qPrintable(preview->noteText()));
 
     // Ctrl+Space on the letter: editing, the cursor in the text.
     current(a);
@@ -2067,6 +2084,9 @@ void TestMainWindow::textFileIsEditedInThePreview()
     QVERIFY(preview->editBox()->isChecked());
     QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\n"));
     QTRY_VERIFY(text->hasFocus());
+    // On white paper, like a notepad, whatever the theme.
+    auto paper = [&] { return text->viewport()->grab().toImage().pixelColor(text->viewport()->width() - 4, text->viewport()->height() - 4); };
+    QTRY_COMPARE(paper(), QColor(Qt::white));
     text->moveCursor(QTextCursor::End);
     QTest::keyClicks(text, "Thanks!x");
     QTest::keyClick(text, Qt::Key_Backspace);
@@ -2128,6 +2148,7 @@ void TestMainWindow::textFileIsEditedInThePreview()
     preview->editBox()->setChecked(false);
     QVERIFY(!preview->isEditing());
     QTRY_VERIFY(text->isReadOnly());
+    QVERIFY(text->styleSheet().isEmpty()); // the preview's own look again
 }
 
 // What an extension has to say about its result on screen (Claude's report
