@@ -141,6 +141,8 @@ private:
     void goBack();
     void goForward();
     void goUp();
+    void goDown();
+    QString downTarget() const; // the folder Down goes into, or empty
     void openIndex(const QModelIndex &index);
     void setGridMode(bool grid);
     // The Analyze view: disk usage of the open folder's sub-folders, as a
@@ -267,6 +269,8 @@ private:
 
     QToolButton *m_backButton = nullptr;
     QToolButton *m_forwardButton = nullptr;
+    QToolButton *m_upButton = nullptr;
+    QToolButton *m_downButton = nullptr;
     QToolButton *m_searchButton = nullptr;
     QToolButton *m_menuButton = nullptr;
     QToolButton *m_viewButton = nullptr;
@@ -277,6 +281,7 @@ private:
     QAction *m_backAct = nullptr;
     QAction *m_forwardAct = nullptr;
     QAction *m_upAct = nullptr;
+    QAction *m_downAct = nullptr;
     QAction *m_hiddenAct = nullptr;
     QAction *m_searchAct = nullptr;
     QAction *m_copyLocationAct = nullptr;
@@ -438,6 +443,7 @@ private:
         QAbstractItemView *view = nullptr; // iconView or detailView, whichever shows
         QString current;                   // the open folder (or a place: "recent:///")
         QStack<QString> back, forward;     // history
+        QStringList cameUpFrom;            // the folders Up left, for Down to go back into (last = nearest)
         bool grid = true;                  // grid or list
         int gridZoom = 1, listZoom = 1;    // indexes into FileItemDelegate::gridSizes() / listSizes()
         QString message;                   // a temporary text in the floating bar

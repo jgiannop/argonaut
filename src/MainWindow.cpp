@@ -244,6 +244,11 @@ void MainWindow::setupActions()
     m_upAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
     connect(m_upAct, &QAction::triggered, this, &MainWindow::goUp);
 
+    m_downAct = new QAction(tr("Down"), this);
+    m_downAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Down));
+    m_downAct->setStatusTip(tr("Into the selected folder, or back into the one Up came from"));
+    connect(m_downAct, &QAction::triggered, this, &MainWindow::goDown);
+
     m_homeAct = new QAction(tr("Home"), this);
     m_homeAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Home));
     connect(m_homeAct, &QAction::triggered, this, [this] { navigateTo(QDir::homePath()); });
@@ -649,7 +654,7 @@ void MainWindow::setupActions()
                                   QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Slash)});
     connect(m_shortcutsAct, &QAction::triggered, this, [this] { showGuide(QStringLiteral("shortcuts")); });
 
-    addActions({m_backAct, m_forwardAct, m_upAct, m_homeAct, m_locationAct, m_hiddenAct,
+    addActions({m_backAct, m_forwardAct, m_upAct, m_downAct, m_homeAct, m_locationAct, m_hiddenAct,
                 m_searchAct, m_gridAct, m_listAct, m_analyzeAct, m_analyzeFilesAct, m_sidebarAct, m_prefsAct, m_extensionsAct, m_cutAct, m_copyAct,
                 m_pasteAct, m_trashAct, m_undoAct, m_redoAct, m_zoomInAct, m_zoomOutAct,
                 m_zoomResetAct, m_newFolderAct, m_newFileAct, m_renameAct,
@@ -817,8 +822,14 @@ QWidget *MainWindow::buildContentPane()
     connect(m_backButton, &QToolButton::clicked, m_backAct, &QAction::trigger);
     m_forwardButton = makeButton(tr("Forward (Alt+Right)"));
     connect(m_forwardButton, &QToolButton::clicked, m_forwardAct, &QAction::trigger);
+    m_upButton = makeButton(tr("Up to the parent folder (Alt+Up)"));
+    connect(m_upButton, &QToolButton::clicked, m_upAct, &QAction::trigger);
+    m_downButton = makeButton(tr("Down into the selected folder, or back into the one you came up from (Alt+Down)"));
+    connect(m_downButton, &QToolButton::clicked, m_downAct, &QAction::trigger);
     row->addWidget(m_backButton);
     row->addWidget(m_forwardButton);
+    row->addWidget(m_upButton);
+    row->addWidget(m_downButton);
     row->addSpacing(4);
 
     m_pathBar = new PathBar(header);
@@ -1250,7 +1261,7 @@ void MainWindow::showGuide(const QString &topic)
         };
         QList<Group> groups;
         groups.append({tr("Moving Around"),
-                       {row(m_backAct, tr("Back")), row(m_forwardAct, tr("Forward")), row(m_upAct, tr("Up one folder")),
+                       {row(m_backAct, tr("Back")), row(m_forwardAct, tr("Forward")), row(m_upAct, tr("Up one folder")), row(m_downAct, tr("Down into the selected folder, or back where Up came from")),
                         row(m_homeAct, tr("Home folder")), row(m_locationAct, tr("Type a path")),
                         row(m_searchAct, tr("Search this folder and sub-folders")),
                         note(tr("Open the selected item"), QStringLiteral("[[Enter]]")),
@@ -1690,6 +1701,8 @@ void MainWindow::applyTheme(bool force)
 
     m_backButton->setIcon(glyphIcon(Glyph::ChevronLeft, m_theme.fg));
     m_forwardButton->setIcon(glyphIcon(Glyph::ChevronRight, m_theme.fg));
+    m_upButton->setIcon(glyphIcon(Glyph::ChevronUp, m_theme.fg));
+    m_downButton->setIcon(glyphIcon(Glyph::ChevronDown, m_theme.fg));
     m_searchButton->setIcon(glyphIcon(Glyph::Search, m_theme.fg));
     m_menuButton->setIcon(glyphIcon(Glyph::Menu, m_theme.fg));
     m_viewButton->setIcon(glyphIcon(m_pane->grid ? Glyph::List : Glyph::Grid, m_theme.fg));
@@ -2081,6 +2094,7 @@ bool MainWindow::navigateTo(const QString &path, bool addToHistory)
     }
     m_pane->pendingSelection.clear();
     m_pane->pendingRename.clear();
+    m_pane->cameUpFrom.clear(); // Up and Down put it back
     if (addToHistory && !m_pane->current.isEmpty()) {
         m_pane->back.push(m_pane->current);
         m_pane->forward.clear();
@@ -2150,8 +2164,52 @@ void MainWindow::goForward()
 void MainWindow::goUp()
 {
     QDir dir(m_pane->current);
-    if (dir.cdUp())
-        navigateTo(dir.absolutePath());
+    if (!dir.cdUp())
+        return;
+    const QString left = m_pane->current;
+    QStringList trail = m_pane->cameUpFrom;
+    if (!navigateTo(dir.absolutePath()))
+        return;
+    trail.append(left);
+    m_pane->cameUpFrom = trail; // navigateTo forgot it, as any other move does
+    selectPaths({left});        // the folder we came out of, as Nautilus does
+    updateActions();
+}
+
+QString MainWindow::downTarget() const
+{
+    if (m_pane->model && !m_pane->model->isTrash() && !m_analyzing) {
+        const QModelIndexList selected = selectedViewIndexes();
+        if (selected.size() == 1) {
+            const QModelIndex index = toSource(selected.first());
+            if (m_pane->model->isDir(index))
+                return m_pane->model->filePath(index);
+        }
+    }
+    if (!m_pane->cameUpFrom.isEmpty()) {
+        const QString last = m_pane->cameUpFrom.last();
+        if (QFileInfo(last).absolutePath() == m_pane->current && QFileInfo(last).isDir())
+            return last;
+    }
+    return {};
+}
+
+void MainWindow::goDown()
+{
+    const QString target = downTarget();
+    if (target.isEmpty())
+        return;
+    QStringList trail = m_pane->cameUpFrom;
+    const bool backDown = !trail.isEmpty() && trail.last() == target;
+    if (!navigateTo(target))
+        return;
+    if (backDown) { // further down still leads back where Up started
+        trail.removeLast();
+        m_pane->cameUpFrom = trail;
+        if (!trail.isEmpty())
+            selectPaths({trail.last()});
+    }
+    updateActions();
 }
 
 void MainWindow::openIndex(const QModelIndex &viewIndex)
@@ -2181,8 +2239,11 @@ void MainWindow::updateActions()
     m_analyzeAct->setEnabled(!place);
     if (m_analyzeButton)
         m_analyzeButton->setEnabled(!place);
+    m_downAct->setEnabled(!downTarget().isEmpty());
     m_backButton->setEnabled(m_backAct->isEnabled());
     m_forwardButton->setEnabled(m_forwardAct->isEnabled());
+    m_upButton->setEnabled(m_upAct->isEnabled());
+    m_downButton->setEnabled(m_downAct->isEnabled());
 #if defined(ARGONAUT_DBUS)
     if (m_chooser) // an Open/Save window: its commands stay off
         m_chooser->keepActionsOff();
@@ -2926,6 +2987,9 @@ void MainWindow::updateEditActions()
     const bool changeable = hasSelection && (inTrash || canChangeSelection());
     for (QAction *action : {m_openAct, m_copyAct})
         action->setEnabled(hasSelection);
+    m_downAct->setEnabled(!downTarget().isEmpty()); // a folder selected, or one Up came from
+    if (m_downButton)
+        m_downButton->setEnabled(m_downAct->isEnabled());
     m_editTextAct->setEnabled(hasSelection && !inTrash && selectedViewIndexes().size() == 1 && isTextFileAt(m_pane->view->currentIndex()));
     for (QAction *action : {m_cutAct, m_trashAct})
         action->setEnabled(changeable);
@@ -3391,6 +3455,7 @@ QWidget *MainWindow::buildMenuBar()
     go->addAction(m_backAct);
     go->addAction(m_forwardAct);
     go->addAction(m_upAct);
+    go->addAction(m_downAct);
     go->addAction(m_homeAct);
     go->addAction(m_claudeReportsAct);
     go->addSeparator();

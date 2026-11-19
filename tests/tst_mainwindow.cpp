@@ -140,6 +140,7 @@ private slots:
     void extensionPlacesInTheSidebar();
     void extensionFormsAndAddresses();
     void themesFromFiles();
+    void upAndDownButtons();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
     void chooserSaveAsksBeforeReplacing();
@@ -884,6 +885,55 @@ void TestMainWindow::sidebarListsPlacesAndFollowsBookmarks()
 
     Bookmarks::remove(folder);
     QTRY_VERIFY_WITH_TIMEOUT(!rowOf(folder), 5000);
+}
+
+// Up selects the folder it left and Down goes back into it; a selected folder
+// is where Down goes first.
+void TestMainWindow::upAndDownButtons()
+{
+    make("a/b/c/file.txt");
+    make("a/other/x.txt");
+    const QString a = m_dir + "/a", b = a + "/b", c = b + "/c";
+    open(c);
+    QVERIFY(w->m_upButton && w->m_downButton);
+    QVERIFY(w->m_upButton->isEnabled());
+    QVERIFY(!w->m_downButton->isEnabled()); // nothing selected, nowhere to go back into
+
+    w->m_upButton->click();
+    QTRY_COMPARE(w->m_pane->current, b);
+    QTRY_COMPARE(w->selectedPaths(), QStringList{c});
+    QVERIFY(w->m_downButton->isEnabled());
+    w->m_upButton->click();
+    QTRY_COMPARE(w->m_pane->current, a);
+    QTRY_COMPARE(w->selectedPaths(), QStringList{b});
+    // Down twice leads back where Up started, even with the selection gone.
+    w->m_pane->view->clearSelection();
+    QTRY_VERIFY(w->m_downButton->isEnabled());
+    w->m_downButton->click();
+    QTRY_COMPARE(w->m_pane->current, b);
+    QTRY_COMPARE(w->selectedPaths(), QStringList{c});
+    w->m_downAct->trigger(); // Alt+Down
+    QTRY_COMPARE(w->m_pane->current, c);
+    QTRY_VERIFY(!w->m_downButton->isEnabled());
+
+    // A selected folder comes before the trail.
+    open(a);
+    select({a + "/other"});
+    QVERIFY(w->m_downAct->isEnabled());
+    w->m_downAct->trigger();
+    QTRY_COMPARE(w->m_pane->current, a + "/other");
+    // A file selected is no way down.
+    select({a + "/other/x.txt"});
+    QVERIFY(!w->m_downAct->isEnabled());
+    w->m_downAct->trigger();
+    QCOMPARE(w->m_pane->current, a + "/other");
+    // Going elsewhere forgets the trail.
+    w->goUp();
+    QTRY_COMPARE(w->m_pane->current, a);
+    open(m_dir);
+    open(a);
+    w->m_pane->view->clearSelection();
+    QTRY_VERIFY(!w->m_downAct->isEnabled());
 }
 
 #if defined(ARGONAUT_DBUS)

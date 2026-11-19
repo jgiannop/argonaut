@@ -305,7 +305,7 @@ bookmarks, recent files, thumbnails and Trash, and adds a few things of its own.
 <h2>Moving around</h2>
 <ul>
 <li>Double-click a folder, or select it and press [[Enter]].</li>
-<li>Back and Forward: [[Alt+Left]] / [[Alt+Right]], or the mouse's side buttons. Up one folder: [[Alt+Up]]. Home: [[Alt+Home]].</li>
+<li>Back and Forward: [[Alt+Left]] / [[Alt+Right]], or the mouse's side buttons. Up one folder: [[Alt+Up]]; Down: [[Alt+Down]] goes into the selected folder, or back into the one Up came from (Up selects it). The four arrows at the top left of the header do the same. Home: [[Alt+Home]].</li>
 <li>Type the start of a name to jump to it.</li>
 </ul>
 <h2>Tabs and windows</h2>

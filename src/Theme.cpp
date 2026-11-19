@@ -758,6 +758,12 @@ void paintGlyph(QPainter *p, const QRectF &r, Glyph g, const QColor &c)
     case Glyph::ChevronRight:
         poly({{6, 3.5}, {10.5, 8}, {6, 12.5}});
         break;
+    case Glyph::ChevronUp:
+        poly({{3.5, 10}, {8, 5.5}, {12.5, 10}});
+        break;
+    case Glyph::ChevronDown:
+        poly({{3.5, 6}, {8, 10.5}, {12.5, 6}});
+        break;
     case Glyph::Grid:
         for (const QRectF &rr : {QRectF(2.5, 2.5, 4.5, 4.5), QRectF(9, 2.5, 4.5, 4.5),
                                  QRectF(2.5, 9, 4.5, 4.5), QRectF(9, 9, 4.5, 4.5)})
