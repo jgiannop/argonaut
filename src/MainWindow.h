@@ -44,6 +44,7 @@ class FileItemDelegate;
 class FileJob;
 class FileOperations;
 class OperationsPanel;
+class TerminalTabs;
 class TerminalWidget;
 class Toast;
 class PathBar;
@@ -402,11 +403,12 @@ private:
     QAction *m_openTerminalHereAct = nullptr;
     QString m_contextFolder; // folder the context menu's "Open in Terminal" uses
     QSplitter *m_contentSplitter = nullptr;  // file views above, terminal below
-    QWidget *m_terminalPanel = nullptr;
-    TerminalWidget *m_terminal = nullptr;
-    QLabel *m_terminalTitle = nullptr;
+    QWidget *m_terminalPanel = nullptr;  // = m_terminals (null without the terminal)
+    TerminalTabs *m_terminals = nullptr; // the sessions, each in a tab
+    TerminalWidget *terminal() const;    // the session chosen, if any
+    void newTerminal();                  // another session, in the open folder
+    QAction *m_newTerminalAct = nullptr;
     QToolButton *m_terminalButton = nullptr;
-    QToolButton *m_terminalCloseButton = nullptr;
     bool m_terminalSized = false;
 
     QMenuBar *m_menuBar = nullptr;

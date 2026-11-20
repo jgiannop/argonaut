@@ -126,7 +126,12 @@ QToolButton#barButton:hover { background: @buttonHover; }
 QToolButton#barButton:disabled { color: @dim; }
 QWidget#terminalPanel { background: @window; }
 QWidget#terminalBar { background: @window; border-top: 1px solid @border; }
-QLabel#terminalTitle { color: @dim; font-weight: bold; }
+QTabBar#terminalTabs { background: transparent; border: none; }
+QTabBar#terminalTabs::tab { background: transparent; color: @dim; border: none; border-radius: 6px;
+    padding: 3px 6px 3px 10px; margin: 0 2px 0 0; }
+QTabBar#terminalTabs::tab:selected { background: @pathBg; color: @fg; }
+QTabBar#terminalTabs::tab:hover:!selected { background: @hover; }
+QTabBar#terminalTabs QToolButton { background: @window; border: none; color: @fg; }
 QSplitter#contentSplitter::handle { background: @border; }
 
 QDialog#conflictDialog { background: @window; }

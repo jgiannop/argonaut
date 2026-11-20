@@ -54,6 +54,7 @@
 #include "TabStrip.h"
 #include "Thumbnailer.h"
 #if defined(ARGONAUT_TERMINAL)
+#include "TerminalTabs.h"
 #include "TerminalWidget.h"
 #endif
 #include "Toast.h"
@@ -344,6 +345,11 @@ void MainWindow::setupActions()
         else if (!terminalComesToTheFiles()) // open, but in another folder: it comes here instead of closing
             hideTerminal();
     });
+    // Another session beside those there are, in a tab of its own (like VS Code's Ctrl+Shift+`).
+    m_newTerminalAct = new QAction(tr("New Terminal"), this);
+    m_newTerminalAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_QuoteLeft),
+                                    QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_AsciiTilde)});
+    connect(m_newTerminalAct, &QAction::triggered, this, &MainWindow::newTerminal);
     m_openTerminalHereAct = new QAction(tr("Open in Terminal"), this);
     connect(m_openTerminalHereAct, &QAction::triggered, this, [this] {
         showTerminal(m_contextFolder.isEmpty() ? m_pane->current : m_contextFolder);
@@ -666,7 +672,7 @@ void MainWindow::setupActions()
                 m_extractHereAct, m_extractToAct, m_openLocationAct, m_starAct, m_removeRecentAct,
                 m_splitAct, m_copyToOtherAct, m_moveToOtherAct, m_guideAct, m_shortcutsAct, m_paletteAct});
     if (m_terminalAct)
-        addAction(m_terminalAct);
+        addActions({m_terminalAct, m_newTerminalAct});
 }
 
 void MainWindow::addWindowButtons(QHBoxLayout *row)
@@ -1331,8 +1337,11 @@ void MainWindow::showGuide(const QString &topic)
             note(tr("Next / previous tab"), QStringLiteral("[[Ctrl+Tab]] / [[Ctrl+Shift+Tab]]")),
             note(tr("Go to tab 1…9"), QStringLiteral("[[Alt+1]] … [[Alt+9]]")),
             row(m_closeWindowAct), row(m_quitAct)};
-        if (m_terminalAct)
+        if (m_terminalAct) {
+            windows.prepend(note(tr("Next / previous terminal"), QStringLiteral("[[Ctrl+PgDn]] / [[Ctrl+PgUp]]")));
+            windows.prepend(row(m_newTerminalAct, tr("New Terminal")));
             windows.prepend(row(m_terminalAct, tr("Terminal")));
+        }
         groups.append({tr("Tabs and Windows"), windows});
         groups.append({tr("Help"), {row(m_guideAct), row(m_shortcutsAct), row(m_prefsAct), row(m_extensionsAct)}});
 
@@ -1770,8 +1779,7 @@ void MainWindow::applyTheme(bool force)
         m_tabBar->setTheme(m_theme);
 #if defined(ARGONAUT_TERMINAL)
     m_terminalButton->setIcon(glyphIcon(Glyph::Terminal, m_theme.fg));
-    m_terminalCloseButton->setIcon(glyphIcon(Glyph::Close, m_theme.fg));
-    m_terminal->setTheme(m_theme);
+    m_terminals->setTheme(m_theme);
 #endif
     m_toast->setTheme(m_theme);
     m_pane->view->viewport()->update();
@@ -3497,7 +3505,7 @@ QWidget *MainWindow::buildMenuBar()
     view->addAction(m_hiddenAct);
     view->addAction(m_sidebarAct);
     if (m_terminalAct)
-        view->addAction(m_terminalAct);
+        view->addActions({m_terminalAct, m_newTerminalAct});
 
     QMenu *go = addMenu(tr("&Go"));
     go->addAction(m_backAct);
@@ -4059,23 +4067,11 @@ bool MainWindow::handleSidebarDrag(QEvent *event)
 
 QWidget *MainWindow::buildTerminalPanel()
 {
-    m_terminalPanel = new QWidget(this);
-    m_terminalPanel->setObjectName("terminalPanel");
-    m_terminalPanel->setAttribute(Qt::WA_StyledBackground);
-    auto *layout = new QVBoxLayout(m_terminalPanel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
-    auto *bar = new QWidget(m_terminalPanel);
-    bar->setObjectName("terminalBar");
-    bar->setAttribute(Qt::WA_StyledBackground);
-    auto *row = new QHBoxLayout(bar);
-    row->setContentsMargins(14, 3, 6, 3);
-    m_terminalTitle = new QLabel(tr("Terminal"), bar);
-    m_terminalTitle->setObjectName("terminalTitle");
-    m_terminalCloseButton = makeButton(tr("Hide terminal (Ctrl+`)"));
-    m_terminalCloseButton->setFixedSize(26, 26);
-    connect(m_terminalCloseButton, &QToolButton::clicked, this, [this] {
+    m_terminals = new TerminalTabs(this);
+    m_terminalPanel = m_terminals;
+    m_terminals->setPassthroughShortcuts(m_terminalAct->shortcuts() + m_newTerminalAct->shortcuts());
+    connect(m_terminals, &TerminalTabs::newSessionRequested, this, &MainWindow::newTerminal);
+    connect(m_terminals, &TerminalTabs::hideRequested, this, [this] {
         // ✕ always hides (the key and the header's button first bring a
         // terminal that is elsewhere to the open folder).
         {
@@ -4085,50 +4081,43 @@ QWidget *MainWindow::buildTerminalPanel()
         }
         hideTerminal();
     });
-    row->addWidget(m_terminalTitle, 1);
-    row->addWidget(m_terminalCloseButton);
-    layout->addWidget(bar);
-
-    m_terminal = new TerminalWidget(m_terminalPanel);
-    m_terminal->setPassthroughShortcuts({m_terminalAct->shortcut()});
-    connect(m_terminal, &TerminalWidget::titleChanged, this, [this](const QString &title) {
-        m_terminalTitle->setText(title.isEmpty() ? tr("Terminal") : title);
-    });
-    // Ctrl+Up in the terminal: the pane you are in shows the shell's folder
+    // Ctrl+Up in a terminal: the pane you are in shows the shell's folder
     // (read again if it is already there). The keyboard stays in the terminal.
-    connect(m_terminal, &TerminalWidget::showDirectoryRequested, this, [this](const QString &directory) {
+    connect(m_terminals, &TerminalTabs::showDirectoryRequested, this, [this](const QString &directory) {
         if (QDir::cleanPath(directory) == QDir::cleanPath(m_pane->current))
             m_pane->model->refresh();
         else
             navigateTo(directory);
-        m_terminal->setFocus();
+        if (TerminalWidget *shell = terminal())
+            shell->setFocus();
     });
-    // `exit` closes the panel; the next one starts a fresh shell.
-    connect(m_terminal, &TerminalWidget::finished, this, [this] {
-        m_terminalTitle->setText(tr("Terminal"));
-        m_terminalAct->setChecked(false);
-    });
-    layout->addWidget(m_terminal, 1);
-
-    m_terminalPanel->hide();
-    return m_terminalPanel;
+    // The last session ended (`exit`) or was closed: the panel closes; the next one starts a fresh shell.
+    connect(m_terminals, &TerminalTabs::allClosed, this, [this] { m_terminalAct->setChecked(false); });
+    m_terminals->hide();
+    return m_terminals;
 }
 
-// Show the terminal in `directory`: start a shell there, or `cd` the running
-// one (only if it's idle at the prompt, never under a running program).
+TerminalWidget *MainWindow::terminal() const
+{
+    return m_terminals ? m_terminals->current() : nullptr;
+}
+
+// Show the panel, and its sessions; with none, a new one is started in
+// `folder`. With one, it `cd`s there (only if it's idle at the prompt,
+// never under a running program).
 void MainWindow::showTerminal(const QString &folder)
 {
     // Recent / Starred aren't folders: the shell starts at home.
     const QString directory = DirectoryModel::isVirtualPath(folder) ? QDir::homePath() : folder;
-    if (!m_terminal->isRunning()) {
-        if (!m_terminal->start(directory)) {
+    if (!terminal()) {
+        if (!m_terminals->newSession(directory)) {
             showMessage(tr("Couldn't start a terminal"));
             const QSignalBlocker block(m_terminalAct);
             m_terminalAct->setChecked(false);
             m_terminalButton->setChecked(false);
             return;
         }
-    } else if (!m_terminal->changeDirectory(directory)) {
+    } else if (!terminal()->changeDirectory(directory)) {
         showMessage(tr("A program is running in the terminal, so it stays where it is"));
     }
 
@@ -4147,21 +4136,44 @@ void MainWindow::showTerminal(const QString &folder)
             m_terminalSized = true;
         }
     }
-    m_terminal->setFocus(Qt::ShortcutFocusReason);
+    terminal()->setFocus(Qt::ShortcutFocusReason);
 }
 
-// Ctrl+` (or the header's button) while the terminal is open: when its
-// shell is in another folder than the pane, the shell comes to the pane's
+// "+" in the panel, Ctrl+Shift+`, View → New Terminal: another session,
+// in a tab of its own, in the open folder; the others go on as they were.
+void MainWindow::newTerminal()
+{
+    if (!terminal() || m_terminalPanel->isHidden()) {
+        // No session yet, or the panel is closed: open it (a first session
+        // starts in the folder), and a new one after that only if there were some.
+        const bool had = terminal() != nullptr;
+        showTerminal(m_pane->current);
+        if (!had)
+            return;
+    }
+    const QString directory = DirectoryModel::isVirtualPath(m_pane->current) || !QFileInfo(m_pane->current).isDir()
+                                  ? QDir::homePath()
+                                  : m_pane->current;
+    if (!m_terminals->newSession(directory)) {
+        showMessage(tr("Couldn't start a terminal"));
+        return;
+    }
+    terminal()->setFocus(Qt::ShortcutFocusReason);
+}
+
+// Ctrl+` (or the header's button) while the terminal is open: when the
+// shell chosen is in another folder than the pane, it comes to the pane's
 // folder and the panel stays (the opposite of Ctrl+Up in the terminal).
 // False: there was nothing to do (the same folder, a place that isn't a
 // folder, a program running in the shell), so the panel closes as before.
 bool MainWindow::terminalComesToTheFiles()
 {
     const QString folder = m_pane->current;
-    if (m_terminalPanel->isHidden() || !m_terminal->isRunning() || DirectoryModel::isVirtualPath(folder) || !QFileInfo(folder).isDir())
+    TerminalWidget *shell = terminal();
+    if (m_terminalPanel->isHidden() || !shell || !shell->isRunning() || DirectoryModel::isVirtualPath(folder) || !QFileInfo(folder).isDir())
         return false;
-    const QString shell = m_terminal->shellDirectory();
-    if (shell.isEmpty() || shell == QFileInfo(folder).canonicalFilePath() || !m_terminal->changeDirectory(folder))
+    const QString where = shell->shellDirectory();
+    if (where.isEmpty() || where == QFileInfo(folder).canonicalFilePath() || !shell->changeDirectory(folder))
         return false;
     // It stays open, so the action and the header's button stay ticked.
     // They were just unticked and are still telling each other so: they are
@@ -4173,13 +4185,13 @@ bool MainWindow::terminalComesToTheFiles()
         m_terminalAct->setChecked(true);
         m_terminalButton->setChecked(true);
     });
-    m_terminal->setFocus(Qt::ShortcutFocusReason);
+    shell->setFocus(Qt::ShortcutFocusReason);
     return true;
 }
 
 void MainWindow::hideTerminal()
 {
-    const bool hadFocus = m_terminal->hasFocus();
+    const bool hadFocus = m_terminals->hasFocusInside();
     m_terminalPanel->hide();
     if (hadFocus)
         m_pane->view->setFocus();
@@ -4191,7 +4203,9 @@ QWidget *MainWindow::buildTerminalPanel()
 {
     return nullptr;
 }
+TerminalWidget *MainWindow::terminal() const { return nullptr; }
 void MainWindow::showTerminal(const QString &) {}
+void MainWindow::newTerminal() {}
 void MainWindow::hideTerminal() {}
 bool MainWindow::terminalComesToTheFiles() { return false; }
 

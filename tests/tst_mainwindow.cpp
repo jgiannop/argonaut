@@ -31,6 +31,7 @@
 #include "SideTree.h"
 #include "TabStrip.h"
 #if defined(ARGONAUT_TERMINAL)
+#include "TerminalTabs.h"
 #include "TerminalWidget.h"
 #endif
 #include "TestSupport.h"
@@ -125,6 +126,7 @@ private slots:
     void terminalBringsTheFilesAlong();
     void terminalComesToTheFiles();
     void terminalPassesTheMouseOn();
+    void terminalSessionsInTabs();
     void extensionMenusAskAndShow();
     void diffIsColoured();
     void extensionListIsAPlace();
@@ -1455,7 +1457,7 @@ void TestMainWindow::terminalBringsTheFilesAlong()
     make("elsewhere/inside.txt");
     open(m_dir);
     w->m_terminalAct->trigger();
-    TerminalWidget *terminal = w->m_terminal;
+    TerminalWidget *terminal = w->terminal();
     QVERIFY(terminal && terminal->isRunning());
     QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle() && terminal->shellDirectory() == m_dir, 10000);
 
@@ -1488,7 +1490,7 @@ void TestMainWindow::terminalPassesTheMouseOn()
 #if defined(ARGONAUT_TERMINAL) && defined(Q_OS_LINUX)
     open(m_dir);
     w->m_terminalAct->trigger();
-    TerminalWidget *terminal = w->m_terminal;
+    TerminalWidget *terminal = w->terminal();
     QVERIFY(terminal && terminal->isRunning());
     QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
     terminal->resize(600, 300);
@@ -1542,6 +1544,86 @@ void TestMainWindow::terminalPassesTheMouseOn()
 #endif
 }
 
+// Several shells, each in a tab of the panel (as in VS Code): a new one
+// starts in the open folder beside the others, `exit` closes its own tab,
+// closing one under a running program asks first, Ctrl+PgUp/PgDn go round
+// them, and the last one gone closes the panel.
+void TestMainWindow::terminalSessionsInTabs()
+{
+#if defined(ARGONAUT_TERMINAL) && defined(Q_OS_LINUX)
+    const QString other = m_dir + "/other";
+    QDir().mkpath(other);
+    open(m_dir);
+    w->m_terminalAct->trigger();
+    TerminalTabs *tabs = w->m_terminals;
+    QCOMPARE(tabs->count(), 1);
+    TerminalWidget *first = w->terminal();
+    QVERIFY(first && first->isRunning());
+    QTRY_VERIFY_WITH_TIMEOUT(first->isShellIdle() && first->shellDirectory() == m_dir, 10000);
+
+    // A second one, in the folder that is open now; the first goes on where it was.
+    open(other);
+    w->m_newTerminalAct->trigger();
+    QCOMPARE(tabs->count(), 2);
+    QCOMPARE(tabs->tabBar()->count(), 2);
+    TerminalWidget *second = w->terminal();
+    QVERIFY(second && second != first);
+    QCOMPARE(tabs->currentIndex(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(second->isShellIdle() && second->shellDirectory() == other, 10000);
+    QCOMPARE(first->shellDirectory(), m_dir);
+    QVERIFY(first->isRunning());
+    // The "+" button does the same.
+    tabs->newButton()->click();
+    QCOMPARE(tabs->count(), 3);
+    TerminalWidget *third = w->terminal();
+    QTRY_VERIFY_WITH_TIMEOUT(third->isShellIdle(), 10000);
+
+    // Ctrl+PgUp / Ctrl+PgDn from inside a terminal go round them.
+    third->setFocus();
+    QTest::keyClick(third, Qt::Key_PageUp, Qt::ControlModifier);
+    QCOMPARE(w->terminal(), second);
+    QTest::keyClick(second, Qt::Key_PageDown, Qt::ControlModifier);
+    QCOMPARE(w->terminal(), third);
+    QTest::keyClick(third, Qt::Key_PageDown, Qt::ControlModifier);
+    QCOMPARE(w->terminal(), first);
+    tabs->setCurrent(2);
+
+    // `exit` in one closes its tab only.
+    QTest::keyClicks(third, QStringLiteral("exit"));
+    QTest::keyClick(third, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 10000);
+    QVERIFY(!w->m_terminalPanel->isHidden());
+    QVERIFY(w->m_terminalAct->isChecked());
+
+    // Closing one with a program running in it asks first; Cancel keeps it.
+    tabs->setCurrent(1);
+    QCOMPARE(w->terminal(), second);
+    QTest::keyClicks(second, QStringLiteral("sleep 60"));
+    QTest::keyClick(second, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(!second->isShellIdle(), 10000);
+    answerNext("Cancel");
+    QVERIFY(!tabs->closeSession(1));
+    QCOMPARE(tabs->count(), 2);
+    answerNext("Close Terminal");
+    QVERIFY(tabs->closeSession(1));
+    QCOMPARE(tabs->count(), 1);
+    QCOMPARE(w->terminal(), first);
+
+    // The last one closed (an idle shell: nothing is asked): the panel closes.
+    QVERIFY(tabs->closeSession(0));
+    QCOMPARE(tabs->count(), 0);
+    QVERIFY(w->m_terminalPanel->isHidden());
+    QVERIFY(!w->m_terminalAct->isChecked());
+    // Opened again: a fresh shell.
+    w->m_terminalAct->trigger();
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY(w->terminal() && w->terminal()->isRunning());
+    w->m_terminalAct->trigger();
+#else
+    QSKIP("no embedded terminal in this build");
+#endif
+}
+
 // The other way round: Ctrl+` (or the header's button) while the terminal is
 // open and in another folder brings its shell to the pane's folder and
 // leaves it open; in the same folder it closes the panel, as before.
@@ -1552,7 +1634,7 @@ void TestMainWindow::terminalComesToTheFiles()
     QDir().mkpath(other);
     open(m_dir);
     w->m_terminalAct->trigger();
-    TerminalWidget *terminal = w->m_terminal;
+    TerminalWidget *terminal = w->terminal();
     QVERIFY(terminal && terminal->isRunning());
     QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle() && terminal->shellDirectory() == m_dir, 10000);
     QVERIFY(!w->m_terminalPanel->isHidden());
@@ -1592,7 +1674,7 @@ void TestMainWindow::terminalComesToTheFiles()
     // ✕ on the panel always hides it, wherever the shell is.
     QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
     open(m_dir);
-    w->m_terminalCloseButton->click();
+    w->m_terminals->hideButton()->click();
     QVERIFY(w->m_terminalPanel->isHidden());
     QVERIFY(!w->m_terminalAct->isChecked() && !w->m_terminalButton->isChecked());
     QCOMPARE(terminal->shellDirectory(), other);

@@ -840,8 +840,15 @@ isn't left in the terminal: you only see the prompt change.</li>
 <li>Right-click a folder → <b>Open in Terminal</b> opens it there.</li>
 <li>The other way round is [[Ctrl+Up]] in the terminal: after a <code>cd</code> there, it brings the files
 to the folder the shell is in (and reads the folder again if they are already there).</li>
+<li><b>Several terminals, in tabs:</b> [[Ctrl+Shift+`]] (or <b>+</b> beside the tabs, or View → New Terminal)
+starts another shell in the open folder, in a tab of its own; the others go on as they were. Click a tab, or press
+[[Ctrl+PgUp]] / [[Ctrl+PgDn]] in a terminal, to go from one to the next; drag a tab to put it elsewhere. The keys
+above (and Ctrl+Up) are for the terminal whose tab is chosen.</li>
 <li>Shortcuts like [[Ctrl+C]] go to the terminal while it has the focus.</li>
-<li>Typing <code>exit</code> closes it; opening it again starts a new shell.</li>
+<li>A program that asks for the mouse (Claude Code, vim, htop) gets the wheel and the clicks; hold [[Shift]] to
+select text instead.</li>
+<li>Typing <code>exit</code> closes that terminal's tab, as does the × on the tab (it asks first when a program is
+still running in it). When the last one is closed, the panel closes; opening it again starts a new shell.</li>
 </ul>
 )"));
 #endif
