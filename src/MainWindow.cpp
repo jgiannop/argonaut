@@ -4394,6 +4394,8 @@ void MainWindow::toggleQuickLook()
         m_previewSplitter->setStretchFactor(1, 0);
         connect(m_quickLook, &QuickLook::closeRequested, this, &MainWindow::hideQuickLook);
         connect(m_quickLook, &QuickLook::keysBackRequested, this, [this] { m_pane->view->setFocus(); });
+        // The Preview tab over the results: the selected file's preview.
+        connect(m_quickLook, &QuickLook::filePreviewRequested, this, [this] { updateQuickLook(true); });
         connect(m_quickLook, &QuickLook::planApplied, this, &MainWindow::applyExtensionPlan);
         connect(m_quickLook, &QuickLook::workingStopRequested, this, [](const QString &extension) {
             Extensions::Host::instance()->stopWaitingForClaude(extension);

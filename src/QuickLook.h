@@ -18,6 +18,7 @@ class QMovie;
 class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
+class QTabBar;
 class QTextBrowser;
 class QTimer;
 class QTreeWidget;
@@ -65,6 +66,14 @@ public:
     // the pane: it stays while files are selected and folders change, until
     // the user asks for a file's preview (Space) or closes the pane.
     bool hasResult() const { return m_showsResult; }
+    // Every result (a dashboard, the journal…) gets a tab of its own at the
+    // top of the pane, after "Preview" (the selected file's), and stays
+    // there until its tab is closed or the pane is: another result doesn't
+    // replace it. Only the chosen tab is on screen, so only its extension is
+    // told it is shown; the others are kept as they were last made.
+    QTabBar *resultTabs() const { return m_tabBar; } // (tests)
+    int resultTabCount() const { return int(m_resultTabs.size()); }
+    void closeResultTab(int index); // a result's tab (0: the first result's)
     QString detailsText() const; // the line under the title (tests)
     QString noteText() const;    // the line at the bottom (tests)
     // An extension is waiting for something that takes a while (Claude's
@@ -123,6 +132,7 @@ signals:
     void planApplied(const Extensions::Plan &plan, const QList<Extensions::PlanMove> &kept);
     void planDismissed(const Extensions::Plan &plan);
     void workingStopRequested(const QString &extension);
+    void filePreviewRequested(); // the Preview tab was chosen: the selected file's preview, please
     void planItemActivated(const QString &path); // a move was clicked: show its file in the folder
     void keysBackRequested(); // Esc or Enter in the search field: the keys are the files' again
     void openRequested(const QString &path);
@@ -194,6 +204,38 @@ private:
     bool m_fromExtension = false;
     void closeResult();              // the named result is no longer shown: its extension is told
     void reportResult();             // it is shown, with this much room
+    // The results kept in tabs, in their order; m_currentTab is the one on
+    // screen (-1: the Preview tab). A tab keeps what was last shown in it,
+    // so choosing it shows that at once while its extension makes it again.
+    struct ResultTab
+    {
+        QString extension;
+        QString id; // empty: a result without a name (a diff), one such tab per extension
+        QString title;
+        QString details;
+        Extensions::PreviewReply content;
+        bool hasUnder = false; // what was said under it (Claude's report)
+        QString underTitle;
+        Extensions::PreviewReply under;
+        bool waiting = false; // Claude was being asked for it when another tab was chosen
+        QString waitTitle;
+        QString waitText;
+        QElapsedTimer waitSince;
+        QString search;     // what was typed in its search field
+        QString actionText; // …and beside its button
+        int scroll = 0;     // how far its long picture was scrolled
+    };
+    QList<ResultTab> m_resultTabs;
+    int m_currentTab = -1;
+    QTabBar *m_tabBar = nullptr;
+    int tabOf(const QString &extension, const QString &id) const;
+    QString tabText(const QString &title) const;
+    void rememberCurrent();     // what is on screen goes into its tab
+    void presentTab(int index); // a tab's result on screen
+    void tabChosen(int barIndex);
+    void syncTabBar();          // the bar shows the tabs, the current one chosen
+    void addTabButton(int barIndex);
+    void themeTabs();
     QString m_resultExtension;       // the named result on screen (an extension's id and its result's)
     QString m_resultId;
     QTimer *m_resultTimer = nullptr; // a resize is told once it has settled

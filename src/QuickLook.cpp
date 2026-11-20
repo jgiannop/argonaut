@@ -22,6 +22,7 @@
 #include <QCheckBox>
 #include <QMessageBox>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTextDocument>
 #include <QTextBrowser>
 #include <QTimer>
@@ -119,6 +120,20 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
             m_editBox->setChecked(!on); // it couldn't, or the user kept editing
         }
     });
+    // The results kept in tabs, after the file's Preview; only there while there is one.
+    m_tabBar = new QTabBar(this);
+    m_tabBar->setObjectName("resultTabs");
+    m_tabBar->setDocumentMode(true);
+    m_tabBar->setExpanding(false);
+    m_tabBar->setElideMode(Qt::ElideNone); // a long title is cut by syncTabBar; too many tabs scroll
+    m_tabBar->setUsesScrollButtons(true);
+    m_tabBar->setFocusPolicy(Qt::NoFocus);
+    m_tabBar->setDrawBase(false);
+    m_tabBar->addTab(tr("Preview"));
+    m_tabBar->setTabToolTip(0, tr("The selected file's preview"));
+    m_tabBar->hide();
+    connect(m_tabBar, &QTabBar::currentChanged, this, &QuickLook::tabChosen);
+    layout->addWidget(m_tabBar);
     auto *top = new QHBoxLayout;
     top->addWidget(m_title, 1);
     top->addWidget(m_editBox);
@@ -262,7 +277,11 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     underClose->setAutoRaise(true);
     underClose->setFocusPolicy(Qt::NoFocus);
     underClose->setToolTip(tr("Close this part"));
-    connect(underClose, &QToolButton::clicked, this, &QuickLook::closeUnder);
+    connect(underClose, &QToolButton::clicked, this, [this] {
+        closeUnder();
+        if (m_currentTab >= 0)
+            m_resultTabs[m_currentTab].hasUnder = false; // closed by the user: it doesn't come back with the tab
+    });
     underTop->addWidget(m_underTitle, 1);
     underTop->addWidget(underClose);
     under->addLayout(underTop);
@@ -441,6 +460,13 @@ bool QuickLook::showUnder(const QString &title, const Extensions::PreviewReply &
     m_underNote->setText(content.note);
     m_underNote->setVisible(!content.note.isEmpty());
     openUnder();
+    if (m_currentTab >= 0) {
+        ResultTab &tab = m_resultTabs[m_currentTab];
+        tab.hasUnder = true;
+        tab.underTitle = title;
+        tab.under = content;
+        tab.waiting = false;
+    }
     return true;
 }
 
@@ -484,6 +510,16 @@ void QuickLook::showWorking(const QString &extension, const QString &title, cons
 {
     if (hasPlan())
         return;
+    // Its result is in a tab that isn't chosen (it was asked from there a
+    // moment ago): that tab comes forward, and the waiting is said under it.
+    if (!isHeld() && isVisible() && (m_currentTab < 0 || m_resultTabs.at(m_currentTab).extension != extension)) {
+        for (int i = int(m_resultTabs.size()) - 1; i >= 0; --i) {
+            if (m_resultTabs.at(i).extension == extension && !m_resultTabs.at(i).id.isEmpty()) {
+                presentTab(i);
+                break;
+            }
+        }
+    }
     // The extension's own result is on screen (the list Claude is asked
     // about): it stays, and the waiting is said in the part under it.
     if (!m_resultId.isEmpty() && m_resultExtension == extension && isVisible() && m_workingFor.isEmpty()) {
@@ -521,6 +557,10 @@ void QuickLook::showWorking(const QString &extension, const QString &title, cons
 
 void QuickLook::endWorking(const QString &extension)
 {
+    for (int i = 0; i < m_resultTabs.size(); ++i) {
+        if (m_resultTabs.at(i).extension == extension && i != m_currentTab)
+            m_resultTabs[i].waiting = false;
+    }
     if (!m_underWaitFor.isEmpty() && m_underWaitFor == extension) {
         // Said under a result: that line goes; an answer shown before it comes back, else the part closes.
         m_underWaitFor.clear();
@@ -780,37 +820,253 @@ bool QuickLook::showResult(const QString &title, const QString &details, const E
 {
     if (showUnder(title, content))
         return true; // it belongs to the result on screen: under it, and that one stays
+    // It belongs to a result in a tab that isn't chosen: kept there, for when it is.
+    if (!content.under.isEmpty()) {
+        const int owner = tabOf(content.extension, content.under);
+        if (owner >= 0 && owner != m_currentTab && (content.kind == Extensions::PreviewReply::Markdown || content.kind == Extensions::PreviewReply::Html
+                                                    || content.kind == Extensions::PreviewReply::Text)) {
+            ResultTab &tab = m_resultTabs[owner];
+            tab.hasUnder = true;
+            tab.underTitle = title;
+            tab.under = content;
+            tab.waiting = false;
+            return true;
+        }
+    }
     if (isHeld())
         return false; // not over a plan that waits for its answer, or over "working"
-    const bool same = !content.resultId.isEmpty() && isVisible() && content.resultId == m_resultId
-                      && content.extension == m_resultExtension;
-    if (same) {
+    int at = isVisible() ? tabOf(content.extension, content.resultId) : -1;
+    // A result made again keeps the search field and the button it came with.
+    auto keepsWhatItSaid = [this](int index, const Extensions::PreviewReply &made) {
+        Extensions::PreviewReply &kept = m_resultTabs[index].content;
+        Extensions::PreviewReply next = made;
+        next.searchable = kept.searchable;
+        next.searchHint = kept.searchHint;
+        next.actionId = kept.actionId;
+        next.actionLabel = kept.actionLabel;
+        next.actionHint = kept.actionHint;
+        next.actionInput = kept.actionInput;
+        kept = next;
+    };
+    if (at >= 0 && at == m_currentTab && !content.resultId.isEmpty()) {
         // The result on screen, made again: replaced where it is.
+        m_resultTabs[at].title = title;
+        keepsWhatItSaid(at, content);
+        m_tabBar->setTabText(at + 1, tabText(title));
         m_title->setText(title);
         applyExtension(content); // (its search field and its button stay as they are: said when it came)
         return true;
     }
-    if (content.update)
-        return false; // for a result that isn't shown (any more)
-    clear(); // no file: nothing to open, nothing still loading
-    m_open->hide(); // …so no button that would open it
-    m_title->setText(title);
-    // Whose it is, and how to get a file's preview back: it stays until then.
-    m_details->setText(details.isEmpty() ? tr("Space previews the selected file") : tr("%1 · Space previews the selected file").arg(details));
-    m_showsResult = true;
-    if (!applyExtension(content)) {
-        showInfo(tr("Nothing to show"));
+    if (content.update) {
+        if (at < 0)
+            return false; // for a result that isn't kept (any more)
+        // For a tab that isn't chosen: what it shows when it is.
+        m_resultTabs[at].title = title;
+        keepsWhatItSaid(at, content);
+        m_tabBar->setTabText(at + 1, tabText(title));
         return true;
     }
-    if (!content.resultId.isEmpty()) {
-        m_resultExtension = content.extension;
-        m_resultId = content.resultId;
-        reportResult();
-        if (content.searchable)
-            setSearchShown(true, content.searchHint);
-        setActionShown(content);
+    if (at < 0) {
+        ResultTab tab;
+        tab.extension = content.extension;
+        tab.id = content.resultId;
+        m_resultTabs.append(tab);
+        at = int(m_resultTabs.size()) - 1;
+        if (!tab.id.isEmpty())
+            Extensions::Host::instance()->keepResult(tab.extension, tab.id, true);
+    } else {
+        // Asked for again: made anew, without what was said under it or typed.
+        if (at == m_currentTab)
+            closeResult();
+        ResultTab fresh;
+        fresh.extension = content.extension;
+        fresh.id = content.resultId;
+        m_resultTabs[at] = fresh;
     }
+    ResultTab &tab = m_resultTabs[at];
+    tab.title = title;
+    tab.details = details;
+    tab.content = content;
+    syncTabBar();
+    presentTab(at);
     return true;
+}
+
+// A tab's text: its result's title on one line, a long one cut (the whole is its tooltip).
+QString QuickLook::tabText(const QString &title) const
+{
+    QString line = title.simplified();
+    return m_tabBar->fontMetrics().elidedText(line, Qt::ElideRight, m_tabBar->fontMetrics().horizontalAdvance(QLatin1Char('x')) * 18);
+}
+
+int QuickLook::tabOf(const QString &extension, const QString &id) const
+{
+    for (int i = 0; i < m_resultTabs.size(); ++i) {
+        if (m_resultTabs.at(i).extension == extension && m_resultTabs.at(i).id == id)
+            return i;
+    }
+    return -1;
+}
+
+// What is on screen goes back into its tab, as it is: what was typed, how
+// far it was scrolled, whether Claude is being asked about it.
+void QuickLook::rememberCurrent()
+{
+    if (m_currentTab < 0 || m_currentTab >= m_resultTabs.size())
+        return;
+    ResultTab &tab = m_resultTabs[m_currentTab];
+    tab.search = m_search->isVisibleTo(this) ? m_search->text() : QString();
+    tab.actionText = m_actionRow->isVisibleTo(this) ? m_actionInput->text() : QString();
+    tab.scroll = m_pages->currentWidget() == m_scroll ? m_scroll->verticalScrollBar()->value() : 0;
+    tab.waiting = !m_underWaitFor.isEmpty() && m_underWaitFor == tab.extension;
+    if (tab.waiting) {
+        tab.waitTitle = m_underTitle->text();
+        tab.waitText = m_workingText;
+        tab.waitSince = m_workingSince;
+    }
+}
+
+// A tab's result on screen, as it was left; its extension is told it is
+// shown again (with the room and the theme), so it makes it anew.
+void QuickLook::presentTab(int index)
+{
+    if (index < 0 || index >= m_resultTabs.size() || isHeld())
+        return;
+    clear(); // the one on screen goes back into its tab; no file, nothing still loading
+    m_currentTab = index;
+    syncTabBar();
+    const ResultTab tab = m_resultTabs.at(index);
+    m_open->hide(); // no file: no button that would open it
+    m_title->setText(tab.title);
+    // Whose it is, and how to get a file's preview back.
+    m_details->setText(tab.details.isEmpty() ? tr("Space previews the selected file")
+                                             : tr("%1 · Space previews the selected file").arg(tab.details));
+    m_showsResult = true;
+    if (!applyExtension(tab.content)) {
+        showInfo(tr("Nothing to show"));
+        return;
+    }
+    if (tab.id.isEmpty())
+        return;
+    m_resultExtension = tab.extension;
+    m_resultId = tab.id;
+    reportResult();
+    if (tab.content.searchable) {
+        setSearchShown(true, tab.content.searchHint);
+        if (!tab.search.isEmpty()) {
+            {
+                const QSignalBlocker blocker(m_search);
+                m_search->setText(tab.search);
+            }
+            // The extension forgot it when the tab was left.
+            Extensions::Host::instance()->searchResult(m_resultExtension, m_resultId, tab.search);
+        }
+    }
+    setActionShown(tab.content);
+    if (!tab.actionText.isEmpty())
+        m_actionInput->setText(tab.actionText);
+    if (tab.hasUnder)
+        showUnder(tab.underTitle, tab.under);
+    if (tab.waiting) {
+        showWorking(tab.extension, tab.waitTitle, tab.waitText);
+        m_workingSince = tab.waitSince;
+        updateWorking();
+    }
+    if (m_pages->currentWidget() == m_scroll)
+        m_scroll->verticalScrollBar()->setValue(tab.scroll);
+}
+
+// A tab was clicked: Preview is the selected file's, any other a result.
+void QuickLook::tabChosen(int barIndex)
+{
+    if (barIndex - 1 == m_currentTab)
+        return;
+    if (isHeld()) {
+        syncTabBar(); // a plan or "working" has the pane until it is answered
+        return;
+    }
+    if (barIndex <= 0) {
+        clear();
+        emit filePreviewRequested();
+        return;
+    }
+    presentTab(barIndex - 1);
+}
+
+void QuickLook::closeResultTab(int index)
+{
+    if (index < 0 || index >= m_resultTabs.size())
+        return;
+    const bool current = index == m_currentTab;
+    if (current)
+        closeResult(); // its extension hears it is no longer shown
+    const ResultTab gone = m_resultTabs.takeAt(index);
+    if (!gone.id.isEmpty())
+        Extensions::Host::instance()->keepResult(gone.extension, gone.id, false);
+    if (m_currentTab > index)
+        --m_currentTab;
+    {
+        const QSignalBlocker blocker(m_tabBar);
+        m_tabBar->removeTab(index + 1);
+    }
+    syncTabBar();
+    if (!current)
+        return;
+    // The tab beside it comes forward; with none left, the file's preview.
+    if (!m_resultTabs.isEmpty() && !isHeld()) {
+        presentTab(qMin(index, int(m_resultTabs.size()) - 1));
+        return;
+    }
+    clear();
+    emit filePreviewRequested();
+}
+
+void QuickLook::syncTabBar()
+{
+    const QSignalBlocker blocker(m_tabBar);
+    while (m_tabBar->count() > m_resultTabs.size() + 1)
+        m_tabBar->removeTab(m_tabBar->count() - 1);
+    while (m_tabBar->count() < m_resultTabs.size() + 1) {
+        m_tabBar->addTab(QString());
+        addTabButton(m_tabBar->count() - 1);
+    }
+    for (int i = 0; i < m_resultTabs.size(); ++i) {
+        m_tabBar->setTabText(i + 1, tabText(m_resultTabs.at(i).title));
+        const QString title = m_resultTabs.at(i).title.simplified();
+        m_tabBar->setTabToolTip(i + 1, m_resultTabs.at(i).details.isEmpty() ? title : QStringLiteral("%1 · %2").arg(title, m_resultTabs.at(i).details));
+    }
+    m_tabBar->setCurrentIndex(m_currentTab + 1);
+    m_tabBar->setVisible(!m_resultTabs.isEmpty());
+}
+
+void QuickLook::addTabButton(int barIndex)
+{
+    auto *close = new QToolButton(m_tabBar);
+    close->setObjectName("flat");
+    close->setFixedSize(18, 18);
+    close->setIconSize(QSize(10, 10));
+    close->setFocusPolicy(Qt::NoFocus);
+    close->setAutoRaise(true);
+    close->setToolTip(tr("Close This Tab"));
+    close->setIcon(glyphIcon(Glyph::Close, currentTheme().dimFg));
+    // Tabs close, so the button finds its tab when it is pressed.
+    connect(close, &QToolButton::clicked, this, [this, close] {
+        for (int i = 1; i < m_tabBar->count(); ++i) {
+            if (m_tabBar->tabButton(i, QTabBar::RightSide) == close) {
+                closeResultTab(i - 1);
+                return;
+            }
+        }
+    });
+    m_tabBar->setTabButton(barIndex, QTabBar::RightSide, close);
+}
+
+void QuickLook::themeTabs()
+{
+    for (int i = 1; i < m_tabBar->count(); ++i) {
+        if (auto *close = qobject_cast<QToolButton *>(m_tabBar->tabButton(i, QTabBar::RightSide)))
+            close->setIcon(glyphIcon(Glyph::Close, currentTheme().dimFg));
+    }
 }
 
 void QuickLook::reportResult()
@@ -1155,6 +1411,11 @@ bool QuickLook::eventFilter(QObject *watched, QEvent *event)
 
 void QuickLook::closeResult()
 {
+    rememberCurrent(); // its tab keeps it
+    if (m_currentTab >= 0) {
+        m_currentTab = -1;
+        syncTabBar();
+    }
     m_showsResult = false;
     setSearchShown(false);
     setActionShown({});
@@ -1170,6 +1431,8 @@ void QuickLook::closeResult()
 void QuickLook::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
+    if (m_tabBar && event->type() == QEvent::PaletteChange)
+        themeTabs();
     if (m_finder && event->type() == QEvent::PaletteChange) {
         themeFinder();
         if (m_editing)
@@ -1320,10 +1583,23 @@ void QuickLook::apply(quint64 generation, const Preview::Result &result)
 
 void QuickLook::hideEvent(QHideEvent *event)
 {
+    if (event->spontaneous()) {
+        // The window was minimised (or its desktop left): the pane wasn't
+        // closed, so what it shows, its tabs and a plan stay as they are.
+        QWidget::hideEvent(event);
+        return;
+    }
     endEditing(); // (whoever closes the pane asked mayClose() first)
     closePlan(true); // the pane was closed: the plan is not applied
     forgetWorking(); // nor is the waiting shown any more (it goes on: the plan will open the pane)
     closeResult();
+    // The pane was closed: its tabs go with it, and their extensions may rest.
+    for (const ResultTab &tab : std::as_const(m_resultTabs)) {
+        if (!tab.id.isEmpty())
+            Extensions::Host::instance()->keepResult(tab.extension, tab.id, false);
+    }
+    m_resultTabs.clear();
+    syncTabBar();
     ++m_generation; // drop what's still loading
     m_extensionTimer->stop();
     m_extensionRequest = 0;

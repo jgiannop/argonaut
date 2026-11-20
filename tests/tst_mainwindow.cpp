@@ -67,6 +67,7 @@
 #include <QPointer>
 #include <QComboBox>
 #include <QDialog>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QTemporaryDir>
@@ -130,6 +131,7 @@ private slots:
     void extensionPlanInThePane();
     void waitingForClaudeIsShown();
     void extensionResultStaysLive();
+    void resultsStayInTabs();
     void longPictureFromAnExtensionScrolls();
     void pictureFromAnExtensionHasTooltips();
     void htmlPageInThePreview();
@@ -2896,6 +2898,96 @@ void TestMainWindow::extensionResultStaysLive()
     QTest::qWait(100);
     QVERIFY(!w->quickLookVisible());
     host->setEnabled("fake", false);
+}
+
+// Results are kept in tabs of the preview pane: a second one doesn't
+// replace the first, only the chosen tab's extension hears it is shown,
+// and a tab goes when it is closed (or the pane is).
+void TestMainWindow::resultsStayInTabs()
+{
+    if (QStandardPaths::findExecutable("python3").isEmpty())
+        QSKIP("python3 isn't installed (the test extension is a Python script)");
+    Extensions::Host *host = Extensions::Host::instance();
+    host->setEnabled("fake", true);
+    // Off again however the test ends, or the next tests meet it.
+    const QScopeGuard off([host] { host->setEnabled("fake", false); });
+    const QString a = make("a.txt");
+    open(m_dir);
+    const QString log = QString::fromLocal8Bit(qgetenv("ARGONAUT_EXTENSIONS_PATH")) + "/fake/results";
+    QFile::remove(log);
+    auto logged = [&log] {
+        QFile file(log);
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    auto command = [&](const QString &id) {
+        for (const Extensions::Command &c : host->commands(m_dir, {})) {
+            if (c.id == id) {
+                host->invoke(c, m_dir, {});
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(command("live"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(w->quickLookVisible(), 10000);
+    QuickLook *ql = w->m_quickLook;
+    QTRY_VERIFY_WITH_TIMEOUT(ql->shownText().startsWith("live 2 for "), 10000);
+    QCOMPARE(ql->resultTabCount(), 1);
+    QVERIFY(ql->resultTabs()->isVisible());
+    QCOMPARE(ql->resultTabs()->count(), 2); // Preview, Live
+    QCOMPARE(ql->resultTabs()->currentIndex(), 1);
+    QCOMPARE(ql->resultTabs()->tabText(1), QStringLiteral("Live"));
+    // What was typed in its search field is kept with the tab.
+    QVERIFY(ql->searchField()->isVisible());
+    ql->searchField()->setText("needle");
+
+    // A second result: a tab of its own, chosen; the first is kept, hidden.
+    QVERIFY(command("showme"));
+    QTRY_COMPARE_WITH_TIMEOUT(ql->resultTabCount(), 2, 10000);
+    QCOMPARE(ql->resultTabs()->currentIndex(), 2);
+    QVERIFY(ql->resultId().isEmpty()); // the diff has no name
+    QVERIFY(!ql->searchField()->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(logged(), QStringLiteral("live1 shown\nlive1 hidden\n"), 10000);
+    // The hidden one's extension isn't stopped as idle meanwhile.
+    QVERIFY(host->isRunning("fake"));
+
+    // Back to the first: shown again (its extension makes it anew), with its search.
+    ql->resultTabs()->setCurrentIndex(1);
+    QCOMPARE(ql->resultId(), QStringLiteral("live1"));
+    QCOMPARE(ql->searchField()->text(), QStringLiteral("needle"));
+    QTRY_COMPARE_WITH_TIMEOUT(logged(), QStringLiteral("live1 shown\nlive1 hidden\nlive1 shown\n"), 10000);
+    // The extension forgot the search when the tab was left: it is told again.
+    QTRY_COMPARE_WITH_TIMEOUT(ql->shownText(), QStringLiteral("searched: needle"), 10000);
+
+    // Space on a file: the Preview tab; the results stay in theirs.
+    QTRY_VERIFY(w->m_pane->model->indexForPath(a).isValid());
+    w->m_pane->view->setCurrentIndex(w->toView(w->m_pane->model->indexForPath(a)));
+    QTest::keyClick(w->m_pane->view, Qt::Key_Space);
+    QTRY_COMPARE(ql->path(), a);
+    QCOMPARE(ql->resultTabs()->currentIndex(), 0);
+    QCOMPARE(ql->resultTabCount(), 2);
+    QVERIFY(!ql->hasResult());
+    // The Live tab again, then closed: the diff's comes forward.
+    ql->resultTabs()->setCurrentIndex(1);
+    QCOMPARE(ql->resultId(), QStringLiteral("live1"));
+    ql->closeResultTab(0);
+    QCOMPARE(ql->resultTabCount(), 1);
+    QCOMPARE(ql->resultTabs()->currentIndex(), 1);
+    QVERIFY(ql->hasResult());
+    QVERIFY(ql->resultId().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(logged().endsWith("live1 shown\nlive1 hidden\n"), 10000);
+    // The last one closed: the bar goes and the selected file is previewed.
+    ql->closeResultTab(0);
+    QCOMPARE(ql->resultTabCount(), 0);
+    QVERIFY(!ql->resultTabs()->isVisible());
+    QVERIFY(!ql->hasResult());
+    QTRY_COMPARE(ql->path(), a);
+
+    // Closing the pane takes every tab with it.
+    QVERIFY(command("live"));
+    QTRY_COMPARE_WITH_TIMEOUT(ql->resultTabCount(), 1, 10000);
+    w->hideQuickLook();
+    QCOMPARE(ql->resultTabCount(), 0);
 }
 
 // Extensions' commands in the menu: submenus, a tick, the text a command

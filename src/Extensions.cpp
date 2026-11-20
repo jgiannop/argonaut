@@ -665,7 +665,7 @@ void Host::stopIdle()
     for (Running *ext : std::as_const(m_running)) {
         if (!ext->process || !ext->manifest.whenNeeded)
             continue;
-        if (!ext->resultsShown.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || ext->tree.valid || !ext->listings.isEmpty())
+        if (!ext->resultsShown.isEmpty() || !ext->resultsKept.isEmpty() || !ext->formPending.isEmpty() || !ext->places.isEmpty() || ext->tree.valid || !ext->listings.isEmpty())
             continue; // it has something on screen
         if (ext->claudePending > 0 || !ext->planPending.isEmpty())
             continue; // it waits for an answer from Claude, or for the user to look at its plan
@@ -1339,6 +1339,19 @@ void Host::resultShown(const QString &extension, const QString &id, bool shown, 
     }
 }
 
+void Host::keepResult(const QString &extension, const QString &id, bool kept)
+{
+    for (Running *ext : std::as_const(m_running)) {
+        if (ext->manifest.id != extension)
+            continue;
+        if (kept)
+            ext->resultsKept.insert(id);
+        else
+            ext->resultsKept.remove(id);
+        ext->lastActive = QDateTime::currentMSecsSinceEpoch();
+    }
+}
+
 void Host::searchResult(const QString &extension, const QString &id, const QString &text)
 {
     for (Running *ext : std::as_const(m_running)) {
@@ -1874,6 +1887,7 @@ void Host::forget(Running *ext)
     ext->previewTypes.clear();
     ext->previewsSaid = false;
     ext->resultsShown.clear();
+    ext->resultsKept.clear();
     const QStringList lists = ext->listings.keys();
     ext->listings.clear();
     for (const QString &id : lists)

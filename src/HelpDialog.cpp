@@ -353,6 +353,10 @@ drag its edge to make it wider. It follows the file you select, so the arrow key
 What an extension shows there (the System Dashboard, the running services, a diff) <b>stays while you go on working
 with the files</b>: selecting files and changing folder don't take it away. Press [[Space]] on a file to see that
 file's preview again; [[Esc]] or the pane's ✕ closes it.
+<b>Each of them gets a tab of its own</b> at the top of the pane, after <i>Preview</i> (the selected file's):
+open the dashboard and then the journal, and both stay, a click apart, until you close their tab (its ×)
+or the pane. Only the chosen tab is kept up to date; another one is made again when you come back to it,
+with what you had typed in its search field.
 [[Space]] or [[Esc]] closes it, and it remembers its width.</p>
 <p><b>Text in the preview can be copied and searched.</b> Click in it: then select with the mouse (or
 [[Ctrl+A]] for all) and [[Ctrl+C]] copies the words. [[Ctrl+F]] opens a small find bar under the text: what you

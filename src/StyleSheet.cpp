@@ -112,6 +112,12 @@ QTabBar#tabs::tab { background: transparent; color: @dim; border: none; border-r
     padding: 5px 8px 5px 14px; margin: 3px 2px; min-width: 120px; }
 QTabBar#tabs::tab:selected { background: @pathBg; color: @fg; }
 QTabBar#tabs::tab:hover:!selected { background: @hover; }
+QTabBar#resultTabs { background: transparent; border: none; }
+QTabBar#resultTabs::tab { background: transparent; color: @dim; border: none; border-radius: 6px;
+    padding: 4px 6px 4px 10px; margin: 0 2px 2px 0; }
+QTabBar#resultTabs::tab:selected { background: @pathBg; color: @fg; }
+QTabBar#resultTabs::tab:hover:!selected { background: @hover; }
+QTabBar#resultTabs QToolButton { background: @window; border: none; color: @fg; }
 QWidget#trashBar { background: @pathBg; border-bottom: 1px solid @border; }
 QLabel#trashBarText { color: @fg; }
 QToolButton#barButton { background: @button; color: @fg; border: none; border-radius: 6px;

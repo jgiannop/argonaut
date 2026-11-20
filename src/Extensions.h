@@ -357,6 +357,10 @@ public:
     // "height":…,"dark":…,"colors":{…},"font":…}.
     void resultShown(const QString &extension, const QString &id, bool shown, const QSize &pixels = QSize(),
                      const ResultLook &look = ResultLook());
+    // A named result that isn't on screen but is kept in a tab of the
+    // preview pane: its extension isn't stopped as idle, so the result is
+    // live again when its tab is chosen. Nothing is sent.
+    void keepResult(const QString &extension, const QString &id, bool kept);
     // A plan an extension sent ({"type":"plan",…}): like a form, exactly one
     // window shows it (takePlan), and it is answered once: with how many
     // moves were done and how many no longer could be, or as dismissed.
@@ -495,6 +499,7 @@ private:
         bool previewsSaid = false;        // …and "previews"
         qint64 lastActive = 0;            // a when-needed one: when it last had something to do
         QSet<QString> resultsShown;       // its named results on screen: it isn't idle
+        QSet<QString> resultsKept;        // …or in a tab that isn't chosen: nor is it then
         QStringList claudeWaiting;        // the questions to Claude it waits for an answer to (their ids)
         int claudePending = 0;            // requests to Claude that Argonaut is making for it
         int claudeAsked = 0;              // …and how many since the user last chose something of its
