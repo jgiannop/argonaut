@@ -124,6 +124,7 @@ private slots:
     void richTextGetsAPageLook();
     void terminalBringsTheFilesAlong();
     void terminalComesToTheFiles();
+    void terminalPassesTheMouseOn();
     void extensionMenusAskAndShow();
     void diffIsColoured();
     void extensionListIsAPlace();
@@ -1472,6 +1473,69 @@ void TestMainWindow::terminalBringsTheFilesAlong()
     const int history = int(w->m_pane->back.size());
     QTest::keyClick(terminal, Qt::Key_Up, Qt::ControlModifier);
     QCOMPARE(int(w->m_pane->back.size()), history);
+    w->m_terminalAct->trigger();
+#else
+    QSKIP("no embedded terminal in this build");
+#endif
+}
+
+// A program that asks for the mouse (Claude Code: the alternate screen and
+// SGR mouse reports) scrolls itself: the wheel, clicks and drags go to it,
+// Shift+click doesn't. One on the alternate screen without the mouse (less)
+// gets arrow keys for the wheel.
+void TestMainWindow::terminalPassesTheMouseOn()
+{
+#if defined(ARGONAUT_TERMINAL) && defined(Q_OS_LINUX)
+    open(m_dir);
+    w->m_terminalAct->trigger();
+    TerminalWidget *terminal = w->m_terminal;
+    QVERIFY(terminal && terminal->isRunning());
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->isShellIdle(), 10000);
+    terminal->resize(600, 300);
+    const QString mouse = m_dir + "/mouse.bytes";
+    const QString keys = m_dir + "/keys.bytes";
+    // What it is sent is written down as it comes (raw: nothing is changed on the way).
+    const QString script = m_dir + "/asks.sh";
+    TestSupport::writeScript(script, "#!/bin/sh\n"
+                                     "printf '\\033[?1049h\\033[?1002h\\033[?1006h'\n"
+                                     "stty raw -echo\n"
+                                     "timeout --foreground 3 cat > \"$1\"\n"
+                                     "printf '\\033[?1002l\\033[?1006l'\n"
+                                     "timeout --foreground 3 cat > \"$2\"\n"
+                                     "stty sane\n"
+                                     "printf '\\033[?1049l'\n");
+    QTest::keyClicks(terminal, QStringLiteral("sh '%1' '%2' '%3'").arg(script, mouse, keys));
+    QTest::keyClick(terminal, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->programWantsMouse() && terminal->onAlternateScreen(), 10000);
+    QTest::qWait(200); // cat is reading
+    auto read = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    auto wheel = [terminal](int delta, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        const QPointF at(50, 40);
+        QWheelEvent event(at, terminal->mapToGlobal(at), QPoint(), QPoint(0, delta), Qt::NoButton, mods, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(terminal, &event);
+    };
+    wheel(120);  // up: button 64 in SGR
+    wheel(-60);  // half a notch (a touchpad)…
+    wheel(-60);  // …and the other half: down, button 65
+    QTest::mouseClick(terminal, Qt::LeftButton, Qt::NoModifier, QPoint(50, 40));
+    QTest::mouseClick(terminal, Qt::LeftButton, Qt::ShiftModifier, QPoint(50, 40)); // ours: selects
+    QTRY_VERIFY_WITH_TIMEOUT(read(mouse).contains("\x1b[<0;") && read(mouse).contains("m"), 5000);
+    const QByteArray sent = read(mouse);
+    QVERIFY2(sent.contains("\x1b[<64;"), sent.toHex(' ').constData());
+    QVERIFY2(sent.contains("\x1b[<65;"), sent.toHex(' ').constData());
+    QCOMPARE(sent.count("\x1b[<0;"), 2); // the click's press and release, not the Shift+click
+    QVERIFY(sent.indexOf("\x1b[<64;") < sent.indexOf("\x1b[<65;"));
+
+    // The mouse given back, still on the alternate screen: the wheel is arrow keys.
+    QTRY_VERIFY_WITH_TIMEOUT(!terminal->programWantsMouse(), 10000);
+    QTest::qWait(200);
+    wheel(-120);
+    QTRY_VERIFY_WITH_TIMEOUT(read(keys).count("\x1b[B") + read(keys).count("\x1bOB") == 3, 5000);
+    QVERIFY(!read(keys).contains("\x1b[<"));
+    QTRY_VERIFY_WITH_TIMEOUT(!terminal->onAlternateScreen() && terminal->isShellIdle(), 10000);
     w->m_terminalAct->trigger();
 #else
     QSKIP("no embedded terminal in this build");

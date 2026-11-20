@@ -356,6 +356,11 @@ int TerminalWidget::onTermProp(VTermProp prop, VTermValue *value, void *user)
         self->m_altScreen = value->boolean;
         self->updateScrollBar();
         break;
+    case VTERM_PROP_MOUSE:
+        self->m_mouseMode = value->number;
+        if (self->m_mouseMode == VTERM_PROP_MOUSE_NONE)
+            self->m_mouseDown = false;
+        break;
     case VTERM_PROP_TITLE:
         if (value->string.initial)
             self->m_titleBuffer.clear();
@@ -794,9 +799,62 @@ QPoint TerminalWidget::cellUnder(const QPoint &pos) const
     return QPoint(col, scrollbackSize() - m_scrollOffset + row);
 }
 
+namespace {
+
+VTermModifier vtermModifiers(Qt::KeyboardModifiers mods)
+{
+    int vmod = VTERM_MOD_NONE;
+    if (mods & Qt::ShiftModifier)
+        vmod |= VTERM_MOD_SHIFT;
+    if (mods & Qt::AltModifier)
+        vmod |= VTERM_MOD_ALT;
+    if (mods & Qt::ControlModifier)
+        vmod |= VTERM_MOD_CTRL;
+    return VTermModifier(vmod);
+}
+
+int vtermButton(Qt::MouseButton button)
+{
+    switch (button) {
+    case Qt::LeftButton: return 1;
+    case Qt::MiddleButton: return 2;
+    case Qt::RightButton: return 3;
+    default: return 0;
+    }
+}
+
+} // namespace
+
+// The program asked for the mouse, and Shift isn't held (Shift is how text
+// is still selected here, as in other terminals).
+bool TerminalWidget::sendsMouseTo(Qt::KeyboardModifiers mods) const
+{
+    return m_vt && m_pid > 0 && m_mouseMode != VTERM_PROP_MOUSE_NONE && !(mods & Qt::ShiftModifier);
+}
+
+// libvterm writes the report in the form the program asked for (SGR, …),
+// and only what that mode wants (a move without a button only for "any motion").
+void TerminalWidget::sendMouse(const QPointF &pos, int button, bool pressed, Qt::KeyboardModifiers mods)
+{
+    const int col = qBound(0, int((pos.x() - Padding) / m_cellWidth), m_cols - 1);
+    const int row = qBound(0, int((pos.y() - Padding) / m_cellHeight), m_rows - 1);
+    const VTermModifier mod = vtermModifiers(mods);
+    vterm_mouse_move(m_vt, row, col, mod);
+    if (button > 0)
+        vterm_mouse_button(m_vt, button, pressed, mod);
+}
+
 void TerminalWidget::mousePressEvent(QMouseEvent *event)
 {
     setFocus(Qt::MouseFocusReason);
+    if (sendsMouseTo(event->modifiers()) && vtermButton(event->button()) > 0) {
+        scrollToBottom();
+        m_hasSelection = false;
+        m_mouseDown = true;
+        sendMouse(event->position(), vtermButton(event->button()), true, event->modifiers());
+        update();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         m_selAnchor = m_selEnd = cellUnder(event->position().toPoint());
         m_selecting = true;
@@ -809,6 +867,10 @@ void TerminalWidget::mousePressEvent(QMouseEvent *event)
 
 void TerminalWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    if (!m_selecting && sendsMouseTo(event->modifiers())) {
+        sendMouse(event->position(), 0, false, event->modifiers());
+        return;
+    }
     if (!m_selecting)
         return;
     m_selEnd = cellUnder(event->position().toPoint());
@@ -818,6 +880,13 @@ void TerminalWidget::mouseMoveEvent(QMouseEvent *event)
 
 void TerminalWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_mouseDown && vtermButton(event->button()) > 0) {
+        if (event->buttons() == Qt::NoButton)
+            m_mouseDown = false;
+        if (m_vt && m_mouseMode != VTERM_PROP_MOUSE_NONE)
+            sendMouse(event->position(), vtermButton(event->button()), false, event->modifiers());
+        return;
+    }
     if (event->button() != Qt::LeftButton)
         return;
     m_selecting = false;
@@ -828,6 +897,12 @@ void TerminalWidget::mouseReleaseEvent(QMouseEvent *event)
 // Double-click selects a word (path-friendly: keeps / . - _ ~).
 void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    // The second press of a double click: the program's, as the first was.
+    if (sendsMouseTo(event->modifiers()) && vtermButton(event->button()) > 0) {
+        m_mouseDown = true;
+        sendMouse(event->position(), vtermButton(event->button()), true, event->modifiers());
+        return;
+    }
     const QPoint at = cellUnder(event->position().toPoint());
     auto isWordChar = [this, &at](int col) {
         VTermScreenCell cell;
@@ -855,10 +930,30 @@ void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TerminalWidget::wheelEvent(QWheelEvent *event)
 {
+    event->accept();
+    // The program asked for the mouse (Claude Code scrolls its conversation
+    // itself) or has the whole screen (less, man): the wheel is the program's,
+    // a notch at a time (a touchpad's small steps are added up). Without the
+    // mouse it gets arrow keys, three a notch, as GNOME Terminal does.
+    const bool toMouse = sendsMouseTo(event->modifiers());
+    if (m_vt && m_pid > 0 && (toMouse || m_altScreen)) {
+        m_wheelRest += event->angleDelta().y();
+        while (qAbs(m_wheelRest) >= 120) {
+            const bool up = m_wheelRest > 0;
+            m_wheelRest += up ? -120 : 120;
+            if (toMouse) {
+                sendMouse(event->position(), up ? 4 : 5, true, event->modifiers());
+            } else {
+                for (int i = 0; i < 3; ++i)
+                    vterm_keyboard_key(m_vt, up ? VTERM_KEY_UP : VTERM_KEY_DOWN, VTERM_MOD_NONE);
+            }
+        }
+        return;
+    }
+    m_wheelRest = 0;
     const int lines = -event->angleDelta().y() / 40; // 3 lines per notch
     if (lines != 0)
         m_scrollBar->setValue(m_scrollBar->value() + lines);
-    event->accept();
 }
 
 QString TerminalWidget::lineText(int line, int fromCol, int toCol) const
@@ -923,6 +1018,8 @@ void TerminalWidget::pasteText(const QString &text)
 
 void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
 {
+    if (event->reason() == QContextMenuEvent::Mouse && sendsMouseTo(event->modifiers()))
+        return; // the right button went to the program (Shift+right click is ours)
     QMenu menu(this);
     QAction *copy = menu.addAction(tr("Copy"), this, &TerminalWidget::copySelection);
     copy->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));

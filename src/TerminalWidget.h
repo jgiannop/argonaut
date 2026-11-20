@@ -43,6 +43,13 @@ public:
     void setPassthroughShortcuts(const QList<QKeySequence> &shortcuts);
     // Visible screen text, one line per row (for tests).
     QString screenText() const;
+    // A program in it has asked for the mouse (Claude Code, vim with mouse=a,
+    // htop…): clicks, drags and the wheel go to it, as in other terminals,
+    // except with Shift held, which selects text here.
+    bool programWantsMouse() const { return m_mouseMode != VTERM_PROP_MOUSE_NONE; }
+    // A program has the whole screen (the alternate screen: less, an editor):
+    // there is no scrollback; the wheel is the program's.
+    bool onAlternateScreen() const { return m_altScreen; }
 
 signals:
     void titleChanged(const QString &title);
@@ -124,6 +131,11 @@ private:
     VTermPos m_cursor{0, 0};
     bool m_cursorVisible = true;
     bool m_altScreen = false;
+    int m_mouseMode = VTERM_PROP_MOUSE_NONE; // what the program asked for (VTERM_PROP_MOUSE_*)
+    int m_wheelRest = 0;                     // a touchpad's part of a notch, until it makes one
+    bool m_mouseDown = false;                // a press went to the program: so does its release
+    bool sendsMouseTo(Qt::KeyboardModifiers mods) const;
+    void sendMouse(const QPointF &pos, int button, bool pressed, Qt::KeyboardModifiers mods);
     QString m_title;
     QByteArray m_titleBuffer;
 
