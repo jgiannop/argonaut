@@ -1151,9 +1151,10 @@ int MainWindow::paneOf(const QObject *object) const
 {
     for (int i = 0; i < m_paneCount; ++i) {
         const Pane &p = m_panes[i];
-        if (object == p.iconView || object == p.detailView || object == p.viewStack || object == p.caption
-            || (p.iconView && object == p.iconView->viewport())
-            || (p.detailView && object == p.detailView->viewport()))
+        if (object == p.iconView || object == p.detailView || object == p.columnView || object == p.viewStack
+            || object == p.caption || (p.iconView && object == p.iconView->viewport())
+            || (p.detailView && object == p.detailView->viewport())
+            || (p.columnView && object == p.columnView->viewport()))
             return i;
     }
     return -1;
@@ -1370,7 +1371,7 @@ void MainWindow::refreshGitAll()
 void MainWindow::applyExpandFolders()
 {
     for (int i = 0; i < m_paneCount; ++i) {
-        m_panes[i].model->setTreeEnabled(m_expandFolders && !m_panes[i].grid);
+        m_panes[i].model->setTreeEnabled(m_expandFolders && !m_panes[i].grid && m_listColumnCount == 1);
     }
     if (m_pane->detailView)
         m_pane->detailView->viewport()->update();
@@ -1383,6 +1384,56 @@ void MainWindow::setExpandFoldersEverywhere(bool on)
         if (auto *window = qobject_cast<MainWindow *>(widget)) {
             window->m_expandFolders = on;
             window->applyExpandFolders();
+        }
+    }
+}
+
+QAbstractItemView *MainWindow::listView() const
+{
+    return m_listColumnCount > 1 ? static_cast<QAbstractItemView *>(m_pane->columnView) : m_pane->detailView;
+}
+
+void MainWindow::fitColumnCells()
+{
+    if (!m_pane->columnView)
+        return;
+    // The width QListView lays the cells out in: the view without its
+    // scrollbar, less the room it keeps for one (whether it is shown or not,
+    // so the cells don't change when it comes and goes).
+    QListView *view = m_pane->columnView;
+    QScrollBar *bar = view->verticalScrollBar();
+    const bool overlaps = view->style()->pixelMetric(QStyle::PM_ScrollView_ScrollBarOverlap, nullptr, bar);
+    const int width = view->maximumViewportSize().width()
+                      - (overlaps ? 0 : view->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, bar))
+                      - 1; // a line is full when a cell would end on its last pixel
+    const QSize cell = m_pane->columnsDelegate->columnCellSize(m_pane->columnView->fontMetrics(), width,
+                                                               m_listColumnCount);
+    if (cell != m_pane->columnView->gridSize())
+        m_pane->columnView->setGridSize(cell);
+}
+
+// Each pane's list becomes the table or the columns; a pane showing its
+// list switches to the other one (the grid and Analyze stay as they are).
+void MainWindow::applyListColumnCount()
+{
+    for (int i = 0; i < m_paneCount; ++i) {
+        PaneScope scope(this, i);
+        fitColumnCells();
+        if (m_pane->grid || (m_analyzing && i == 0) || m_pane->view == listView())
+            continue;
+        setGridMode(false);
+    }
+    applyExpandFolders();
+}
+
+void MainWindow::setListColumnCountEverywhere(int count)
+{
+    count = qBound(1, count, 4);
+    QSettings().setValue("view/listColumnCount", count);
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (auto *window = qobject_cast<MainWindow *>(widget)) {
+            window->m_listColumnCount = count;
+            window->applyListColumnCount();
         }
     }
 }
@@ -1631,8 +1682,11 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     m_pane->gridDelegate = new FileItemDelegate(m_thumbnailer, this);
     m_pane->listDelegate = new FileItemDelegate(m_thumbnailer, this);
     m_pane->listDelegate->setGridMode(false);
+    m_pane->columnsDelegate = new FileItemDelegate(m_thumbnailer, this);
+    m_pane->columnsDelegate->setColumnsMode();
     m_pane->gridDelegate->setTheme(m_theme);
     m_pane->listDelegate->setTheme(m_theme);
+    m_pane->columnsDelegate->setTheme(m_theme);
 
     auto *container = new QWidget(parent);
     container->setObjectName("paneContainer");
@@ -1663,6 +1717,7 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     m_pane->iconView->setItemDelegate(m_pane->gridDelegate);
     m_pane->gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_pane->gridZoom));
     m_pane->listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
+    m_pane->columnsDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
     m_pane->iconView->setGridSize(m_pane->gridDelegate->gridCellSize(m_pane->iconView->fontMetrics()));
 
     // List with columns. Both views share the model and the selection.
@@ -1701,9 +1756,28 @@ QWidget *MainWindow::buildPane(QWidget *parent, int index)
     columns->setSortIndicator(DirectoryModel::NameColumn, Qt::AscendingOrder);
     m_pane->detailView->setSortingEnabled(true);
     connect(columns, &QHeaderView::sortIndicatorChanged, this, &MainWindow::updateSortActions);
+    // The list in columns: rows side by side, read across (left to right,
+    // then the next line), the cells as wide as the view divided by the count.
+    m_pane->columnView = new QListView(m_pane->viewStack);
+    m_pane->columnView->setObjectName("files");
+    m_pane->columnView->setViewMode(QListView::IconMode);
+    m_pane->columnView->setFlow(QListView::LeftToRight);
+    m_pane->columnView->setWrapping(true);
+    m_pane->columnView->setMovement(QListView::Static);
+    m_pane->columnView->setResizeMode(QListView::Adjust);
+    m_pane->columnView->setUniformItemSizes(true);
+    m_pane->columnView->setSpacing(0);
+    m_pane->columnView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setupFileView(m_pane->columnView);
+    m_pane->columnView->setItemDelegate(m_pane->columnsDelegate);
+    unused = m_pane->columnView->selectionModel();
+    m_pane->columnView->setSelectionModel(m_pane->iconView->selectionModel());
+    delete unused;
     m_pane->viewStack->addWidget(m_pane->iconView);
     m_pane->viewStack->addWidget(m_pane->detailView);
-    m_pane->view = m_pane->grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : m_pane->detailView;
+    m_pane->viewStack->addWidget(m_pane->columnView);
+    fitColumnCells();
+    m_pane->view = m_pane->grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : listView();
     m_pane->viewStack->setCurrentWidget(m_pane->view);
 
     QItemSelectionModel *selection = m_pane->iconView->selectionModel();
@@ -1771,6 +1845,7 @@ void MainWindow::applyTheme(bool force)
     for (int i = 0; i < m_paneCount; ++i) {
         m_panes[i].gridDelegate->setTheme(m_theme);
         m_panes[i].listDelegate->setTheme(m_theme);
+        m_panes[i].columnsDelegate->setTheme(m_theme);
     }
     if (m_splitButton)
         m_splitButton->setIcon(glyphIcon(Glyph::Split, m_theme.fg));
@@ -1990,6 +2065,7 @@ void MainWindow::loadSettings()
         m_pane->detailView->header()->restoreState(settings.value("view/listHeader").toByteArray());
     m_listColumns = settings.value("view/listColumns").toStringList();
     m_expandFolders = settings.value("view/expandFolders", false).toBool();
+    m_listColumnCount = qBound(1, settings.value("view/listColumnCount", 1).toInt(), 4);
     applyExpandFolders();
     applyListColumns(); // after restoreState: an older saved header knows only 4 columns
         fitListColumns(); // the saved layout may hide columns this width has room for
@@ -2316,11 +2392,12 @@ void MainWindow::setGridMode(bool grid)
     if (m_analyzeButton)
         m_analyzeButton->setChecked(false);
     m_pane->grid = grid;
-    m_pane->model->setTreeEnabled(m_expandFolders && !grid); // the grid shows only the open folder
-    QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : m_pane->detailView;
+    // The grid and the columns show only the open folder.
+    m_pane->model->setTreeEnabled(m_expandFolders && !grid && m_listColumnCount == 1);
+    QAbstractItemView *next = grid ? static_cast<QAbstractItemView *>(m_pane->iconView) : listView();
     const bool hadFocus = m_pane->view && m_pane->view->hasFocus();
     const QModelIndex current = m_pane->view ? m_pane->view->currentIndex() : QModelIndex();
-    if (!grid) {
+    if (next == m_pane->detailView) {
         // The grid selects only the first column; the table selects rows.
         QItemSelection rows;
         for (const QModelIndex &index : selectedViewIndexes())
@@ -2439,7 +2516,9 @@ void MainWindow::applyZoom()
 {
     m_pane->gridDelegate->setIconSize(FileItemDelegate::gridSizes().at(m_pane->gridZoom));
     m_pane->listDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
+    m_pane->columnsDelegate->setIconSize(FileItemDelegate::listSizes().at(m_pane->listZoom));
     m_pane->iconView->setGridSize(m_pane->gridDelegate->gridCellSize(m_pane->iconView->fontMetrics()));
+    fitColumnCells();
     // Keep what you were looking at in view.
     const QModelIndex current = m_pane->view->currentIndex();
     if (current.isValid())
@@ -2683,9 +2762,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     case QEvent::DragLeave:
     case QEvent::Drop:
         if (isFileViewport(watched))
-            return handleViewDrag(watched == m_pane->iconView->viewport()
-                                      ? static_cast<QAbstractItemView *>(m_pane->iconView)
-                                      : m_pane->detailView,
+            return handleViewDrag(watched == m_pane->iconView->viewport()       ? static_cast<QAbstractItemView *>(m_pane->iconView)
+                                  : watched == m_pane->columnView->viewport() ? static_cast<QAbstractItemView *>(m_pane->columnView)
+                                                                              : m_pane->detailView,
                                   event);
         if (m_sidebar && watched == m_sidebar->viewport())
             return handleSidebarDrag(event);
@@ -2840,7 +2919,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         return true;
     } else if (m_pane->view
                && ((isFileViewport(watched) && event->type() == QEvent::MouseButtonPress)
-                   || ((watched == m_pane->iconView || watched == m_pane->detailView)
+                   || ((watched == m_pane->iconView || watched == m_pane->detailView || watched == m_pane->columnView)
                        && event->type() == QEvent::KeyPress))) {
         m_pane->pendingSelection.clear();
         m_pane->pendingRename.clear();
@@ -2870,6 +2949,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 return true;
         }
     }
+    if (m_pane->columnView && watched == m_pane->columnView->viewport() && event->type() == QEvent::Resize)
+        fitColumnCells(); // the cells are a share of the width
     if (m_rename->isActive() && isFileViewport(watched) && event->type() == QEvent::Paint)
         m_rename->reposition(); // item positions are final when the view paints
     if (m_pane->viewStack && watched == m_pane->viewStack && event->type() == QEvent::Resize) {
@@ -3759,7 +3840,9 @@ QRect MainWindow::nameRectOf(const QString &path) const
     const QModelIndex index = toView(m_pane->model->indexForPath(path));
     if (!index.isValid())
         return {};
-    const FileItemDelegate *delegate = m_pane->grid ? m_pane->gridDelegate : m_pane->listDelegate;
+    const FileItemDelegate *delegate = m_pane->grid                         ? m_pane->gridDelegate
+                                       : m_pane->view == m_pane->columnView ? m_pane->columnsDelegate
+                                                                            : m_pane->listDelegate;
     return delegate->nameEditorRect(m_pane->view->visualRect(index), m_pane->view->fontMetrics(), index);
 }
 
@@ -3812,7 +3895,8 @@ QModelIndexList MainWindow::selectedViewIndexes() const
 bool MainWindow::isFileViewport(const QObject *object) const
 {
     return (m_pane->iconView && object == m_pane->iconView->viewport())
-           || (m_pane->detailView && object == m_pane->detailView->viewport());
+           || (m_pane->detailView && object == m_pane->detailView->viewport())
+           || (m_pane->columnView && object == m_pane->columnView->viewport());
 }
 
 void MainWindow::sortBy(int column, Qt::SortOrder order)
@@ -3904,6 +3988,7 @@ void MainWindow::setDropTarget(const QModelIndex &viewIndex)
 {
     m_pane->gridDelegate->setDropTarget(viewIndex);
     m_pane->listDelegate->setDropTarget(viewIndex);
+    m_pane->columnsDelegate->setDropTarget(viewIndex);
     m_pane->view->viewport()->update();
 }
 
@@ -4665,6 +4750,7 @@ void MainWindow::startChooser(const ChooserRequest &request)
                                             : QAbstractItemView::SingleSelection;
     m_pane->iconView->setSelectionMode(selection);
     m_pane->detailView->setSelectionMode(selection);
+    m_pane->columnView->setSelectionMode(selection);
     connect(m_pane->view->selectionModel(), &QItemSelectionModel::selectionChanged, m_chooser, &ChooserMode::selectionChanged);
 
     connect(m_chooser, &ChooserMode::finished, this, [this](uint response, const QVariantMap &results) {

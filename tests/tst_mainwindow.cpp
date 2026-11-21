@@ -147,6 +147,7 @@ private slots:
     void extensionFormsAndAddresses();
     void themesFromFiles();
     void upAndDownButtons();
+    void listInColumns();
     void extensionTreeUnderThePlaces();
 #if defined(ARGONAUT_DBUS)
     void chooserOpenReturnsTheSelection();
@@ -892,6 +893,57 @@ void TestMainWindow::sidebarListsPlacesAndFollowsBookmarks()
 
     Bookmarks::remove(folder);
     QTRY_VERIFY_WITH_TIMEOUT(!rowOf(folder), 5000);
+}
+
+// Preferences → List View → Columns: the list as names in cells side by
+// side, read across; the selection is the same one, so commands act on it.
+void TestMainWindow::listInColumns()
+{
+    const auto reset = qScopeGuard([] { MainWindow::setListColumnCountEverywhere(1); });
+    for (const char *name : {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"})
+        make(name);
+    open(m_dir);
+    w->m_listAct->trigger();
+    QCOMPARE(w->m_pane->view, static_cast<QAbstractItemView *>(w->m_pane->detailView));
+
+    MainWindow::setListColumnCountEverywhere(3);
+    QCOMPARE(w->m_pane->view, static_cast<QAbstractItemView *>(w->m_pane->columnView));
+    QVERIFY(w->m_pane->columnView->isVisible());
+    QVERIFY(!w->m_pane->model->isTreeActive()); // folders don't open in place in columns
+    auto rectOf = [&](const char *name) {
+        return w->m_pane->view->visualRect(w->toView(w->m_pane->model->indexForPath(m_dir + '/' + name)));
+    };
+    QTRY_VERIFY(rectOf("a.txt").isValid());
+    const int third = w->m_pane->columnView->viewport()->width() / 3;
+    QVERIFY(qAbs(rectOf("a.txt").width() - third) <= 8); // (the room Qt keeps for a scrollbar)
+    QCOMPARE(rectOf("b.txt").top(), rectOf("a.txt").top()); // a b c on the first line…
+    QCOMPARE(rectOf("c.txt").top(), rectOf("a.txt").top());
+    QVERIFY(rectOf("b.txt").left() > rectOf("a.txt").left());
+    QVERIFY(rectOf("d.txt").top() > rectOf("a.txt").top()); // …d under a
+    QCOMPARE(rectOf("d.txt").left(), rectOf("a.txt").left());
+
+    // The cells follow the width.
+    w->resize(1400, 700);
+    QTRY_VERIFY(rectOf("a.txt").width() > third + 100);
+    QCOMPARE(rectOf("c.txt").top(), rectOf("a.txt").top());
+
+    // Moving to the trash acts on what is selected here, and only that.
+    select({m_dir + "/b.txt"});
+    QCOMPARE(w->selectedPaths(), QStringList{m_dir + "/b.txt"});
+    runJob([&] { w->m_trashAct->trigger(); });
+    QTRY_VERIFY(!QFile::exists(m_dir + "/b.txt"));
+    QVERIFY(QFile::exists(m_dir + "/a.txt") && QFile::exists(m_dir + "/c.txt"));
+
+    // The grid stays the grid; back in the list it is the columns again.
+    w->m_gridAct->trigger();
+    QCOMPARE(w->m_pane->view, static_cast<QAbstractItemView *>(w->m_pane->iconView));
+    w->m_listAct->trigger();
+    QCOMPARE(w->m_pane->view, static_cast<QAbstractItemView *>(w->m_pane->columnView));
+    // One column is the table again, selection kept.
+    select({m_dir + "/c.txt"});
+    MainWindow::setListColumnCountEverywhere(1);
+    QCOMPARE(w->m_pane->view, static_cast<QAbstractItemView *>(w->m_pane->detailView));
+    QCOMPARE(w->selectedPaths(), QStringList{m_dir + "/c.txt"});
 }
 
 // Up selects the folder it left and Down goes back into it; a selected folder

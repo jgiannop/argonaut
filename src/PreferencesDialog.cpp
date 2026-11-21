@@ -249,6 +249,30 @@ PreferencesDialog::PreferencesDialog(QWidget *parent)
     layout->addSpacing(4);
     layout->addWidget(expand);
     layout->addWidget(expandHint);
+    layout->addSpacing(10);
+    auto *columnsRow = new QHBoxLayout;
+    auto *columnsLabel = new QLabel(tr("Columns"), this);
+    auto *columnsChoice = new QComboBox(this);
+    columnsChoice->addItem(tr("One, with size, type and date"), 1);
+    columnsChoice->addItem(tr("Two"), 2);
+    columnsChoice->addItem(tr("Three"), 3);
+    columnsChoice->addItem(tr("Four"), 4);
+    columnsChoice->setCurrentIndex(qMax(0, columnsChoice->findData(QSettings().value("view/listColumnCount", 1).toInt())));
+    columnsRow->addWidget(columnsLabel);
+    columnsRow->addWidget(columnsChoice, 1);
+    auto *columnsHint = new QLabel(tr("Lay the list out in columns side by side: an icon, the name and the size "
+                                      "in each. Folders can't be expanded then."),
+                                   this);
+    columnsHint->setObjectName("prefHint");
+    columnsHint->setWordWrap(true);
+    auto syncExpand = [expand, columnsChoice] { expand->setEnabled(columnsChoice->currentData().toInt() == 1); };
+    syncExpand();
+    connect(columnsChoice, &QComboBox::currentIndexChanged, this, [columnsChoice, syncExpand] {
+        MainWindow::setListColumnCountEverywhere(columnsChoice->currentData().toInt());
+        syncExpand();
+    });
+    layout->addLayout(columnsRow);
+    layout->addWidget(columnsHint);
 
     // The cross-fade when the folder changes.
     layout->addSpacing(18);

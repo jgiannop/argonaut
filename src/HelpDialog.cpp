@@ -336,6 +336,11 @@ Search, the Trash, Recent and Starred always show a plain list.</p>
 <h2>Columns</h2>
 <p>The list shows Name, Size, Type and Modified. Right-click the column header to add <b>Owner</b>,
 <b>Group</b> and <b>Permissions</b>.</p>
+<h2>The list in columns</h2>
+<p>In Preferences ([[Ctrl+,]]) → List View, <b>Columns</b> lays the list out in two, three or four columns
+side by side: each item is an icon, its name and its size, read across and then down. Everything else works
+as in the list: selecting, renaming, dragging, the arrow keys. Folders can't be opened in place there, and
+the order is chosen with <b>View → Sort</b>. Choose <b>One</b> to have the table with its columns again.</p>
 <h2>Fade between folders</h2>
 <p>When you open another folder, the old one fades into the new one for a moment. Nothing loads later because
 of it, and it steps aside when you go through folders quickly. <b>Preferences → Motion</b> switches it on or

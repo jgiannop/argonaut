@@ -15,6 +15,8 @@ class Thumbnailer;
 //  Grid: big icon/thumbnail, name wrapped to 3 lines (middle-elided),
 //        rounded hover/selection tile.
 //  List: small icon, name, and size/date on the right.
+//  Columns (the list laid out in columns): each item a row of its own cell,
+//        small icon, name and its size at the right.
 class FileItemDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
@@ -29,6 +31,9 @@ public:
     FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent = nullptr);
 
     void setGridMode(bool grid);
+    // The list in columns: items in cells side by side, one row each.
+    void setColumnsMode();
+    bool isColumnsMode() const { return m_columns; }
     // Zoom. Views re-lay out themselves (sizeHintChanged), keeping the selection.
     void setIconSize(int px);
     int iconSize() const { return m_iconSize; }
@@ -38,6 +43,8 @@ public:
     // Folder under a drag in progress: drawn highlighted ("drop here").
     void setDropTarget(const QModelIndex &index) { m_dropTarget = index; }
     QSize gridCellSize(const QFontMetrics &fm) const;
+    // A cell of the list in `count` columns across `width` pixels.
+    QSize columnCellSize(const QFontMetrics &fm, int width, int count) const;
     // Where the inline rename field goes for an item drawn in `itemRect`
     // (`index` gives the tree indentation in the list).
     QRect nameEditorRect(const QRect &itemRect, const QFontMetrics &fm,
@@ -57,6 +64,11 @@ private:
                    const QModelIndex &index) const;
     void paintList(QPainter *painter, const QStyleOptionViewItem &option,
                    const QModelIndex &index) const;
+    void paintColumnsCell(QPainter *painter, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const;
+    // An extension's mark at the right end of `nameRect`, which loses that room.
+    void paintMarkAtRight(QPainter *painter, QRect &nameRect, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const;
     void paintIcon(QPainter *painter, const QRect &rect, const QModelIndex &index) const;
     void paintExpander(QPainter *painter, const QRect &rect, bool expanded) const;
     QPixmap renderThumbnail(const QPixmap &thumb, const QSize &box, qreal dpr) const;
@@ -74,6 +86,7 @@ private:
     Thumbnailer *m_thumbnailer;
     Theme m_theme;
     bool m_grid = true;
+    bool m_columns = false;
     int m_iconSize = DefaultGridIconSize;
     QPersistentModelIndex m_dropTarget;
     mutable QHash<QString, QStringList> m_wrapCache;

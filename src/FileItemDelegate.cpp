@@ -4,6 +4,7 @@
 #include "Thumbnailer.h"
 
 #include <QAbstractItemView>
+#include <QListView>
 #include <QPainter>
 #include <QPainterPath>
 #include <QTextLayout>
@@ -17,6 +18,7 @@ constexpr int GridMaxLines = 3;
 constexpr int GridPad = 6;
 constexpr int ListInset = 6;   // gap between the row highlight and the view edge
 constexpr int ListTextPad = 10;
+constexpr int ColumnsInset = 3; // gap between a cell's highlight and the next cell
 } // namespace
 
 FileItemDelegate::FileItemDelegate(Thumbnailer *thumbnailer, QObject *parent)
@@ -40,6 +42,13 @@ const QList<int> &FileItemDelegate::listSizes()
 void FileItemDelegate::setGridMode(bool grid)
 {
     m_grid = grid;
+    m_columns = false;
+}
+
+void FileItemDelegate::setColumnsMode()
+{
+    m_grid = false;
+    m_columns = true;
 }
 
 void FileItemDelegate::setIconSize(int px)
@@ -65,9 +74,15 @@ QSize FileItemDelegate::gridCellSize(const QFontMetrics &fm) const
     return QSize(width, GridPad + m_iconSize + GridPad + GridMaxLines * fm.lineSpacing() + 2 * GridPad);
 }
 
+QSize FileItemDelegate::columnCellSize(const QFontMetrics &fm, int width, int count) const
+{
+    const int height = std::max({36, fm.height() + 14, m_iconSize + 12});
+    return QSize(qMax(120, width / qMax(1, count)), height);
+}
+
 int FileItemDelegate::treeIndent(const QModelIndex &index) const
 {
-    if (m_grid || !index.isValid())
+    if (m_grid || m_columns || !index.isValid())
         return 0;
     const int depth = index.data(DirectoryModel::TreeDepthRole).toInt();
     return depth < 0 ? 0 : (depth + 1) * TreeStep; // room for the arrow, then one step per level
@@ -75,7 +90,7 @@ int FileItemDelegate::treeIndent(const QModelIndex &index) const
 
 QRect FileItemDelegate::expanderRect(const QRect &cellRect, const QModelIndex &index) const
 {
-    if (m_grid || index.column() != 0 || !index.data(DirectoryModel::ExpandableRole).toBool())
+    if (m_grid || m_columns || index.column() != 0 || !index.data(DirectoryModel::ExpandableRole).toBool())
         return {};
     const int depth = index.data(DirectoryModel::TreeDepthRole).toInt();
     const int left = cellRect.left() + ListInset + 4 + depth * TreeStep;
@@ -115,8 +130,9 @@ QRect FileItemDelegate::nameEditorRect(const QRect &itemRect, const QFontMetrics
         const int width = qMax(cell.width(), 190);
         return QRect(cell.center().x() - width / 2 + 1, top, width, height);
     }
-    // List: `itemRect` is the Name cell; the field covers the name part.
-    const int left = itemRect.left() + ListInset + 10 + treeIndent(index) + m_iconSize + 12 - 6;
+    // List: `itemRect` is the Name cell (a whole cell in columns); the field covers the name part.
+    const int inset = m_columns ? ColumnsInset : ListInset;
+    const int left = itemRect.left() + inset + 10 + treeIndent(index) + m_iconSize + 12 - 6;
     return QRect(left, itemRect.center().y() - height / 2 + 1,
                  qMax(120, itemRect.right() - 4 - left), height);
 }
@@ -125,6 +141,11 @@ QSize FileItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMode
 {
     if (m_grid)
         return gridCellSize(option.fontMetrics);
+    if (m_columns) { // a whole cell of the view's grid
+        if (const auto *list = qobject_cast<const QListView *>(option.widget); list && list->gridSize().isValid())
+            return list->gridSize();
+        return columnCellSize(option.fontMetrics, 0, 1);
+    }
     const int height = std::max({36, option.fontMetrics.height() + 14, m_iconSize + 12});
     // Width matters only for "fit column to contents".
     const QString text = index.data().toString();
@@ -144,6 +165,8 @@ void FileItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
     painter->setRenderHint(QPainter::SmoothPixmapTransform);
     if (m_grid)
         paintGrid(painter, opt, index);
+    else if (m_columns)
+        paintColumnsCell(painter, opt, index);
     else
         paintList(painter, opt, index);
     painter->restore();
@@ -235,29 +258,7 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
         const int left = iconRect.right() + 12;
         QRect nameRect(left, option.rect.top(), qMax(0, option.rect.right() - left - 4),
                        option.rect.height());
-        const QVariant mark = index.data(DirectoryModel::BadgeRole);
-        if (mark.isValid()) { // an extension's letter at the right end of the name cell
-            const Extensions::Badge badge = mark.value<Extensions::Badge>();
-            const QString letter = badge.text;
-            const QColor markColor = badgeColor(badge.color);
-            QFont bold = option.font;
-            bold.setBold(true);
-            const int w = QFontMetrics(bold).horizontalAdvance(letter.isEmpty() ? QStringLiteral("M") : letter) + 10;
-            const QRect tag(nameRect.right() - w + 1, nameRect.top(), w, nameRect.height());
-            nameRect.setRight(tag.left() - 4);
-            painter->save();
-            if (letter.isEmpty()) { // a folder with changes inside: a dot
-                painter->setRenderHint(QPainter::Antialiasing);
-                painter->setPen(Qt::NoPen);
-                painter->setBrush(markColor);
-                painter->drawEllipse(QRectF(tag.center().x() - 3, tag.center().y() - 2, 6, 6));
-            } else {
-                painter->setFont(bold);
-                painter->setPen(markColor);
-                painter->drawText(tag, Qt::AlignCenter, letter);
-            }
-            painter->restore();
-        }
+        paintMarkAtRight(painter, nameRect, option, index);
         painter->setPen(m_theme.fg);
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           fm.elidedText(option.text, Qt::ElideMiddle, nameRect.width()));
@@ -267,6 +268,76 @@ void FileItemDelegate::paintList(QPainter *painter, const QStyleOptionViewItem &
     painter->setPen(m_theme.dimFg);
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
                       fm.elidedText(option.text, Qt::ElideRight, textRect.width()));
+}
+
+void FileItemDelegate::paintMarkAtRight(QPainter *painter, QRect &nameRect, const QStyleOptionViewItem &option,
+                                        const QModelIndex &index) const
+{
+    const QVariant mark = index.data(DirectoryModel::BadgeRole);
+    if (!mark.isValid())
+        return;
+    const Extensions::Badge badge = mark.value<Extensions::Badge>();
+    const QString letter = badge.text;
+    const QColor markColor = badgeColor(badge.color);
+    QFont bold = option.font;
+    bold.setBold(true);
+    const int w = QFontMetrics(bold).horizontalAdvance(letter.isEmpty() ? QStringLiteral("M") : letter) + 10;
+    const QRect tag(nameRect.right() - w + 1, nameRect.top(), w, nameRect.height());
+    nameRect.setRight(tag.left() - 4);
+    painter->save();
+    if (letter.isEmpty()) { // a folder with changes inside: a dot
+        painter->setRenderHint(QPainter::Antialiasing);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(markColor);
+        painter->drawEllipse(QRectF(tag.center().x() - 3, tag.center().y() - 2, 6, 6));
+    } else {
+        painter->setFont(bold);
+        painter->setPen(markColor);
+        painter->drawText(tag, Qt::AlignCenter, letter);
+    }
+    painter->restore();
+}
+
+// The list in columns: one cell is a whole row of its own, with both ends
+// of the highlight rounded, the name, and the size (or "12 items") at the right.
+void FileItemDelegate::paintColumnsCell(QPainter *painter, const QStyleOptionViewItem &option,
+                                        const QModelIndex &index) const
+{
+    const QRect cell = option.rect.adjusted(ColumnsInset, 1, -ColumnsInset, -1);
+    const bool dropHere = m_dropTarget.isValid() && m_dropTarget.row() == index.row();
+    const bool selected = (option.state & QStyle::State_Selected) || dropHere;
+    const bool hovered = option.state & QStyle::State_MouseOver;
+    if (selected || hovered) {
+        QPainterPath path;
+        path.addRoundedRect(QRectF(cell), 6, 6);
+        painter->fillPath(path, selected ? m_theme.itemSelected : m_theme.hover);
+        if (dropHere) {
+            painter->setPen(QPen(m_theme.accent, 2));
+            painter->drawPath(path);
+        }
+    }
+    const QFontMetrics &fm = option.fontMetrics;
+    painter->setFont(option.font);
+    const QRect iconRect(cell.left() + 10, cell.center().y() - m_iconSize / 2 + 1, m_iconSize, m_iconSize);
+    paintIcon(painter, iconRect, index);
+    paintContentBadge(painter, iconRect, index);
+    paintAccessBadges(painter, iconRect, index);
+    paintStarBadge(painter, iconRect, index);
+    const int left = iconRect.right() + 12;
+    QRect nameRect(left, cell.top(), qMax(0, cell.right() - left - 8), cell.height());
+    // The size, when the name keeps most of the room.
+    const QString size = index.siblingAtColumn(DirectoryModel::SizeColumn).data().toString();
+    const int sizeWidth = size.isEmpty() ? 0 : fm.horizontalAdvance(size);
+    if (sizeWidth > 0 && sizeWidth * 3 < nameRect.width()) {
+        const QRect sizeRect(nameRect.right() - sizeWidth + 1, nameRect.top(), sizeWidth, nameRect.height());
+        painter->setPen(m_theme.dimFg);
+        painter->drawText(sizeRect, Qt::AlignRight | Qt::AlignVCenter, size);
+        nameRect.setRight(sizeRect.left() - 12);
+    }
+    paintMarkAtRight(painter, nameRect, option, index);
+    painter->setPen(m_theme.fg);
+    painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+                      fm.elidedText(option.text, Qt::ElideMiddle, nameRect.width()));
 }
 
 // Draw `pm` (already at its final size) centred in `rect`, snapped to whole

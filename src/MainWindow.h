@@ -438,8 +438,10 @@ private:
         FileFilterProxy *proxy = nullptr;
         FileItemDelegate *gridDelegate = nullptr;
         FileItemDelegate *listDelegate = nullptr;
+        FileItemDelegate *columnsDelegate = nullptr;
         QListView *iconView = nullptr;
         QTreeView *detailView = nullptr;
+        QListView *columnView = nullptr; // the list in columns (Preferences → List View)
         QStackedWidget *viewStack = nullptr;
         QLabel *floatingBar = nullptr;
         class FadeOverlay *fade = nullptr; // the cross-fade when its folder changes
@@ -447,7 +449,7 @@ private:
         QWidget *container = nullptr; // caption + views, in m_paneSplitter
         QLabel *caption = nullptr;    // split view: the pane's folder
         // State.
-        QAbstractItemView *view = nullptr; // iconView or detailView, whichever shows
+        QAbstractItemView *view = nullptr; // iconView, detailView or columnView, whichever shows
         QString current;                   // the open folder (or a place: "recent:///")
         QStack<QString> back, forward;     // history
         QStringList cameUpFrom;            // the folders Up left, for Down to go back into (last = nearest)
@@ -496,12 +498,21 @@ private:
     // Only the list shows them: switching to the grid closes every folder.
     bool m_expandFolders = false;
     void applyExpandFolders(); // to every pane's model
+    // The list in columns (Preferences, view/listColumnCount: 1 = the table
+    // with Size, Type and Modified; 2–4 = names in that many columns). Like
+    // expandable folders it is the list's, and the two don't go together.
+    int m_listColumnCount = 1;
+    QAbstractItemView *listView() const; // the pane's list: the table or the columns
+    void fitColumnCells();               // the columns' cells to the view's width
+    void applyListColumnCount();
     void updateGitBadge();     // the extension text in the path bar (Git: the branch)
     void refreshGitAll();      // extensions look again: files may have changed elsewhere
     bool handleTreeKey(QKeyEvent *key);
 public:
     // Preferences: turn expandable folders on or off in every window.
     static void setExpandFoldersEverywhere(bool on);
+    // Preferences: the list in `count` columns (1: the table) in every window.
+    static void setListColumnCountEverywhere(int count);
     // Preferences: git badges turned on or off.
 private:
     // Rename, move and trash need a folder you can change: checked exactly,
