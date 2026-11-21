@@ -3,9 +3,16 @@ name: Windows
 # The Windows version: does it build there, and what comes of it (a zip and
 # an installer to try on a Windows machine). On dev too, so that work done
 # for Linux can't break it unnoticed.
+# release.yml calls it too (`workflow_call`, release: true) for the files
+# of a release; the tests are left out then.
 on:
   push:
     branches: [dev, windows-port]
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -106,7 +113,7 @@ jobs:
       # The tests, where they stand on Windows: built and run to see what there
       # is to do. Nothing here fails the job yet.
       - name: Tests (to see where they stand)
-        if: always()
+        if: ${{ always() && !inputs.release }}
         continue-on-error: true
         shell: pwsh
         run: |

@@ -1,8 +1,8 @@
 name: Release
 
 # Push a tag like v0.4.0 (matching project(argonaut VERSION ...) in
-# CMakeLists.txt) to build the .deb packages and publish them as a GitHub
-# Release.
+# CMakeLists.txt) to build the .deb packages and the Windows zip and
+# installer (windows.yml) and publish them as a GitHub Release.
 #
 # A .deb names the libraries it needs as the system it was built on names
 # them, and those names differ between releases of Ubuntu and Debian (Qt's
@@ -90,8 +90,13 @@ jobs:
           path: out/*.deb
           if-no-files-found: error
 
+  windows:
+    uses: ./.github/workflows/windows.yml
+    with:
+      release: true
+
   publish:
-    needs: deb
+    needs: [deb, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -99,6 +104,21 @@ jobs:
           pattern: deb-*
           merge-multiple: true
           path: out
+
+      # The Windows program as a zip (unpack and run argonaut.exe) and its installer.
+      - uses: actions/download-artifact@v4
+        with:
+          name: argonaut-windows
+          path: windows/argonaut
+      - uses: actions/download-artifact@v4
+        with:
+          name: argonaut-windows-setup
+          path: windows/setup
+      - name: The Windows files
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          (cd windows && zip -qr "../out/argonaut-${version}-windows-x64.zip" argonaut)
+          cp windows/setup/*.exe out/
 
       - name: Publish the release
         env:
@@ -109,8 +129,8 @@ jobs:
         run: |
           ls -l out
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" out/*.deb --clobber
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" out/*.deb \
+            gh release create "$GITHUB_REF_NAME" out/* \
               --title "Argonaut ${GITHUB_REF_NAME#v}" --generate-notes
           fi
