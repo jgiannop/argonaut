@@ -1,5 +1,7 @@
 #include "TerminalWidget.h"
 
+#include "Pty.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
@@ -15,21 +17,8 @@
 #include <QPainter>
 #include <QProcessEnvironment>
 #include <QScrollBar>
-#include <QSocketNotifier>
 #include <QTimer>
-
-#include <cerrno>
-#include <csignal>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/wait.h>
-#include <termios.h>
-#include <unistd.h>
-#if defined(Q_OS_MACOS)
-#include <util.h>
-#else
-#include <pty.h>
-#endif
+#include <QUrl>
 
 namespace {
 
@@ -75,11 +64,14 @@ VTermScreenCell blankCell()
     return cell;
 }
 
-QByteArray shellQuote(const QString &path)
+// A folder a shell says it is in, as the rest of the program writes it; empty
+// when it isn't one.
+QString folderNamed(const QString &path)
 {
-    QByteArray quoted = QFile::encodeName(path);
-    quoted.replace('\'', "'\\''");
-    return '\'' + quoted + '\'';
+    if (path.isEmpty())
+        return {};
+    const QFileInfo info(QDir::fromNativeSeparators(path));
+    return info.isAbsolute() && info.isDir() ? info.canonicalFilePath() : QString();
 }
 
 } // namespace
@@ -93,6 +85,15 @@ TerminalWidget::TerminalWidget(QWidget *parent)
     setCursor(Qt::IBeamCursor);
 
     m_font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+#if defined(Q_OS_WIN)
+    // Windows' "fixed font" is Courier New; its terminals use these.
+    for (const char *family : {"Cascadia Mono", "Consolas"}) {
+        if (QFontDatabase::hasFamily(QString::fromLatin1(family))) {
+            m_font = QFont(QString::fromLatin1(family));
+            break;
+        }
+    }
+#endif
     m_font.setStyleHint(QFont::Monospace);
     if (m_font.pointSizeF() < 10.5)
         m_font.setPointSizeF(10.5);
@@ -120,6 +121,9 @@ TerminalWidget::TerminalWidget(QWidget *parent)
     callbacks.sb_pushline = &TerminalWidget::onPushLine;
     callbacks.sb_popline = &TerminalWidget::onPopLine;
     vterm_screen_set_callbacks(m_screen, &callbacks, this);
+    static VTermStateFallbacks fallbacks{};
+    fallbacks.osc = &TerminalWidget::onOsc;
+    vterm_screen_set_unrecognised_fallbacks(m_screen, &fallbacks, this);
     vterm_screen_set_damage_merge(m_screen, VTERM_DAMAGE_SCROLL);
     vterm_screen_enable_altscreen(m_screen, 1);
     vterm_screen_reset(m_screen, 1);
@@ -128,20 +132,8 @@ TerminalWidget::TerminalWidget(QWidget *parent)
 
 TerminalWidget::~TerminalWidget()
 {
-    if (m_pid > 0) {
-        ::kill(-m_pid, SIGHUP); // the shell's whole session
-        ::kill(m_pid, SIGHUP);
-    }
-    if (m_ptyFd >= 0)
-        ::close(m_ptyFd);
-    if (m_pid > 0) {
-        for (int i = 0; i < 20 && ::waitpid(m_pid, nullptr, WNOHANG) == 0; ++i)
-            ::usleep(10000);
-        if (::waitpid(m_pid, nullptr, WNOHANG) == 0) {
-            ::kill(m_pid, SIGKILL);
-            ::waitpid(m_pid, nullptr, 0);
-        }
-    }
+    delete m_pty; // ends the shell; nothing more comes for libvterm
+    m_pty = nullptr;
     vterm_free(m_vt);
 }
 
@@ -149,89 +141,65 @@ TerminalWidget::~TerminalWidget()
 
 bool TerminalWidget::start(const QString &directory)
 {
-    if (m_pid > 0)
+    if (isRunning())
         return true;
     // A fresh screen for a new session.
     m_scrollback.clear();
     m_scrollOffset = 0;
     m_hasSelection = false;
+    m_reportedDirectory.clear();
     vterm_screen_reset(m_screen, 1);
     updateScrollBar();
     update();
 
-    // Prepare everything before fork(): after it, in a multi-threaded
-    // program, the child may only call async-signal-safe functions.
-    QByteArray shell = qgetenv("SHELL");
-    if (shell.isEmpty() || ::access(shell.constData(), X_OK) != 0)
-        shell = "/bin/sh";
-    const QByteArray argv0 = QFileInfo(QString::fromLocal8Bit(shell)).fileName().toLocal8Bit();
-    const QByteArray dir = QFile::encodeName(directory);
-
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("TERM", "xterm-256color");
-    env.insert("COLORTERM", "truecolor");
-    env.insert("TERM_PROGRAM", "argonaut");
-    env.insert("PWD", directory);
-    QList<QByteArray> envStrings;
-    for (const QString &entry : env.toStringList())
-        envStrings.append(entry.toLocal8Bit());
-    QVector<char *> envp;
-    for (QByteArray &entry : envStrings)
-        envp.append(entry.data());
-    envp.append(nullptr);
-    char *argv[] = {const_cast<char *>(argv0.constData()), nullptr};
-
-    winsize size{};
-    size.ws_row = ushort(m_rows);
-    size.ws_col = ushort(m_cols);
-    int master = -1;
-    const pid_t pid = ::forkpty(&master, nullptr, nullptr, &size);
-    if (pid < 0)
+    delete m_pty;
+    m_pty = new Pty(this);
+    connect(m_pty, &Pty::received, this, [this](const QByteArray &bytes) {
+        vterm_input_write(m_vt, bytes.constData(), size_t(bytes.size()));
+        m_quiet.output();
+        vterm_screen_flush_damage(m_screen);
+    });
+    connect(m_pty, &Pty::finished, this, &TerminalWidget::childExited);
+    if (!m_pty->start(directory, m_rows, m_cols)) {
+        delete m_pty;
+        m_pty = nullptr;
         return false;
-    if (pid == 0) {
-        // Child: becomes the shell.
-        if (::chdir(dir.constData()) != 0 && ::chdir("/") != 0) {
-            // nowhere to go: the shell starts wherever we are
-        }
-        for (int fd = 3; fd < 1024; ++fd)
-            ::close(fd);
-        ::execve(shell.constData(), argv, envp.data());
-        ::_exit(127);
     }
-
-    m_pid = int(pid);
-    m_ptyFd = master;
-    ::fcntl(m_ptyFd, F_SETFL, ::fcntl(m_ptyFd, F_GETFL) | O_NONBLOCK);
-    m_readNotifier = new QSocketNotifier(m_ptyFd, QSocketNotifier::Read, this);
-    connect(m_readNotifier, &QSocketNotifier::activated, this, &TerminalWidget::readPty);
-    m_writeNotifier = new QSocketNotifier(m_ptyFd, QSocketNotifier::Write, this);
-    m_writeNotifier->setEnabled(false);
-    connect(m_writeNotifier, &QSocketNotifier::activated, this, &TerminalWidget::flushPending);
     return true;
+}
+
+bool TerminalWidget::isRunning() const
+{
+    return m_pty && m_pty->isRunning();
 }
 
 bool TerminalWidget::isShellIdle() const
 {
-    return m_pid > 0 && m_ptyFd >= 0 && ::tcgetpgrp(m_ptyFd) == m_pid;
+    return isRunning() && m_pty->isIdle();
 }
 
 QString TerminalWidget::shellDirectory() const
 {
-#if defined(Q_OS_LINUX)
-    if (m_pid > 0)
-        return QFileInfo(QStringLiteral("/proc/%1/cwd").arg(m_pid)).canonicalFilePath();
-#endif
-    return {};
+    if (!isRunning())
+        return {};
+    const QString known = m_pty->currentDirectory();
+    return known.isEmpty() ? m_reportedDirectory : known;
 }
 
 bool TerminalWidget::changeDirectory(const QString &directory)
 {
     if (!isShellIdle())
         return false; // never type into a running program
-    if (QDir::cleanPath(shellDirectory()) == QDir::cleanPath(directory))
+    const QString where = shellDirectory();
+    if (QDir::cleanPath(where) == QDir::cleanPath(directory))
         return true;
-    // Ctrl+E Ctrl+U clears whatever is typed at the prompt; the leading
-    // space keeps the command out of bash's history (HISTCONTROL=ignorespace).
+    const QByteArray command = m_pty->changeDirectoryCommand(directory);
+    if (where.isEmpty()) {
+        // Nothing says where the shell is, so nothing could say the line
+        // has done its work: it is typed where it can be seen.
+        writePty(command);
+        return true;
+    }
     // The typed line isn't to be seen (QuietCommand.h): the picture waits
     // until the shell has taken it, then the line is taken out.
     m_quietTarget = QFileInfo(directory).canonicalFilePath();
@@ -247,7 +215,7 @@ bool TerminalWidget::changeDirectory(const QString &directory)
         });
     }
     m_quietTimer->start();
-    writePty("\x05\x15 cd -- " + shellQuote(directory) + "\r");
+    writePty(command);
     return true;
 }
 
@@ -258,7 +226,7 @@ void TerminalWidget::endQuiet()
     if (!m_quiet.active)
         return;
     if (m_vt)
-        m_quiet.finish(m_vt, m_pid > 0 && isShellIdle() && shellDirectory() == m_quietTarget);
+        m_quiet.finish(m_vt, isShellIdle() && shellDirectory() == m_quietTarget);
     m_quiet.active = false;
     if (m_screen)
         vterm_screen_flush_damage(m_screen);
@@ -266,64 +234,17 @@ void TerminalWidget::endQuiet()
     update();
 }
 
-void TerminalWidget::readPty()
-{
-    char buffer[65536];
-    while (true) {
-        const ssize_t n = ::read(m_ptyFd, buffer, sizeof buffer);
-        if (n > 0) {
-            vterm_input_write(m_vt, buffer, size_t(n));
-            m_quiet.output();
-            continue;
-        }
-        if (n < 0 && (errno == EAGAIN || errno == EINTR))
-            break;
-        endQuiet();
-        childExited(); // EOF or EIO: the shell is gone
-        return;
-    }
-    vterm_screen_flush_damage(m_screen);
-}
-
 void TerminalWidget::writePty(const QByteArray &bytes)
 {
-    if (m_ptyFd < 0)
-        return;
-    m_pending += bytes;
-    flushPending();
-}
-
-void TerminalWidget::flushPending()
-{
-    while (!m_pending.isEmpty()) {
-        const ssize_t n = ::write(m_ptyFd, m_pending.constData(), size_t(m_pending.size()));
-        if (n > 0) {
-            m_pending.remove(0, qsizetype(n));
-            continue;
-        }
-        if (n < 0 && errno == EINTR)
-            continue;
-        break; // EAGAIN: wait until the pty can take more
-    }
-    if (m_writeNotifier)
-        m_writeNotifier->setEnabled(!m_pending.isEmpty());
+    if (isRunning())
+        m_pty->write(bytes);
 }
 
 void TerminalWidget::childExited()
 {
-    if (m_readNotifier)
-        m_readNotifier->setEnabled(false);
-    if (m_writeNotifier)
-        m_writeNotifier->setEnabled(false);
-    if (m_ptyFd >= 0)
-        ::close(m_ptyFd);
-    m_ptyFd = -1;
-    if (m_pid > 0 && ::waitpid(m_pid, nullptr, WNOHANG) == 0) {
-        ::kill(m_pid, SIGHUP);
-        ::waitpid(m_pid, nullptr, 0);
-    }
-    m_pid = -1;
-    m_pending.clear();
+    endQuiet();
+    m_pty->deleteLater(); // we are inside its signal
+    m_pty = nullptr;
     emit finished();
 }
 
@@ -367,6 +288,13 @@ int TerminalWidget::onTermProp(VTermProp prop, VTermValue *value, void *user)
         self->m_titleBuffer.append(value->string.str, qsizetype(value->string.len));
         if (value->string.final) {
             self->m_title = QString::fromUtf8(self->m_titleBuffer);
+#if defined(Q_OS_WIN)
+            // Our prompts make the title the shell's folder (PtyWindows.cpp),
+            // and ConPTY passes a title on whatever else it does with OSCs.
+            const QString folder = folderNamed(self->m_title);
+            if (!folder.isEmpty())
+                self->m_reportedDirectory = folder;
+#endif
             emit self->titleChanged(self->m_title);
         }
         break;
@@ -378,6 +306,39 @@ int TerminalWidget::onTermProp(VTermProp prop, VTermValue *value, void *user)
 
 int TerminalWidget::onBell(void *)
 {
+    return 1;
+}
+
+// What the shell says about where it is, where the system can't tell us
+// (Windows, macOS): OSC 7 (file://host/path, as VTE's shells and zsh on
+// macOS send it) and OSC 9;9 (path; Windows Terminal's, which our PowerShell
+// and cmd prompts send: PtyWindows.cpp).
+int TerminalWidget::onOsc(int command, VTermStringFragment frag, void *user)
+{
+    auto *self = static_cast<TerminalWidget *>(user);
+    if (command != 7 && command != 9)
+        return 0;
+    if (frag.initial)
+        self->m_oscBuffer.clear();
+    if (self->m_oscBuffer.size() < 8192)
+        self->m_oscBuffer.append(frag.str, qsizetype(frag.len));
+    if (!frag.final)
+        return 1;
+    const QString text = QString::fromUtf8(self->m_oscBuffer);
+    self->m_oscBuffer.clear();
+    QString path;
+    if (command == 7) {
+        path = QUrl(text).toLocalFile();
+    } else if (text.startsWith(QLatin1String("9;"))) {
+        path = text.mid(2);
+        if (path.size() >= 2 && path.startsWith(QLatin1Char('"')) && path.endsWith(QLatin1Char('"')))
+            path = path.mid(1, path.size() - 2);
+    } else {
+        return 0; // another OSC 9 (a notification): not ours
+    }
+    const QString folder = folderNamed(path);
+    if (!folder.isEmpty())
+        self->m_reportedDirectory = folder;
     return 1;
 }
 
@@ -459,12 +420,8 @@ void TerminalWidget::updateGridSize()
     m_cols = cols;
     vterm_set_size(m_vt, m_rows, m_cols);
     vterm_screen_flush_damage(m_screen);
-    if (m_ptyFd >= 0) {
-        winsize size{};
-        size.ws_row = ushort(m_rows);
-        size.ws_col = ushort(m_cols);
-        ::ioctl(m_ptyFd, TIOCSWINSZ, &size);
-    }
+    if (isRunning())
+        m_pty->resize(m_rows, m_cols);
     updateScrollBar();
     update();
 }
@@ -593,7 +550,7 @@ void TerminalWidget::paintEvent(QPaintEvent *)
     }
 
     // Cursor: a block when focused, an outline otherwise.
-    if (m_cursorVisible && m_scrollOffset == 0 && m_pid > 0) {
+    if (m_cursorVisible && m_scrollOffset == 0 && isRunning()) {
         const QRect box(Padding + m_cursor.col * m_cellWidth, Padding + m_cursor.row * m_cellHeight,
                         m_cellWidth, m_cellHeight);
         if (hasFocus()) {
@@ -666,7 +623,7 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    if (m_pid <= 0)
+    if (!isRunning())
         return;
     scrollToBottom();
     m_hasSelection = false;
@@ -760,7 +717,7 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
 // Composed text from input methods (dead keys, Greek accents, CJK…).
 void TerminalWidget::inputMethodEvent(QInputMethodEvent *event)
 {
-    if (m_pid > 0 && !event->commitString().isEmpty()) {
+    if (isRunning() && !event->commitString().isEmpty()) {
         scrollToBottom();
         for (const char32_t c : event->commitString().toUcs4())
             vterm_keyboard_unichar(m_vt, uint32_t(c), VTERM_MOD_NONE);
@@ -829,7 +786,7 @@ int vtermButton(Qt::MouseButton button)
 // is still selected here, as in other terminals).
 bool TerminalWidget::sendsMouseTo(Qt::KeyboardModifiers mods) const
 {
-    return m_vt && m_pid > 0 && m_mouseMode != VTERM_PROP_MOUSE_NONE && !(mods & Qt::ShiftModifier);
+    return m_vt && isRunning() && m_mouseMode != VTERM_PROP_MOUSE_NONE && !(mods & Qt::ShiftModifier);
 }
 
 // libvterm writes the report in the form the program asked for (SGR, …),
@@ -936,7 +893,7 @@ void TerminalWidget::wheelEvent(QWheelEvent *event)
     // a notch at a time (a touchpad's small steps are added up). Without the
     // mouse it gets arrow keys, three a notch, as GNOME Terminal does.
     const bool toMouse = sendsMouseTo(event->modifiers());
-    if (m_vt && m_pid > 0 && (toMouse || m_altScreen)) {
+    if (m_vt && isRunning() && (toMouse || m_altScreen)) {
         m_wheelRest += event->angleDelta().y();
         while (qAbs(m_wheelRest) >= 120) {
             const bool up = m_wheelRest > 0;
@@ -1005,7 +962,7 @@ void TerminalWidget::copySelection()
 // won't run pasted lines until you press Enter.
 void TerminalWidget::pasteText(const QString &text)
 {
-    if (m_pid <= 0 || text.isEmpty())
+    if (!isRunning() || text.isEmpty())
         return;
     scrollToBottom();
     vterm_keyboard_start_paste(m_vt);

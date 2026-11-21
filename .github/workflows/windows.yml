@@ -48,11 +48,24 @@ jobs:
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libarchive[core,bzip2,lzma,lz4,zstd]:x64-windows"
           if ($LASTEXITCODE -ne 0) { Write-Output "::error title=build: libarchive::vcpkg could not install libarchive"; exit 1 }
 
+      # libvterm, for the terminal panel: no package of it for Windows, so its
+      # release's source, checked against the checksum it had when we chose it,
+      # and built by our CMakeLists.txt (ARGONAUT_VTERM_SOURCE).
+      - name: Get libvterm's source
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://launchpad.net/libvterm/trunk/v0.3/+download/libvterm-0.3.3.tar.gz -OutFile libvterm.tar.gz
+          $sum = (Get-FileHash libvterm.tar.gz -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne "09156f43dd2128bd347cbeebe50d9a571d32c64e0cf18d211197946aff7226e0") { Write-Output "::error title=build: libvterm::the download's checksum is $sum"; exit 1 }
+          tar -xzf libvterm.tar.gz
+          "VTERM_SOURCE=$(($PWD.Path) -replace '\\', '/')/libvterm-0.3.3" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Configure
         shell: pwsh
         run: |
-          cmake --preset windows "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | Tee-Object -FilePath configure.log
-          python .github/scripts/errors_as_notes.py configure.log "build: configuring" "CMake Error|Compress / Extract"
+          cmake --preset windows "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows "-DARGONAUT_VTERM_SOURCE=$env:VTERM_SOURCE" 2>&1 | Tee-Object -FilePath configure.log
+          python .github/scripts/errors_as_notes.py configure.log "build: configuring" "CMake Error|Compress / Extract|Embedded terminal"
+          if (-not (Select-String -Path configure.log -Pattern "Embedded terminal: enabled" -Quiet)) { Write-Output "::error title=build: terminal::the terminal panel is not in the build"; exit 1 }
           exit 0
 
       # Everything is built even after an error, so one run shows all there is to fix.
@@ -117,7 +130,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | Tee-Object -FilePath tests-configure.log
+          cmake -S . -B build/windows-tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows "-DARGONAUT_VTERM_SOURCE=$env:VTERM_SOURCE" 2>&1 | Tee-Object -FilePath tests-configure.log
           cmake --build build/windows-tests -- -k 0 2>&1 | Tee-Object -FilePath tests-build.log
           ctest --test-dir build/windows-tests --timeout 300 --output-on-failure 2>&1 | Tee-Object -FilePath tests-run.log
           python .github/scripts/errors_as_notes.py tests-configure.log "build: tests, configuring" "CMake Error|disabled|not found"

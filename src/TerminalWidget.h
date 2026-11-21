@@ -11,11 +11,12 @@
 
 #include <vterm.h>
 
+class Pty;
 class QScrollBar;
-class QSocketNotifier;
 
 // An embedded terminal: the user's shell on a pseudo-terminal, emulated by
-// libvterm and drawn with QPainter. Unix only (forkpty).
+// libvterm and drawn with QPainter. The pseudo-terminal is `Pty`: forkpty on
+// Unix, ConPTY on Windows.
 class QTimer;
 
 class TerminalWidget : public QWidget
@@ -26,9 +27,9 @@ public:
     explicit TerminalWidget(QWidget *parent = nullptr);
     ~TerminalWidget() override;
 
-    // Start the user's shell ($SHELL) in `directory`.
+    // Start the user's shell in `directory` (Pty.h says which).
     bool start(const QString &directory);
-    bool isRunning() const { return m_pid > 0; }
+    bool isRunning() const;
     // True if the shell is at its prompt (no program running in the foreground).
     bool isShellIdle() const;
     // The shell's current directory (empty if unknown on this platform).
@@ -85,10 +86,9 @@ private:
     static int onPushLine(int cols, const VTermScreenCell *cells, void *user);
     static int onPopLine(int cols, VTermScreenCell *cells, void *user);
     static void onOutput(const char *bytes, size_t length, void *user);
+    static int onOsc(int command, VTermStringFragment frag, void *user);
 
-    void readPty();
     void writePty(const QByteArray &bytes);
-    void flushPending();
     void childExited();
     void updateGridSize();
     void updateScrollBar();
@@ -107,11 +107,11 @@ private:
 
     VTerm *m_vt = nullptr;
     VTermScreen *m_screen = nullptr;
-    int m_ptyFd = -1;
-    int m_pid = -1;
-    QSocketNotifier *m_readNotifier = nullptr;
-    QSocketNotifier *m_writeNotifier = nullptr;
-    QByteArray m_pending; // output the pty couldn't take yet
+    Pty *m_pty = nullptr; // the shell, while it runs
+    // Where the shell said it is (OSC 7 / 9;9, or the title on Windows),
+    // for systems that can't tell another process's folder.
+    QString m_reportedDirectory;
+    QByteArray m_oscBuffer;
     // The "cd" typed for the user isn't shown: see QuietCommand.h.
     QuietCommand m_quiet;
     QString m_quietTarget; // the folder it goes to

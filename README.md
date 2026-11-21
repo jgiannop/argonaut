@@ -147,7 +147,7 @@ Under the System Journal the button sends the messages themselves, as they are, 
 - A C++17 compiler (GCC, Clang or MSVC)
 - CMake 3.21 or newer, and Ninja
 - Qt 6.4 or newer (Widgets; Test for the tests)
-- Optional: **libvterm** for the embedded terminal (Linux/macOS). Without it, Argonaut builds without the terminal.
+- Optional: **libvterm** for the embedded terminal. Without it, Argonaut builds without the terminal. On Windows (10 version 1809 or later; the shell is PowerShell, else cmd) there is no package of it: pass `-DARGONAUT_VTERM_SOURCE=<an unpacked libvterm release>` and it is built along.
 - Optional: **libarchive** for Compress / Extract. Without it, those menu items are hidden.
 
 ### Linux (Ubuntu / Debian)

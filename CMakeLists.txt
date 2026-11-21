@@ -242,19 +242,45 @@ else()
     message(STATUS "Code editor: disabled, plain text editing (install libqscintilla2-qt6-dev to enable)")
 endif()
 
-# Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
-# Without them the app builds normally, just without the terminal panel.
+# Embedded terminal: needs libvterm and a pseudo-terminal: forkpty on Unix,
+# ConPTY on Windows (src/Pty.h). Without them the app builds normally, just
+# without the terminal panel.
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(VTERM IMPORTED_TARGET vterm)
 endif()
-if(VTERM_FOUND AND UNIX)
-    target_sources(argonaut_app PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp src/TerminalTabs.h src/TerminalTabs.cpp src/QuietCommand.h)
+# Where there is no package of libvterm (Windows), its source: an unpacked
+# libvterm release (https://launchpad.net/libvterm), built here as it is
+# (plain C, its encoding tables come already made).
+set(ARGONAUT_VTERM_SOURCE "" CACHE PATH "An unpacked libvterm source release, to build it from")
+if(NOT VTERM_FOUND AND ARGONAUT_VTERM_SOURCE AND EXISTS "${ARGONAUT_VTERM_SOURCE}/include/vterm.h")
+    enable_language(C)
+    file(GLOB VTERM_SOURCES "${ARGONAUT_VTERM_SOURCE}/src/*.c")
+    add_library(vterm_bundled STATIC ${VTERM_SOURCES})
+    target_include_directories(vterm_bundled PUBLIC "${ARGONAUT_VTERM_SOURCE}/include")
+    set_target_properties(vterm_bundled PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+    if(MSVC)
+        target_compile_options(vterm_bundled PRIVATE /w) # not our code
+    endif()
+    file(STRINGS "${ARGONAUT_VTERM_SOURCE}/Makefile" VTERM_VERSION_LINE REGEX "^VERSION=")
+    string(REPLACE "VERSION=" "" VTERM_VERSION "${VTERM_VERSION_LINE}")
+    add_library(PkgConfig::VTERM ALIAS vterm_bundled)
+    set(VTERM_FOUND TRUE)
+endif()
+if(VTERM_FOUND AND (UNIX OR WIN32))
+    target_sources(argonaut_app PRIVATE src/TerminalWidget.h src/TerminalWidget.cpp src/TerminalTabs.h src/TerminalTabs.cpp src/QuietCommand.h src/Pty.h)
+    if(WIN32)
+        target_sources(argonaut_app PRIVATE src/PtyWindows.cpp)
+    else()
+        target_sources(argonaut_app PRIVATE src/PtyUnix.cpp)
+    endif()
     target_compile_definitions(argonaut_app PUBLIC ARGONAUT_TERMINAL=1 ARGONAUT_VTERM_VERSION="${VTERM_VERSION}")
     target_link_libraries(argonaut_app PUBLIC PkgConfig::VTERM)
-    find_library(UTIL_LIBRARY util)
-    if(UTIL_LIBRARY)
-        target_link_libraries(argonaut_app PUBLIC ${UTIL_LIBRARY})
+    if(UNIX)
+        find_library(UTIL_LIBRARY util)
+        if(UTIL_LIBRARY)
+            target_link_libraries(argonaut_app PUBLIC ${UTIL_LIBRARY})
+        endif()
     endif()
     message(STATUS "Embedded terminal: enabled (libvterm ${VTERM_VERSION})")
 else()
