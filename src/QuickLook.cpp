@@ -1,4 +1,5 @@
 #include "QuickLook.h"
+#include "CodeEditor.h"
 #include "TipPicture.h"
 
 #include "Format.h"
@@ -212,6 +213,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     // A click in a text gives it the keys (select, Ctrl+C, Ctrl+F); Esc gives them back to the files.
     m_text->setFocusPolicy(Qt::ClickFocus);
     m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    m_code = new CodeEditor(m_pages);
     m_rich = new RichView(m_pages);
     m_rich->setObjectName("qlText");
     m_rich->setFocusPolicy(Qt::ClickFocus);
@@ -255,7 +257,7 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_workingTimer->setInterval(400);
     connect(m_workingTimer, &QTimer::timeout, this, &QuickLook::updateWorking);
     for (QWidget *page : {static_cast<QWidget *>(m_picture), static_cast<QWidget *>(m_movieLabel), static_cast<QWidget *>(m_scroll), static_cast<QWidget *>(m_pdf), static_cast<QWidget *>(m_plan),
-                          static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
+                          static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_code), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_archive), m_infoPage})
         m_pages->addWidget(page);
     // Under the pages, a second part for what belongs to the result above
     // it; only there when it has something to show.
@@ -336,7 +338,8 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
         else
             emit keysBackRequested();
     });
-    for (QWidget *view : {static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_underText)})
+    for (QWidget *view : {static_cast<QWidget *>(m_text), static_cast<QWidget *>(m_rich), static_cast<QWidget *>(m_underText),
+                          static_cast<QWidget *>(m_code->editorWidget())})
         view->installEventFilter(this);
     // Another text in the same view (the next file): found again in it, once
     // the text has settled (Markdown is styled after it is set).
@@ -345,14 +348,19 @@ QuickLook::QuickLook(Thumbnailer *thumbnailer, QWidget *parent)
     m_refind->setInterval(0);
     connect(m_refind, &QTimer::timeout, this, [this] {
         QWidget *view = m_finder->view();
-        if (!m_finder->isVisible() || (m_editing && view == m_text))
-            return; // (while typing, the marks move with the text; finding again would move the cursor)
+        if (!m_finder->isVisible())
+            return;
+        if (view == m_code) { // what is typed: the places again, the cursor where it is
+            m_finder->textEdited();
+            return;
+        }
         if (!view || !view->isVisible())
             m_finder->close(); // a picture now: nothing to find in
         else
             m_finder->textChanged();
     });
     connect(m_text->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
+    connect(m_code, &CodeEditor::textChanged, m_refind, qOverload<>(&QTimer::start));
     connect(m_rich->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
     connect(m_underText->document(), &QTextDocument::contentsChanged, m_refind, qOverload<>(&QTimer::start));
     connect(m_pages, &QStackedWidget::currentChanged, m_refind, qOverload<>(&QTimer::start));
@@ -1202,23 +1210,25 @@ bool QuickLook::startEditing()
     m_edit = std::make_unique<TextFile::Loaded>(std::move(file));
     m_editing = true;
     m_editKept = false;
-    m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
-    m_text->setPlainText(m_edit->text);
-    m_text->setReadOnly(false);
+    if (m_finder->view() == m_text)
+        m_finder->close(); // (marks in the preview that is going)
+    m_code->setText(m_edit->text, m_edit->path);
     applyEditLook();
-    m_text->document()->setModified(false);
-    m_text->moveCursor(QTextCursor::Start);
-    m_pages->setCurrentWidget(m_text);
+    m_code->setModified(false);
+    m_code->moveToStart();
+    m_pages->setCurrentWidget(m_code);
     m_open->hide();
     m_save->show();
     m_save->setEnabled(false);
-    m_note->setText(tr("Editing · Ctrl+S saves; the first save puts the version from before in the Trash"));
-    m_editTitle = connect(m_text->document(), &QTextDocument::modificationChanged, this, [this](bool changed) {
+    const QString language = m_code->language();
+    m_note->setText(language.isEmpty()
+                        ? tr("Editing · Ctrl+S saves; the first save puts the version from before in the Trash")
+                        : tr("Editing %1 · Ctrl+S saves; the first save puts the version from before in the Trash").arg(language));
+    m_editTitle = connect(m_code, &CodeEditor::modificationChanged, this, [this](bool changed) {
         m_title->setText(changed ? m_item.name + QStringLiteral(" •") : m_item.name);
         m_save->setEnabled(changed);
     });
-    m_text->setFocus(Qt::OtherFocusReason);
+    m_code->setFocus(Qt::OtherFocusReason);
     return true;
 }
 
@@ -1243,7 +1253,7 @@ bool QuickLook::saveEditing()
             return false;
     }
     const bool keepOld = (!m_editKept || changed) && QFileInfo::exists(m_edit->path);
-    TextFile::Saved saved = TextFile::save(m_edit.get(), m_text->toPlainText(), keepOld);
+    TextFile::Saved saved = TextFile::save(m_edit.get(), m_code->text(), keepOld);
     if (!saved.ok && keepOld && saved.oldVersion.isEmpty()) {
         QMessageBox box(QMessageBox::Question, tr("No Trash here"),
                         tr("The version from before can't be kept: %1. Save anyway, replacing it?").arg(saved.error),
@@ -1253,7 +1263,7 @@ bool QuickLook::saveEditing()
         box.exec();
         if (box.clickedButton() != save)
             return false;
-        saved = TextFile::save(m_edit.get(), m_text->toPlainText(), false);
+        saved = TextFile::save(m_edit.get(), m_code->text(), false);
     }
     if (!saved.ok) {
         QMessageBox::warning(window(), tr("Not saved"), tr("“%1” couldn't be saved: %2").arg(name, saved.error));
@@ -1261,7 +1271,7 @@ bool QuickLook::saveEditing()
     }
     if (!saved.oldVersion.isEmpty())
         m_editKept = true;
-    m_text->document()->setModified(false);
+    m_code->setModified(false);
     m_note->setText(m_editKept ? tr("Saved · the version from before is in the Trash") : tr("Saved"));
     emit fileSaved(m_edit->path);
     return true;
@@ -1270,7 +1280,7 @@ bool QuickLook::saveEditing()
 // Unsaved changes are asked about: Save, Discard or Cancel (false: keep editing).
 bool QuickLook::mayClose()
 {
-    if (!m_editing || !m_text->document()->isModified())
+    if (!m_editing || !m_code->isModified())
         return true;
     QMessageBox box(QMessageBox::Question, tr("Save changes?"),
                     tr("Save the changes to “%1”?").arg(m_item.name), QMessageBox::NoButton, window());
@@ -1306,9 +1316,12 @@ void QuickLook::endEditing()
     m_editing = false;
     disconnect(m_editTitle);
     m_edit.reset();
-    m_text->setReadOnly(true);
-    m_text->setStyleSheet(QString()); // the preview's look again
-    m_text->document()->setModified(false);
+    if (m_finder->view() == m_code)
+        m_finder->close();
+    m_code->setText(QString(), QString()); // (nothing of it kept in memory)
+    m_code->setModified(false);
+    if (m_pages->currentWidget() == m_code)
+        m_pages->setCurrentWidget(m_text); // (a read-only text until the next preview comes)
     m_title->setText(m_item.name);
     m_save->hide();
     m_open->show();
@@ -1320,10 +1333,7 @@ void QuickLook::endEditing()
 // it is plain to see that this text is being changed, not only shown.
 void QuickLook::applyEditLook()
 {
-    const Theme &theme = currentTheme();
-    m_text->setStyleSheet(QStringLiteral("QPlainTextEdit#qlText { background: #ffffff; color: #1f1f1f; border: 1px solid %1;"
-                                         " border-radius: 8px; padding: 6px; selection-background-color: %2; selection-color: #ffffff; }")
-                              .arg(cssColor(theme.accent), cssColor(theme.accent)));
+    m_code->setPaper(currentTheme().accent);
 }
 
 // The marks of the find bar, in the theme's accent.
@@ -1343,7 +1353,7 @@ bool QuickLook::textKey(QWidget *view, QEvent *event)
 {
     auto *key = static_cast<QKeyEvent *>(event);
     const bool finding = m_finder->isVisible() && m_finder->view() == view;
-    const bool editing = m_editing && view == m_text;
+    const bool editing = m_editing && view == m_code;
     if (event->type() == QEvent::ShortcutOverride) {
         const Qt::KeyboardModifiers held = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
         const bool functionKey = key->key() >= Qt::Key_F1 && key->key() <= Qt::Key_F35;
@@ -1384,6 +1394,8 @@ bool QuickLook::eventFilter(QObject *watched, QEvent *event)
     if ((watched == m_text || watched == m_rich || watched == m_underText)
         && (event->type() == QEvent::KeyPress || event->type() == QEvent::ShortcutOverride))
         return textKey(static_cast<QWidget *>(watched), event);
+    if (watched == m_code->editorWidget() && (event->type() == QEvent::KeyPress || event->type() == QEvent::ShortcutOverride))
+        return textKey(m_code, event); // (the finder and the keys are the editor's, not its inner widget's)
     if (watched == m_actionInput && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Return || key == Qt::Key_Enter) {
@@ -1475,6 +1487,8 @@ QString QuickLook::shownText() const
 {
     if (m_pages->currentWidget() == m_rich)
         return m_rich->toPlainText();
+    if (m_pages->currentWidget() == m_code)
+        return m_code->text();
     return m_pages->currentWidget() == m_text ? m_text->toPlainText() : QString();
 }
 

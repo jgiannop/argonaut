@@ -123,6 +123,7 @@ public:
     void scrollPictureTo(int value);
     class TextFinder *finder() const { return m_finder; } // Ctrl+F in a text (tests)
     QPlainTextEdit *textView() const { return m_text; }   // (tests)
+    class CodeEditor *codeEditor() const { return m_code; } // a file being edited (tests)
     QLineEdit *searchField() const { return m_search; } // shown over a result that can be searched (tests)
     PdfView *pdfReader() const { return m_pdf; }         // the reader, shown for a PDF where it can be (tests)
     bool isReadingPdf() const;
@@ -194,6 +195,7 @@ private:
     QLabel *m_movieLabel = nullptr;
     QMovie *m_movie = nullptr;
     QPlainTextEdit *m_text = nullptr;
+    class CodeEditor *m_code = nullptr; // Edit in Preview: a page of its own
     class TextFinder *m_finder = nullptr; // Ctrl+F in a text
     QTimer *m_refind = nullptr;           // the text changed: find again
     bool textKey(QWidget *view, QEvent *event);

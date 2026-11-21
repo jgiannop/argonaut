@@ -37,7 +37,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates build-essential cmake ninja-build qt6-base-dev qt6-tools-dev \
-            libvterm-dev libarchive-dev libncurses-dev dpkg-dev file \
+            libvterm-dev libarchive-dev libncurses-dev libqscintilla2-qt6-dev dpkg-dev file \
             pkg-config libxcb1-dev
 
       - uses: actions/checkout@v5
@@ -77,6 +77,7 @@ jobs:
           # Every feature is in it: the terminal panel, Compress / Extract, the terminal interface.
           ldd /usr/bin/argonaut | grep -q libvterm
           ldd /usr/bin/argonaut | grep -q libarchive
+          ldd /usr/bin/argonaut | grep -q libqscintilla2_qt6
           ldd /usr/bin/argonaut-tui | grep -q libvterm
           ldd /usr/bin/argonaut-tui | grep -q libncursesw
           # The AppArmor profile its sandbox needs on Ubuntu, with the scripts that load it.

@@ -153,7 +153,7 @@ Under the System Journal the button sends the messages themselves, as they are, 
 ### Linux (Ubuntu / Debian)
 
 ```bash
-sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev libarchive-dev libncurses-dev
+sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-tools-dev qt6-wayland libvterm-dev libarchive-dev libncurses-dev libqscintilla2-qt6-dev
 ```
 
 ### Windows and macOS

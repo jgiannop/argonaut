@@ -1,9 +1,10 @@
 #pragma once
 
+#include "CodeEditor.h"
+
 #include <QFrame>
 #include <QList>
 #include <QPointer>
-#include <QTextCursor>
 
 class QLabel;
 class QLineEdit;
@@ -16,7 +17,8 @@ class QToolButton;
 // Esc closes the bar and gives the keys back to the text.
 //
 // The text is a QPlainTextEdit or a QTextEdit (both have a document,
-// a cursor and extra selections, but no common class for them).
+// a cursor and extra selections, but no common class for them), or the
+// CodeEditor of a file being edited.
 class TextFinder : public QFrame
 {
     Q_OBJECT
@@ -36,6 +38,8 @@ public:
 
     // The text changed under it (another file): found again in the new one.
     void textChanged();
+    // The text was typed in (an editor): the places found again, the cursor left where it is.
+    void textEdited();
 
     void applyTheme(const QColor &mark, const QColor &currentMark);
 
@@ -46,10 +50,10 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    void find();
+    void find(bool moveTo = true);
     void mark();
-    QTextCursor cursorOf() const;
-    void setCursor(const QTextCursor &cursor);
+    QString selectedText() const;
+    void select(const CodeEditor::Range &range);
 
     QPointer<QWidget> m_view;
     QLineEdit *m_field = nullptr;
@@ -57,7 +61,7 @@ private:
     QToolButton *m_previous = nullptr;
     QToolButton *m_next = nullptr;
     QToolButton *m_close = nullptr;
-    QList<QTextCursor> m_found;
+    QList<CodeEditor::Range> m_found;
     int m_current = -1;
     QColor m_mark, m_currentMark;
 };

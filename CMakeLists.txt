@@ -162,6 +162,8 @@ qt_add_library(argonaut_app STATIC
     src/SideTree.h
     src/SideTree.cpp
     src/TextFinder.cpp
+    src/CodeEditor.h
+    src/CodeEditor.cpp
     src/ExtensionMenu.h
     src/ExtensionMenu.cpp
     src/ExtensionsDialog.h
@@ -223,6 +225,21 @@ endif()
 target_compile_definitions(argonaut_app PUBLIC ARGONAUT_VERSION="${PROJECT_VERSION}")
 if(LIBARCHIVE_FOUND)
     target_compile_definitions(argonaut_app PUBLIC ARGONAUT_LIBARCHIVE_VERSION="${LIBARCHIVE_VERSION}")
+endif()
+
+# Edit in Preview as a code editor (colours, line numbers, folding): QScintilla
+# for Qt 6. It has no CMake or pkg-config file: its header is under Qt's.
+find_path(QSCINTILLA_INCLUDE_DIR Qsci/qsciscintilla.h HINTS ${Qt6Widgets_INCLUDE_DIRS} ${Qt6Core_INCLUDE_DIRS})
+find_library(QSCINTILLA_LIBRARY NAMES qscintilla2_qt6 qscintilla2-qt6)
+if(QSCINTILLA_INCLUDE_DIR AND QSCINTILLA_LIBRARY)
+    set(QSCINTILLA_FOUND TRUE)
+    target_include_directories(argonaut_app PRIVATE ${QSCINTILLA_INCLUDE_DIR})
+    target_link_libraries(argonaut_app PUBLIC ${QSCINTILLA_LIBRARY})
+    target_compile_definitions(argonaut_app PUBLIC ARGONAUT_QSCINTILLA=1)
+    message(STATUS "Code editor: enabled (QScintilla)")
+else()
+    set(QSCINTILLA_FOUND FALSE)
+    message(STATUS "Code editor: disabled, plain text editing (install libqscintilla2-qt6-dev to enable)")
 endif()
 
 # Embedded terminal: needs libvterm and a Unix pseudo-terminal (forkpty).
@@ -578,6 +595,9 @@ if(ARGONAUT_REQUIRE_ALL_FEATURES AND UNIX)
     endif()
     if(NOT CURSES_FOUND)
         list(APPEND missing "libncurses-dev (the terminal interface)")
+    endif()
+    if(NOT QSCINTILLA_FOUND)
+        list(APPEND missing "libqscintilla2-qt6-dev (Edit in Preview as a code editor)")
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT XCB_FOUND)
         list(APPEND missing "libxcb1-dev (Open/Save windows stay with their app)")

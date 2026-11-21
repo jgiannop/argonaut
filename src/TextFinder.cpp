@@ -23,6 +23,11 @@ QTextDocument *documentOf(QWidget *view)
     return nullptr;
 }
 
+bool findable(QWidget *view)
+{
+    return documentOf(view) || qobject_cast<CodeEditor *>(view);
+}
+
 } // namespace
 
 TextFinder::TextFinder(QWidget *parent)
@@ -63,7 +68,7 @@ TextFinder::TextFinder(QWidget *parent)
         close();
         emit closed();
     });
-    connect(m_field, &QLineEdit::textChanged, this, &TextFinder::find);
+    connect(m_field, &QLineEdit::textChanged, this, [this] { find(); });
     hide();
 }
 
@@ -77,15 +82,16 @@ void TextFinder::applyTheme(const QColor &markColor, const QColor &currentColor)
 
 void TextFinder::open(QWidget *view)
 {
-    if (!documentOf(view))
+    if (!findable(view))
         return;
     if (m_view && m_view != view)
         close();
     m_view = view;
-    const QString selected = cursorOf().selectedText();
+    const QString selected = selectedText();
     show();
     // What is selected (one line of it) is what to find, as in an editor.
-    if (!selected.isEmpty() && !selected.contains(QChar::ParagraphSeparator) && selected.size() <= 200)
+    if (!selected.isEmpty() && !selected.contains(QChar::ParagraphSeparator) && !selected.contains(QLatin1Char('\n'))
+        && selected.size() <= 200)
         m_field->setText(selected);
     else
         find(); // what was typed the last time, in this text
@@ -107,17 +113,35 @@ void TextFinder::textChanged()
         find();
 }
 
-QTextCursor TextFinder::cursorOf() const
+void TextFinder::textEdited()
+{
+    if (isVisible())
+        find(false);
+}
+
+QString TextFinder::selectedText() const
 {
     if (auto *plain = qobject_cast<QPlainTextEdit *>(m_view))
-        return plain->textCursor();
+        return plain->textCursor().selectedText();
     if (auto *rich = qobject_cast<QTextEdit *>(m_view))
-        return rich->textCursor();
+        return rich->textCursor().selectedText();
+    if (auto *code = qobject_cast<CodeEditor *>(m_view))
+        return code->selectedText();
     return {};
 }
 
-void TextFinder::setCursor(const QTextCursor &cursor)
+void TextFinder::select(const CodeEditor::Range &range)
 {
+    if (auto *code = qobject_cast<CodeEditor *>(m_view)) {
+        code->select(range);
+        return;
+    }
+    QTextDocument *document = documentOf(m_view);
+    if (!document)
+        return;
+    QTextCursor cursor(document);
+    cursor.setPosition(range.start);
+    cursor.setPosition(range.start + range.length, QTextCursor::KeepAnchor);
     if (auto *plain = qobject_cast<QPlainTextEdit *>(m_view)) {
         plain->setTextCursor(cursor);
         plain->ensureCursorVisible();
@@ -129,19 +153,25 @@ void TextFinder::setCursor(const QTextCursor &cursor)
 
 // Every place the text is, from the start; the current one is the first at
 // or after where the reading is (the top of what is in sight).
-void TextFinder::find()
+void TextFinder::find(bool moveTo)
 {
     m_found.clear();
     m_current = -1;
-    QTextDocument *document = documentOf(m_view);
     const QString text = m_field->text();
-    if (document && !text.isEmpty()) {
-        QTextCursor at(document);
-        while (m_found.size() < MaxMarks) {
-            at = document->find(text, at); // no flags: any case
-            if (at.isNull())
-                break;
-            m_found.append(at);
+    if (!text.isEmpty()) {
+        if (auto *code = qobject_cast<CodeEditor *>(m_view)) {
+            const QString all = code->text();
+            for (qsizetype at = all.indexOf(text, 0, Qt::CaseInsensitive); at >= 0 && m_found.size() < MaxMarks;
+                 at = all.indexOf(text, at + text.size(), Qt::CaseInsensitive))
+                m_found.append({int(at), int(text.size())});
+        } else if (QTextDocument *document = documentOf(m_view)) {
+            QTextCursor at(document);
+            while (m_found.size() < MaxMarks) {
+                at = document->find(text, at); // no flags: any case
+                if (at.isNull())
+                    break;
+                m_found.append({at.selectionStart(), at.selectionEnd() - at.selectionStart()});
+            }
         }
         if (!m_found.isEmpty()) {
             // The first one from the top of what is shown, so the text doesn't jump back to its start.
@@ -150,14 +180,17 @@ void TextFinder::find()
                 from = plain->cursorForPosition(QPoint(0, 0)).position();
             else if (auto *rich = qobject_cast<QTextEdit *>(m_view))
                 from = rich->cursorForPosition(QPoint(0, 0)).position();
+            else if (auto *code = qobject_cast<CodeEditor *>(m_view))
+                from = code->firstVisibleOffset();
             m_current = 0;
             for (int i = 0; i < m_found.size(); ++i) {
-                if (m_found.at(i).selectionStart() >= from) {
+                if (m_found.at(i).start >= from) {
                     m_current = i;
                     break;
                 }
             }
-            setCursor(m_found.at(m_current));
+            if (moveTo)
+                select(m_found.at(m_current));
         }
     }
     mark();
@@ -168,7 +201,7 @@ void TextFinder::next(int step)
     if (m_found.isEmpty())
         return;
     m_current = int((m_current + step + m_found.size()) % m_found.size());
-    setCursor(m_found.at(m_current));
+    select(m_found.at(m_current));
     mark();
 }
 
@@ -184,10 +217,17 @@ QString TextFinder::countText() const
 void TextFinder::mark()
 {
     m_count->setText(countText());
+    if (auto *code = qobject_cast<CodeEditor *>(m_view)) {
+        code->setMarks(m_found, m_current, m_mark, m_currentMark);
+        return;
+    }
+    QTextDocument *document = documentOf(m_view);
     QList<QTextEdit::ExtraSelection> marks;
-    for (int i = 0; i < m_found.size(); ++i) {
+    for (int i = 0; document && i < m_found.size(); ++i) {
         QTextEdit::ExtraSelection one;
-        one.cursor = m_found.at(i);
+        one.cursor = QTextCursor(document);
+        one.cursor.setPosition(m_found.at(i).start);
+        one.cursor.setPosition(m_found.at(i).start + m_found.at(i).length, QTextCursor::KeepAnchor);
         one.format.setBackground(i == m_current ? m_currentMark : m_mark);
         marks.append(one);
     }

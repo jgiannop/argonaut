@@ -7,6 +7,7 @@
 // (ARGONAUT_TRASH_HOME_ONLY), and `gio` / the eject program are fake scripts
 // that only write down how they were called.
 
+#include "CodeEditor.h"
 #include "DirectoryModel.h"
 #include "ExtensionMenu.h"
 #include "ExtensionsDialog.h"
@@ -2400,24 +2401,39 @@ void TestMainWindow::textFileIsEditedInThePreview()
     current(a);
     QTest::keyClick(w->m_pane->view, Qt::Key_Space, Qt::ControlModifier);
     QTRY_VERIFY(preview->isEditing());
-    QPlainTextEdit *text = preview->textView();
-    QVERIFY(!text->isReadOnly());
+    CodeEditor *code = preview->codeEditor();
+    QAbstractScrollArea *text = code->editorWidget();
+    QVERIFY(code->isVisible());
     QVERIFY(preview->editBox()->isChecked());
-    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\n"));
+    QCOMPARE(code->text(), QStringLiteral("Dear friend,\n"));
     QTRY_VERIFY(text->hasFocus());
+    auto toEnd = [&] { QTest::keyClick(text, Qt::Key_End, Qt::ControlModifier); };
     // On white paper, like a notepad, whatever the theme.
     auto paper = [&] { return text->viewport()->grab().toImage().pixelColor(text->viewport()->width() - 4, text->viewport()->height() - 4); };
     QTRY_COMPARE(paper(), QColor(Qt::white));
-    text->moveCursor(QTextCursor::End);
+    toEnd();
     QTest::keyClicks(text, "Thanks!x");
     QTest::keyClick(text, Qt::Key_Backspace);
     QTest::keyClick(text, Qt::Key_Delete); // nothing after the cursor: nothing happens, to the files either
     QTest::qWait(200);
     QVERIFY(QFile::exists(a));
-    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\nThanks!"));
+    QCOMPARE(code->text(), QStringLiteral("Dear friend,\nThanks!"));
     // A preview that was still loading doesn't replace what is typed.
     QTest::qWait(200);
-    QCOMPARE(text->toPlainText(), QStringLiteral("Dear friend,\nThanks!"));
+    QCOMPARE(code->text(), QStringLiteral("Dear friend,\nThanks!"));
+
+    // Ctrl+F finds in what is being edited; Esc gives the keys back to the text.
+    QTest::keyClick(text, Qt::Key_F, Qt::ControlModifier);
+    QTRY_VERIFY(preview->finder()->isVisible());
+    QCOMPARE(preview->finder()->view(), static_cast<QWidget *>(code));
+    QTest::keyClicks(preview->finder()->field(), "AN");
+    QCOMPARE(preview->finder()->count(), 1); // "Thanks", any case
+    QCOMPARE(code->selectedText(), QStringLiteral("an"));
+    QTest::keyClick(preview->finder()->field(), Qt::Key_Escape);
+    QTRY_VERIFY(!preview->finder()->isVisible());
+    QTRY_VERIFY(text->hasFocus());
+    QCOMPARE(code->text(), QStringLiteral("Dear friend,\nThanks!"));
+    toEnd();
 
     // Ctrl+S: saved; the version from before is in the Trash, once.
     QTest::keyClick(text, Qt::Key_S, Qt::ControlModifier);
@@ -2455,7 +2471,7 @@ void TestMainWindow::textFileIsEditedInThePreview()
         QVERIFY(other.open(QIODevice::WriteOnly | QIODevice::Truncate));
         other.write("their words\n");
     }
-    text->moveCursor(QTextCursor::End);
+    toEnd();
     QTest::keyClicks(text, "!");
     answerNext("Cancel");
     QVERIFY(!preview->saveEditing());
@@ -2468,8 +2484,9 @@ void TestMainWindow::textFileIsEditedInThePreview()
     // Unticking Edit: the preview again, read-only.
     preview->editBox()->setChecked(false);
     QVERIFY(!preview->isEditing());
-    QTRY_VERIFY(text->isReadOnly());
-    QVERIFY(text->styleSheet().isEmpty()); // the preview's own look again
+    QTRY_VERIFY(!code->isVisible());
+    QTRY_COMPARE(preview->shownText(), QStringLiteral("Dear friend,\nThanks! Bye!")); // the preview again, read-only
+    QVERIFY(preview->textView()->isReadOnly());
 }
 
 // What an extension has to say about its result on screen (Claude's report

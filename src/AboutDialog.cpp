@@ -1,4 +1,8 @@
 #include "AboutDialog.h"
+
+#if defined(ARGONAUT_QSCINTILLA)
+#include <Qsci/qsciglobal.h>
+#endif
 #include "Sandbox.h"
 
 #include "DefaultFileManager.h"
@@ -58,6 +62,11 @@ QList<Detail> details()
     list.append({QObject::tr("Terminal"), QObject::tr("Yes, libvterm %1").arg(QStringLiteral(ARGONAUT_VTERM_VERSION))});
 #else
     list.append({QObject::tr("Terminal"), QObject::tr("Not in this build")});
+#endif
+#if defined(ARGONAUT_QSCINTILLA)
+    list.append({QObject::tr("Code editor"), QObject::tr("Yes, QScintilla %1").arg(QStringLiteral(QSCINTILLA_VERSION_STR))});
+#else
+    list.append({QObject::tr("Code editor"), QObject::tr("Not in this build (plain text editing)")});
 #endif
 #if defined(Q_OS_LINUX)
     // The box untrusted files are read in (thumbnails, previews, details).
